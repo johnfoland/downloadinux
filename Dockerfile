@@ -35,6 +35,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fzf ripgrep bat tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# --- Node.js ------------------------------------------------------------
+# JS runtime for yt-dlp's built-in EJS n-challenge solver. Without one,
+# YouTube's nsig-protected formats silently vanish and web_safari gets
+# SABR-forced with no direct URLs, leaving only thumbnails to "download".
+# Debian trixie's own `nodejs` package is stuck on v20; yt-dlp's runtime
+# detector requires >=22, so pull current LTS from NodeSource instead.
+# Done at build time (not via a runtime install) so it isn't at the mercy
+# of the NordVPN tunnel the container routes through once it's up.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- NordVPN ----------------------------------------------------------------
 # Nord ships one "stable" suite for every Debian/Ubuntu release.
 RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc \
