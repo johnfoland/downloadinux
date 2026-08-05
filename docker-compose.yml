@@ -1,0 +1,64 @@
+services:
+  downloadinux:
+    build:
+      context: .
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
+        USERNAME: ${USERNAME:-dl}
+    image: downloadinux:latest
+    container_name: downloadinux
+    hostname: downloadinux
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      USERNAME: ${USERNAME:-dl}
+      TZ: ${TZ:-America/New_York}
+      NORDVPN_TOKEN: ${NORDVPN_TOKEN:-}
+      NORDVPN_AUTOCONNECT: ${NORDVPN_AUTOCONNECT:-false}
+      NORDVPN_SERVER: ${NORDVPN_SERVER:-}
+      NORDVPN_TECHNOLOGY: ${NORDVPN_TECHNOLOGY:-openvpn}
+      NORDVPN_KILLSWITCH: ${NORDVPN_KILLSWITCH:-off}
+
+    # NordVPN's daemon builds tunnels and rewrites the routing table.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: 1
+    # nordvpnd disables IPv6 via sysctl before every connect, but Docker mounts
+    # /proc/sys read-only by default, so the connect fails with
+    #   sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"
+    # This unmasks /proc so those writes land. It is the narrow version of
+    # `privileged: true` — no extra capabilities or device access, just
+    # writable /proc/sys. Without it the VPN cannot connect at all.
+    security_opt:
+      - systempaths=unconfined
+
+    volumes:
+      # The shared drop: host ~/Downloads <-> container ~/Downloads.
+      # Both configs write to ~/Downloads/dlmp4 and ~/Downloads/dlgal.
+      - ${HOST_DOWNLOADS:-${HOME}/Downloads}:/home/${USERNAME:-dl}/Downloads
+
+      # Live-editable configs and shell functions — no rebuild to tweak.
+      - ./config/yt-dlp:/home/${USERNAME:-dl}/.config/yt-dlp
+      - ./config/gallery-dl:/home/${USERNAME:-dl}/.config/gallery-dl
+      - ./zsh:/home/${USERNAME:-dl}/.zsh-custom
+
+      # Exported browser cookies (gitignored).
+      - ./cookies:/home/${USERNAME:-dl}/cookies
+
+      # Persist NordVPN login + shell history across rebuilds.
+      - nordvpn-data:/var/lib/nordvpn
+      - zsh-history:/home/${USERNAME:-dl}/.local/share/downloadinux
+
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  nordvpn-data:
+  zsh-history:

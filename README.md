@@ -1,0 +1,423 @@
+# downloadinux
+
+A headless Debian 13 "Trixie" container that runs your `dlmp4` / `dlgal`
+workflow — yt-dlp, gallery-dl, NordVPN, zsh — against the host `~/Downloads`
+folder.
+
+Your existing configs and shell functions were ported over as-is. The one
+thing that had to change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
+walks you through.
+
+```sh
+cd ~/Code/downloadinux
+just setup
+```
+
+That's the whole thing — it walks you through every step below and ends with a
+health check. The rest of this README is what `just setup` is doing, in case
+you want to do it a piece at a time or come back to fix one part.
+
+---
+
+# Setup, step by step
+
+## Step 0 — Prerequisites
+
+You already have all of these; listed so future-you knows what to reinstall.
+
+| | |
+|---|---|
+| Docker Desktop | must be **running** — `docker ps` should not error |
+| `just` | pinned to 1.40.0 in `.tool-versions` (asdf picks it up here) |
+| `yt-dlp` on the host | only for the cookie export in Step 3 — `brew install yt-dlp` |
+| A Firefox profile | logged in to the sites you want to download from |
+
+```sh
+cd ~/Code/downloadinux
+just            # shows the full menu of commands
+```
+
+## Step 1 — Create your `.env`
+
+```sh
+just env
+```
+
+Copies `.env.example` to `.env` and fills in your **real UID/GID** (502/20), so
+files the container writes into `~/Downloads` come back owned by `john:staff`
+rather than by root. Chmods it to 600.
+
+`.env` is gitignored. It's the only file in the repo that holds secrets.
+
+## Step 2 — Get your NordVPN token
+
+The container logs in with an access token, not your password. Get one:
+
+1. Go to **https://my.nordaccount.com** and sign in.
+2. Left sidebar → **Services** → **NordVPN**.
+3. Scroll to **Manual setup** → click **Set up NordVPN manually**.
+4. Verify your email if it asks (Nord sends a 6-digit code).
+5. Under **Access token**, click **Generate new token**.
+6. Choose an expiry — **30 days** or **Doesn't expire**. Longer is less
+   maintenance; shorter is safer if the file ever leaks.
+7. Click **Generate token** and **copy it immediately** — Nord shows it once
+   and never again. It's a 64-character hex string.
+
+Then hand it to the repo:
+
+```sh
+just token 8f3c...your-token
+```
+
+That writes it into `.env` and, if the container is already running, logs in
+right away. The login persists in a Docker volume, so rebuilds don't log you
+out (only `just nuke` does).
+
+> If you lose the token, generate a new one — there's no way to view an old
+> one. Old tokens keep working until they expire, so revoke it in the same
+> panel if it leaked.
+
+## Step 3 — Export your browser cookies
+
+**This is the one thing that genuinely behaves differently from your Mac.**
+
+Your host configs used `--cookies-from-browser firefox` (yt-dlp) and
+`"cookies": ["firefox"]` (gallery-dl). Neither can work in a container: there's
+no Firefox profile inside it, and on macOS the cookie DB is encrypted against
+your login keychain anyway. So you export on the host and hand the container a
+file.
+
+1. **Open Firefox and make sure you're actually logged in** to the sites you
+   care about — Instagram especially. Visit instagram.com and confirm you see
+   your feed, not a login wall.
+2. Run:
+   ```sh
+   just cookies
+   ```
+3. Read the summary it prints. It tells you how many cookies it found per site:
+   ```
+   Wrote cookies/cookies.txt — 108 cookies.
+     instagram  8 ✓
+     youtube    8 ✓
+     tiktok     23 ✓
+   ```
+   A `none` means you're not logged in to that site in Firefox — log in, then
+   rerun.
+
+If you have multiple Firefox profiles, pass the one you want:
+
+```sh
+ls ~/Library/Application\ Support/Firefox/Profiles/
+just cookies widfsx0p.default-release
+```
+
+The result lands in `cookies/cookies.txt`, chmod 600, gitignored. Both
+downloaders read it from `~/cookies/cookies.txt` inside the container.
+
+`just cookies` also runs `just useragent`, which pins both downloaders'
+user-agent to your host **Chrome** version. Run it on its own after a Chrome
+update; `just doctor` warns when the two configs drift apart.
+
+> **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
+> only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
+> downloaders cap at 720p. It's also gallery-dl's own default pairing. The
+> `sessionid` cookie isn't UA-bound, and your VPN exit IP is a much stronger
+> signal than any UA string. Full reasoning, and why the `instagram` block
+> needs its own copy of the setting, is in
+> [`cookies/README.md`](cookies/README.md#cookies-come-from-firefox-the-user-agent-says-chrome).
+>
+> Your Mac config used `"@firefox"`, which doesn't mean "a Firefox UA string" —
+> it *launches Firefox* and asks it for its real one. That can't work in a
+> headless container, so it's a pinned literal now.
+
+**When to redo this:** Instagram sessions go stale in weeks. When downloads
+start 403ing or silently returning nothing, `just cookies` is the first thing
+to try. `just doctor` tells you whether a real session is present — it checks
+for the actual `sessionid` cookie, not just that the file exists.
+
+You can skip this step entirely if you only grab public videos. The entrypoint
+seeds an empty-but-valid cookie file so yt-dlp doesn't hard-error on a missing
+path.
+
+## Step 4 — Build and launch
+
+```sh
+just build     # a few minutes the first time
+just up
+```
+
+## Step 5 — Confirm it all works
+
+```sh
+just doctor
+```
+
+```
+downloadinux
+  ✓ .env present
+  ✓ NordVPN token in .env
+  ✓ cookies/cookies.txt — 108 cookies
+  ✓   instagram: logged in
+  ! youtube: anonymous (fine unless you need age-gated video)
+  ✓ container running
+  ✓ ~/Downloads mounted
+  · yt-dlp 2026.07.04
+  · gallery-dl 1.32.9
+  · VPN: Status: Disconnected
+  · Exit IP: 78.203.246.137  Paris, FR
+```
+
+Every `!` line names the command that fixes it. If the exit IP is your real
+one and you wanted the VPN, `just vpn on`.
+
+---
+
+# Daily use
+
+Everything works from the host — you don't have to shell in unless you want to.
+
+```sh
+just dl video 'https://youtube.com/watch?v=...'   # one or more URLs
+just dl gallery 'https://instagram.com/p/...'
+just batch video                                 # queue, detached tmux
+just watch video                                 # attach to it
+
+just vpn on us8649                               # a specific server
+just vpn on New_York                             # ...or city / country / group
+just vpn ip                                      # what the internet sees
+just vpn off
+just servers New_York                            # rank a city's servers by load
+just shell                                       # zsh inside the box
+```
+
+`dl` and `batch` both take `video` or `gallery` as their first word — `video`
+routes to yt-dlp, `gallery` to gallery-dl. `v` and `g` work as shorthands.
+
+### Picking a server
+
+`nordvpn connect` takes any of: nothing (Nord picks the fastest), a country
+code (`us`), a country name (`United_States`), a city (`New_York`), a server
+group (`p2p`), or a **specific server number** (`us8649`). `NORDVPN_SERVER` in
+`.env` is passed straight through, so it accepts all the same forms and is what
+autoconnect uses at boot.
+
+To choose deliberately, rank a city's servers by load:
+
+```sh
+just servers New_York
+```
+```
+  Least-loaded servers in New York:
+    us14079      load 13%
+    us14353      load 15%
+    us14080      load 15%
+```
+
+Then `just vpn on us14079` for one session, or set `NORDVPN_SERVER=us14079` in
+`.env` to pin it at every boot. Pinning one server is also marginally better for
+staying un-flagged than hopping exit IPs on the same Instagram session.
+
+Another country takes its Nord country id — `just servers Toronto 38`. Give a
+city that doesn't exist and it prints the valid ones.
+
+## Batch queues
+
+`dlmp4_batch` throttles a couple of minutes between URLs and can run for hours,
+so `just batch` launches it in a detached tmux session inside the container —
+it survives your terminal closing, your laptop sleeping, and `just shell`
+exiting.
+
+```sh
+just batch video               # defaults to ~/Downloads/dlmp4_queue
+just watch video               # attach; Ctrl-b d to detach without killing it
+
+just batch gallery             # defaults to ~/Downloads/dlgal_queue
+just watch gallery
+```
+
+Both default to the queue files you already keep in `~/Downloads`. Pass a path
+to use a different one:
+
+```sh
+just batch video ~/Downloads/some-other-queue.txt
+```
+
+The queue file must live under `~/Downloads` — that's the only host directory
+the container can see. `just batch` translates the host path to the container's
+view for you and refuses paths outside the volume rather than failing
+confusingly later.
+
+Same behavior as your Mac: successful URLs are deleted from the queue file as
+they complete, and timestamped success/fail logs are written alongside.
+
+---
+
+# How it's put together
+
+## Why Trixie
+
+Debian 13 is the current stable: Python 3.13 and ffmpeg 7 out of the box, apt
+is boring in exactly the way you want a long-running download box to be boring,
+and NordVPN's Debian repo ships a single `stable` suite that works on it
+without pinning to an Ubuntu codename. No desktop, no GUI packages.
+
+## What's in the box
+
+| | |
+|---|---|
+| Base | `debian:trixie-slim`, headless |
+| Shell | zsh + oh-my-zsh (`af-magic`, autosuggestions, syntax-highlighting) |
+| Downloaders | yt-dlp (with `curl-cffi` impersonation), gallery-dl — both in `/opt/venv` |
+| Media | ffmpeg, AtomicParsley, exiftool |
+| VPN | NordVPN CLI + daemon |
+| Extras | tmux, fzf, ripgrep, bat, jq, rich-cli (the batch functions need `rich`) |
+
+## The shared volume
+
+Host `~/Downloads` is mounted at `~/Downloads` in the container. Because the
+paths line up, your configs work verbatim:
+
+- `config/yt-dlp/dlmp4.conf` → `~/Downloads/dlmp4`
+- `config/gallery-dl/config.json` → `~/Downloads/dlgal`, archive DB included
+
+Point `HOST_DOWNLOADS` in `.env` at something else — an external drive — if
+you'd rather not use `~/Downloads`.
+
+## Live-mounted config
+
+These are bind-mounted, so edit on the host and the container sees it
+immediately. No rebuild:
+
+- `config/yt-dlp/` and `config/gallery-dl/` — the downloader configs
+- `zsh/aliases.zsh`, `zsh/functions.zsh` — `dlmp4`, `dlgal`, `*_batch`, `exifmod`
+- `zsh/zshrc` — the shell config itself (`exec zsh` to reload)
+
+`~/.zshrc` in the image is a one-line stub that sources `zsh/zshrc`.
+
+## What takes effect when
+
+| You changed | What to run | Why |
+|---|---|---|
+| `config/**`, `zsh/**` | **nothing** | bind-mounted; live immediately (`exec zsh` to reload the shell itself) |
+| `.env` — `TZ`, `NORDVPN_*`, `HOST_DOWNLOADS` | `just restart` | runtime env; needs the container recreated |
+| `.env` — `PUID`, `PGID`, `USERNAME` | `just build && just up` | these are Dockerfile `ARG`s, baked in at build |
+| `Dockerfile`, `scripts/**` | `just build && just up` | `scripts/` is `COPY`'d into the image, *not* mounted |
+| `docker-compose.yml` | `just restart` | unless you touched `build:`, then rebuild |
+
+Two traps worth knowing, both of which bit me while building this:
+
+**`docker compose restart` does not re-read `.env`.** It reuses the existing
+container, so an edited `.env` is silently ignored — you get no error, just old
+behaviour. `just restart` therefore runs `up -d --force-recreate` instead, which
+always applies current config *and* is never a no-op. Takes about 1.5s.
+
+**`scripts/` is copied into the image, not bind-mounted.** Editing
+`entrypoint.sh` and merely restarting runs the *old* one. This is easy to
+misread as "my change didn't work" when it simply wasn't installed.
+
+## Use `just shell`, not a bare `docker exec`
+
+The entrypoint has to stay root — nordvpnd needs `NET_ADMIN` — so a plain
+`docker compose exec downloadinux zsh` gives you a **root** shell in `/root`
+with no aliases, no configs, and downloads that land root-owned on your Mac.
+
+`just shell` passes `-u dl`. The root shell prints a reminder rather than
+letting you find out three downloads later.
+
+## The killswitch
+
+`NORDVPN_KILLSWITCH=on` blocks **all** network traffic whenever the tunnel is
+down — including when it was never up. Verified: with the VPN disconnected,
+`curl` gets nothing at all. Nothing leaks.
+
+Two consequences worth internalising:
+
+**Pair it with `NORDVPN_AUTOCONNECT=true`.** Killswitch on plus autoconnect off
+means the container boots with no internet, every time, until you remember to
+`just vpn on`. Both are enabled in your `.env`.
+
+**Blocked traffic hangs; it does not error.** The killswitch *drops* packets
+rather than rejecting them, so yt-dlp sits through its entire retry schedule
+instead of failing fast — a stalled batch looks exactly like a slow one. The
+entrypoint prints a loud warning at boot when the killswitch is up but the
+tunnel isn't, and `just doctor` says so explicitly instead of showing an empty
+exit IP.
+
+## NordVPN caveats
+
+- **`security_opt: systempaths=unconfined` is required, not optional.**
+  nordvpnd disables IPv6 via sysctl before every connect, but Docker mounts
+  `/proc/sys` read-only, so the connect dies with `sysctl: permission denied on
+  key "net.ipv6.conf.all.disable_ipv6"`. This unmasks `/proc` so those writes
+  land. It is the narrow version of `privileged: true` — no extra capabilities,
+  no device access, just a writable `/proc/sys`. Remove it and the VPN cannot
+  connect at all.
+- **`nftables` must be installed.** NordVPN 5.2 drives its firewall through
+  `nft`, not `iptables`. Without it the daemon logs `nft: executable file not
+  found` and every connect fails.
+- **Technology defaults to `openvpn`.** NordLynx (WireGuard) wants a kernel
+  module Docker Desktop's Linux VM doesn't ship. On a real Linux host with the
+  module loaded, set `NORDVPN_TECHNOLOGY=nordlynx` for better throughput.
+- Requires `NET_ADMIN` + `/dev/net/tun`, both already wired in
+  `docker-compose.yml`. If the daemon misbehaves, `/var/log/nordvpnd.log`
+  inside the container has the detail (it contains binary bytes — pipe it
+  through `tr -c '[:print:]\n' ' '` before grepping).
+- **The login lives in the `nordvpn-data` volume, not in `.env`.** Once you
+  have logged in, clearing `NORDVPN_TOKEN` changes nothing — the daemon stays
+  authenticated across restarts and rebuilds. Only `just nuke` drops it, and
+  then you need the token again.
+
+---
+
+# Command reference
+
+```
+just                 Show the menu
+
+just setup           Cold start: everything below, in order, interactively
+just env             Write .env with your real UID/GID
+just token <token>   Save a NordVPN token and log in
+just cookies [prof]  Export Firefox cookies to cookies/cookies.txt
+just useragent       Pin both configs' UA to your host Chrome version
+
+just dl video <url>...      Download video(s)
+just dl gallery <url>...    Download gallery/galleries
+just batch video [file]     Run a queue in detached tmux
+                              (defaults to ~/Downloads/dlmp4_queue)
+just batch gallery [file]   Same, for galleries (~/Downloads/dlgal_queue)
+just watch video|gallery    Attach to a running batch session
+just shell           zsh inside the container
+just vpn <args>      on / off / status / ip, or any nordvpn subcommand
+
+just build           Build the image
+just up / down       Start / stop (volumes survive)
+just restart
+just logs            Follow container logs
+just doctor          Health check with fixes named
+just status          Container + VPN state
+just update          Rebuild with the latest yt-dlp / gallery-dl
+just nuke            Delete volumes too — forces a fresh NordVPN login
+```
+
+# Layout
+
+```
+.
+├── justfile
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── .tool-versions                # pins just 1.40.0 for asdf
+├── config/
+│   ├── yt-dlp/dlmp4.conf         # ported from ~/.config/yt-dlp/
+│   └── gallery-dl/config.json    # ported from ~/.config/gallery-dl/
+├── zsh/
+│   ├── zshrc
+│   ├── aliases.zsh               # dlmp4, dlgal, + container extras
+│   └── functions.zsh             # *_batch, exifmod — ported verbatim
+├── scripts/
+│   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
+│   ├── root.zshrc                # the "you're root, you don't want to be" notice
+│   └── vpn.sh                    # the `vpn` helper
+└── cookies/                      # gitignored; your exported cookies.txt
+```

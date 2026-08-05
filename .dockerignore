@@ -1,0 +1,8 @@
+.git
+.gitignore
+.env
+cookies/*
+!cookies/.gitkeep
+.DS_Store
+README.md
+Makefile

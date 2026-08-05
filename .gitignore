@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Exported browser cookies — session credentials, never commit
+cookies/*
+!cookies/.gitkeep
+!cookies/README.md
+
+# macOS
+.DS_Store
+
+# Stray downloads if anything ever lands in the repo
+*.mp4
+*.mkv
+*.webm
+*.part
+*.sqlite3
