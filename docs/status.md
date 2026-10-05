@@ -1,15 +1,16 @@
 # Status
 
-Last updated 2026-10-05 by `relay-next`.
+Last updated 2026-10-05 by `relay-project`.
 Last review: 2026-10-05 (F20261005-01, accepted).
 
 ## Where this stands
 
-- No project is active.
+- **P0001** (Stage 1, portable configuration and shared operations) is
+  active: DEC-7 to DEC-13 settled, delivery items D1–D5.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **Next:** `/relay-project` shapes Stage 1 of `docs/implementation-plan.md`.
+- **Next:** `/relay-next` cuts the first P0001 chunk, starting at D1.
 
 ## In flight
 
