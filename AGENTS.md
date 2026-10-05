@@ -32,7 +32,7 @@ run it; `docs/` holds the planning documents for the refactor, and
 
 - Code changes arrive through relay chunks: one `chunk/<id>` branch and pull
   request per chunk, plus `plan/<slug>` branches for planning changes (see
-  *Relay workflow*). Don't commit to `main` directly.
+  *Relay workflow*). Don't commit to `master` directly.
 - Short imperative commit subjects, a body that says why.
 - CI must pass before a merge, once it exists; don't bypass a failing required
   check (no `gh pr merge --admin`).
@@ -95,7 +95,7 @@ said it, and cite the entry at the code site.
 
 ### Settings
 
-- **Integration branch:** `main`. Chunk and planning pull requests
+- **Integration branch:** `master`. Chunk and planning pull requests
   squash-merge here.
 - **Release branch:** same as the integration branch.
 - **Gate:** none yet. The first maintenance chunk adds `just check` (at least
