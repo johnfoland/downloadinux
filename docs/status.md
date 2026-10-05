@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-05 by `relay-project`.
+Last updated 2026-10-05 by `relay-next`.
 Last review: 2026-10-05 (F20261005-01, accepted).
 
 ## Where this stands
@@ -10,12 +10,13 @@ Last review: 2026-10-05 (F20261005-01, accepted).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **Next:** `/relay-next` cuts the first P0001 chunk, starting at D1.
+- **P0001-C01** (D1: package, settings model, `config` commands): cut
+  2026-10-05, ready for an executor. Remaining after it: D2–D5.
 
 ## In flight
 
-- **Chunk:** —
-- **State:** none
+- **Chunk:** P0001-C01
+- **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
 - **Units committed:** —

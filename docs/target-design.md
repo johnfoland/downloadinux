@@ -71,6 +71,27 @@ Compose files, and an environment it computes from the effective settings.
 Downloader commands are passed as argument lists, never as shell strings, and
 never through interactive shell startup.
 
+Package details, pinned for P0001-C01:
+
+- Python 3.11 or later (`requires-python = ">=3.11"`, for `tomllib`), with
+  `.python-version` naming 3.13 and `uv.lock` committed. The one runtime
+  dependency is `tomlkit`, used only to write and edit the settings and
+  credentials files so a user's comments survive; reading uses `tomllib`.
+  pytest is a dev dependency. `python -m downloadinux` runs the same
+  function as the entry points.
+- The checkout root is the directory that holds `src/downloadinux/`. A
+  command that needs an install asset fails, naming the missing path, if it
+  is absent; a command that only reports a path (`config show`'s `/config`
+  mapping) reports it whether or not it exists.
+- `--config PATH` and `--set key=value` are accepted before or after the
+  subcommand.
+- Exit status: 0 on success, 1 when an operation fails (a refused overwrite,
+  a malformed token, a failed health check), 2 for a usage error or invalid
+  configuration. Errors go to stderr as `downloadinux: error: …`; a
+  configuration error names the file (or `--set`) and the key.
+- Writes to the settings and credentials files are atomic: a temporary file
+  in the same directory, created with the final mode, then renamed into place.
+
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 | Command | Operation |
@@ -148,6 +169,59 @@ string. The token, when set, must be 64 lowercase hex characters.
 `config show` lists every effective setting with its source (`default`,
 `file`, or `override`) and the host→container mapping of each mount, and
 never prints the token or cookie contents.
+
+Further rules, pinned for P0001-C01:
+
+- An `XDG_*` variable that is relative is treated as unset, as the XDG
+  specification requires. `--config` and `DOWNLOADINUX_CONFIG` expand `~` and
+  resolve a relative path against the working directory; an empty
+  `DOWNLOADINUX_CONFIG` is unset. A missing file named by either is not an
+  error, the same as the default.
+- `container.uid` and `container.gid` are non-negative integers defaulting
+  to `os.getuid()` and `os.getgid()`. `container.timezone` defaults to the
+  part of `/etc/localtime`'s symlink target after `zoneinfo/`, and to `UTC`
+  when that is not a symlink or has no such part.
+- `paths.state` defaults to `$XDG_STATE_HOME/downloadinux` and `paths.cookies`
+  to `$XDG_DATA_HOME/downloadinux/cookies`. Paths are expanded (`~`) but not
+  resolved, so a symlinked drive keeps the path the user wrote.
+- `--set` takes `table.key=value`; a missing `=` or an unknown key is a
+  configuration error naming `--set`. For a string setting, a value that is
+  not a quoted TOML string is the plain text after `=` (so
+  `--set vpn.server=123` is the string `123`); other settings parse the value
+  as TOML. A `--set` is validated like a file value.
+- Loading settings never checks that `paths.downloads` exists: `config show`
+  marks it missing, `up` refuses to start without it, and `doctor` reports
+  it.
+- The credentials file is TOML with one table, `[nordvpn]`, holding
+  `token`. Unknown keys and wrong types are configuration errors, like the
+  settings file's. A token that is not 64 lowercase hex characters is not a
+  load error: `config show` reports it `malformed` and `doctor` fails it.
+- `config show` prints one line per setting (`key = value  (source)`), then
+  the settings and credentials file paths (each marked missing when absent),
+  the token's state, and the four mounts. `config show --json` prints:
+
+  ```json
+  {"config_file": {"path": "/home/u/.config/downloadinux/config.toml", "exists": true},
+   "credentials_file": {"path": "/home/u/.config/downloadinux/credentials.toml", "exists": false},
+   "settings": [{"key": "paths.downloads", "value": "/home/u/Downloads", "source": "file"}],
+   "token": "unset",
+   "mounts": [{"container": "/downloads", "host": "/home/u/Downloads", "access": "rw", "exists": true}]}
+  ```
+
+  `settings` lists every setting in schema order (the order of the example
+  above, with `paths.state` and `paths.cookies` after `paths.downloads` and
+  `container.uid`, `container.gid`, `container.timezone` after
+  `container.project`); `token` is `set`, `unset`, or `malformed`; `mounts`
+  lists `/downloads`, `/config`, `/state`, `/cookies` in that order.
+- `init` writes the starter file at the selected settings path: every
+  setting of the example above with its default, the computed defaults
+  (`paths.state`, `paths.cookies`, `container.uid`, `gid`, `timezone`) left
+  commented out, and any `--set` values written in. It refuses, exit 1, if
+  the file exists; it has no `--force`. It writes no credentials file.
+- `config set-token [TOKEN]` takes the token as an argument, else prompts
+  without echo on a terminal, else reads one line from standard input. A
+  malformed token is refused, exit 1, with its length but never its value.
+  It writes the credentials file at mode 0600, creating the directory.
 
 ## Container contract
 
@@ -253,6 +327,44 @@ destination has none. `USERNAME` is dropped (the container user is always
 `dl`). It leaves `.env` and the old jar in place, refuses to overwrite an
 existing settings file without `--force`, and prints which settings it
 imported, never the token's value.
+
+Import details, pinned for P0001-C01:
+
+- `.env` is read as `KEY=VALUE` lines; blank lines and lines starting with
+  `#` are skipped, an `export ` prefix is allowed, and one pair of matching
+  surrounding single or double quotes is stripped. There is no variable
+  interpolation. A key missing or empty is not imported, and its setting
+  keeps its default.
+
+  | `.env` key | Setting | Conversion |
+  | --- | --- | --- |
+  | `HOST_DOWNLOADS` | `paths.downloads` | path, validated as a setting |
+  | `PUID`, `PGID` | `container.uid`, `container.gid` | integer |
+  | `TZ` | `container.timezone` | as is |
+  | `NORDVPN_SERVER` | `vpn.server` | as is |
+  | `NORDVPN_TECHNOLOGY` | `vpn.technology` | validated as a setting |
+  | `NORDVPN_AUTOCONNECT` | `vpn.autoconnect` | `true` → true, `false` → false |
+  | `NORDVPN_KILLSWITCH` | `vpn.killswitch` | `on`/`true` → true, `off`/`false` → false |
+  | `NORDVPN_TOKEN` | credentials `nordvpn.token` | must be 64 lowercase hex |
+
+  Any other value for a converted key is a configuration error naming the
+  `.env` file and key; nothing is written. A malformed `NORDVPN_TOKEN` is not
+  imported: the command warns, naming the key and the length, and carries
+  on. `USERNAME` and keys not in the table are listed by name as not
+  imported.
+- The settings file is the starter file `init` writes, with the imported
+  values and `vpn.enabled = true` in place of the defaults (`--set` values
+  are applied on top). The credentials file is written only when a token is
+  imported.
+- Without `--force`, the command refuses, exit 1, if the settings file, or
+  the credentials file when a token would be written, already exists; it
+  checks before writing anything.
+- The jar copied is `cookies/cookies.txt` beside the imported `.env`, to
+  `cookies.txt` in the effective `paths.cookies` (directory created 0700, jar
+  0600). An existing destination jar is kept, even with `--force`; a missing
+  source jar is reported, not an error.
+- `--env PATH` resolves like `--config`; the default is `.env` in the
+  checkout root.
 
 The `just` recipes keep their names and run `uv run downloadinux …`. `just
 batch` and `just watch` keep tmux until Stage 3: the CLI starts the existing
