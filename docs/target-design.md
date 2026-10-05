@@ -16,8 +16,14 @@ These are recorded in the [decision log](decisions.md), with their reasons:
 5. Build the TUI in **Python + Textual** (DEC-5).
 6. Preserve useful existing download behavior through explicit presets (DEC-6).
 
+Stage 1 (project P0001) added DEC-7 to DEC-13: the host application and its
+installation, configuration and locations, the container contract, presets,
+VPN mode, structured health checks, and migration. The sections below say
+which parts are settled.
+
 Native downloader execution and a remote-server control protocol are not required
-by the agreed scope. The exact worker interface and host packaging remain open.
+by the agreed scope. The exact worker interface remains open; host packaging
+for Stage 1 is settled (DEC-7).
 
 ## Proposed boundaries
 
@@ -46,36 +52,217 @@ existing work. Restart recovery comes from persisted job state, not a terminal
 multiplexer. The transport between host and worker needs a separate decision;
 this design does not require a network API merely to support local Docker.
 
+## Host application
+
+Settled for Stage 1 (DEC-7); implementation pending.
+
+The shared operations, the CLI, and later the TUI are one Python package,
+`downloadinux`, under `src/downloadinux/`, managed with uv and installed with
+`uv tool install --editable .` from the checkout. Two entry points,
+`downloadinux` and `dlx`, run the same function. Subcommands are the CLI; bare
+invocation is reserved for the TUI and prints help until Stage 4. The CLI is
+built on `argparse`.
+
+Install assets (Dockerfile, Compose files, presets, container scripts) are
+read from the checkout that holds the installed package; the CLI fails with an
+actionable error if they are missing. Every Docker interaction goes through
+the CLI, which runs `docker compose` with an explicit project name, explicit
+Compose files, and an environment it computes from the effective settings.
+Downloader commands are passed as argument lists, never as shell strings, and
+never through interactive shell startup.
+
+Stage 1 subcommands, each a thin front for an operation the TUI will call:
+
+| Command | Operation |
+| --- | --- |
+| `init` | Write a starter config (VPN off) if none exists |
+| `config show [--json]` | Effective settings, the source of each, and host→container mappings; secrets shown only as `set`/`unset` |
+| `config import-env` | Migrate an existing `.env` (DEC-13) |
+| `config set-token` | Validate and store the NordVPN token; log in if the container runs |
+| `config user-agent` | Refresh the user-agent setting (DEC-10) |
+| `build`, `up`, `down`, `restart`, `update` | Image and container lifecycle |
+| `compose -- <args>` | Pass-through to `docker compose` with the computed project, files, and environment |
+| `shell` | Interactive zsh in the container as `dl` (a convenience, not an execution path) |
+| `dl <preset> <url>…` | Download with a preset |
+| `batch <preset> [queue]`, `watch <preset>` | Stage 1 compatibility batch (DEC-13) |
+| `vpn <args>`, `servers [city] [country]` | NordVPN helpers |
+| `doctor [--json]` | Structured health check (DEC-12) |
+
+`video` (alias `v`) and `gallery` (aliases `gal`, `g`) name the presets.
+
 ## Configuration and paths
+
+Settled for Stage 1 (DEC-8); implementation pending.
 
 Separate installation files, user configuration, credentials, and mutable state.
 Routine operation must not rewrite tracked files in the checkout.
 
-Suggested container mount contract:
-
-| Container location | Purpose |
+| What | Default host location |
 | --- | --- |
-| `/downloads` | Download output |
-| `/config` | Effective application settings and presets |
-| `/state` | Job records, logs, archives, worker state |
-| `/cookies` | Managed cookie material with restricted access |
+| Settings | `$XDG_CONFIG_HOME/downloadinux/config.toml` |
+| Credentials (NordVPN token) | `credentials.toml` beside the settings file, mode 0600 |
+| Managed cookies | `$XDG_DATA_HOME/downloadinux/cookies/` (directory 0700) |
+| State | `$XDG_STATE_HOME/downloadinux/` |
 
-These names are proposals, not implemented paths. Host locations should be
-configurable and resolved once at the boundary. The worker should not need to
-know the host username or mirror the host home directory.
+Unset or empty `XDG_*` variables fall back to `~/.config`, `~/.local/share`,
+and `~/.local/state` on both macOS and Linux. The settings file is chosen by
+`--config PATH`, then `DOWNLOADINUX_CONFIG`, then the default. A missing
+settings file is not an error: every setting has a default. The CLI creates
+the cookies and state directories when it needs them; it never creates the
+downloads directory, because a missing one usually means an unmounted drive.
 
-Define setting precedence explicitly: invocation/job overrides, user settings,
-then application defaults. Presets describe media behavior; path and credential
-selection belong to application configuration. Generate effective downloader
-arguments or config without editing shipped templates.
+Precedence, highest first: invocation overrides (`--set key=value`,
+repeatable, on any command), the settings file, built-in defaults. No other
+environment variable sets a setting.
 
-Preserve the existing video and Instagram naming, quality, metadata, archive, and
-throttling choices as migration defaults. Decide archive placement and migration
-explicitly so existing gallery history remains useful.
+Settings in Stage 1:
 
-Provide an explicit VPN-disabled mode. Retain NordVPN integration initially;
-supporting arbitrary VPN providers is not an agreed requirement. Whether VPN
-runs in the worker container or a separate service remains open.
+```toml
+[paths]
+downloads = "~/Downloads"   # host output root; must exist
+# state   = default from XDG_STATE_HOME
+# cookies = default from XDG_DATA_HOME
+
+[container]
+project  = "downloadinux"   # Compose project name
+# uid, gid = the invoking host user's
+# timezone = the host's zone (from /etc/localtime), else "UTC"
+
+[downloads]
+user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+
+[vpn]
+enabled     = false
+server      = ""          # passed to `nordvpn connect`; empty = fastest
+technology  = "openvpn"   # or "nordlynx"
+killswitch  = false
+autoconnect = false
+```
+
+Validation: an unknown table or key, or a value of the wrong type, is an error
+that names the key and the file. Paths expand a leading `~`; a path that is
+still relative is an error. `technology` accepts only `openvpn` and
+`nordlynx`. `--set` values are parsed as TOML values, falling back to a plain
+string. The token, when set, must be 64 lowercase hex characters.
+
+`config show` lists every effective setting with its source (`default`,
+`file`, or `override`) and the host→container mapping of each mount, and
+never prints the token or cookie contents.
+
+## Container contract
+
+Settled for Stage 1 (DEC-9); implementation pending.
+
+| Container location | Host source | Access | Purpose |
+| --- | --- | --- | --- |
+| `/downloads` | `paths.downloads` | read-write | Download output, queues, batch logs, gallery archive |
+| `/config` | the checkout's `presets/` | read-only | Shipped presets |
+| `/state` | `paths.state` | read-write | Generated per-invocation files; later jobs and logs |
+| `/cookies` | `paths.cookies` | read-write | Managed cookie jar (`cookies.txt` in Stage 1) |
+
+Binds use Compose's long volume syntax, so host paths may contain spaces or
+colons. The NordVPN login and shell history keep their named volumes.
+
+The container user is always `dl`. The entrypoint, running as root, applies
+the UID and GID the CLI passes (reusing an existing group with that GID),
+creates the directories it needs under `/downloads`, `/state`, and `/cookies`
+as that user, and drops to it. It never changes ownership recursively on a
+mount. The worker never needs the host username or home directory (DEC-2).
+Compose sets no `container_name`; `container.project` names the project, so
+two configs with different project names run side by side.
+
+## Presets
+
+Settled for Stage 1 (DEC-6, DEC-10); implementation pending.
+
+The checkout's `presets/` holds one directory per preset, `video/` (the
+`dlmp4` yt-dlp config) and `gallery/` (the `dlgal` gallery-dl config). Preset
+files carry media behavior only: naming, format selection, metadata and
+embedding, SponsorBlock, throttling, and site-specific scoping such as
+gallery-dl's Instagram block. They carry no output root, cookie path, or
+user-agent.
+
+At invocation the operations layer adds, from application configuration:
+
+| Preset | Output root | Cookies | User-agent |
+| --- | --- | --- | --- |
+| `video` | `/downloads/dlmp4` | `/cookies/cookies.txt` | `downloads.user_agent` |
+| `gallery` | `/downloads/dlgal` for Instagram | `/cookies/cookies.txt` for Instagram | `downloads.user_agent`, globally and for Instagram |
+
+The gallery archive stays at `/downloads/dlgal/gallery-dl-archive.sqlite3`,
+the same host file as today. Settings applied only to Instagram today stay
+Instagram-only. The overrides go in as downloader arguments or as a generated
+file under `/state`; shipped preset files are never written.
+
+`config user-agent` writes `downloads.user_agent` into the settings file. In
+Stage 1 it keeps today's source, the host Chrome major version on macOS, and
+reports when it cannot read one; Stage 2 replaces that lookup.
+
+## VPN mode
+
+Settled for Stage 1 (DEC-11); implementation pending.
+
+`vpn.enabled = false` starts Compose from the base file only: no added
+capabilities, no `/dev/net/tun`, no `systempaths=unconfined`, and no NordVPN
+variables, and the entrypoint does not start `nordvpnd`. `true` adds the VPN
+overlay file, which carries those settings and the `vpn.*` values and token.
+The token reaches Compose only through the environment of the CLI's
+`docker compose` process; it is never written to a file in the checkout.
+NordVPN remains the only provider. Whether VPN runs in the worker container or
+a separate service remains open.
+
+## Health checks
+
+Settled for Stage 1 (DEC-12); implementation pending.
+
+`doctor` returns an ordered list of checks:
+
+```json
+{"ok": false, "checks": [
+  {"id": "config.file", "status": "ok", "summary": "~/.config/downloadinux/config.toml"},
+  {"id": "mount.downloads.mounted", "status": "ok", "summary": "/downloads is a mount point"},
+  {"id": "mount.downloads.writable", "status": "fail", "summary": "dl (uid 1000) cannot write /downloads",
+   "fix": "make the host directory writable by uid 1000"},
+  {"id": "vpn.connected", "status": "skip", "summary": "VPN disabled in config"}
+]}
+```
+
+`status` is `ok`, `warn`, `fail`, or `skip`; `fix`, when present, names the
+command or change that resolves it. `ok` is false exactly when a check failed,
+and the command exits 1 then, else 0. The human view renders the same list.
+
+Stage 1 checks cover: the settings and credentials files (credentials mode
+0600), token well-formedness, the cookie jar and which sites have a session
+cookie present, the Docker daemon, the container running, each mount as a
+mount point and (except `/config`) writable by `dl` via a create-and-remove
+probe, `/config` read-only, tool versions, and, when the VPN is enabled, the
+daemon's login, connection, killswitch state, and exit IP. When the VPN is
+disabled, VPN checks are `skip`. Container checks are `skip` when the
+container is not running. No check prints a secret or a cookie value, and none
+claims a login is valid.
+
+## Migration
+
+Settled for Stage 1 (DEC-13); implementation pending.
+
+`config import-env [--env PATH]` (default: `.env` in the checkout) writes the
+settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
+and the `NORDVPN_*` values, with `vpn.enabled = true`, and copies
+`cookies/cookies.txt` into the managed cookies directory (mode 0600) when the
+destination has none. `USERNAME` is dropped (the container user is always
+`dl`). It leaves `.env` and the old jar in place, refuses to overwrite an
+existing settings file without `--force`, and prints which settings it
+imported, never the token's value.
+
+The `just` recipes keep their names and run `uv run downloadinux …`. `just
+batch` and `just watch` keep tmux until Stage 3: the CLI starts the existing
+zsh loop non-interactively, sourcing only the loop's own file, with the
+argument list the `dl` operation would use. The queue file must still be
+under the downloads root.
+
+`just cookies` keeps its Firefox export through host yt-dlp until Stage 2
+replaces it, but writes the managed jar (`paths.cookies`/`cookies.txt`) instead
+of the checkout's `cookies/` directory.
 
 ## Named cookie sources
 

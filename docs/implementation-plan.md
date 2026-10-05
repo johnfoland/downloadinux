@@ -1,6 +1,8 @@
 # Implementation plan
 
-Status: planning only. No refactor stage has been implemented.
+Status: planning only. No refactor stage has been implemented. Stage 1 is
+designed as project [P0001](projects/P0001-portable-config.md); its rules are in
+the [target design](target-design.md).
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -15,6 +17,11 @@ Read [current state](current-state.md) for the migration baseline and
 - Preserve current media behavior as named presets.
 - Provide explicit VPN-disabled operation and structured health results.
 - Keep useful current commands as compatibility wrappers during migration.
+
+Settled design: host application (DEC-7), configuration and locations
+(DEC-8), container contract (DEC-9), presets (DEC-10), VPN mode (DEC-11),
+health checks (DEC-12), and migration (DEC-13). Batch execution keeps tmux
+until Stage 3, and the gallery archive stays in place.
 
 Acceptance criteria:
 
@@ -118,14 +125,14 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 
 | Decision | Why it matters |
 | --- | --- |
-| Configuration format and host installation method | Determines invocation outside the checkout and distribution |
+| Configuration format and host installation method | Resolved for Stage 1: TOML at XDG locations (DEC-8), editable install from the checkout (DEC-7). A self-contained distribution is still open. |
 | Worker interface and job-store ownership | Determines status streaming, coordination, and restart behavior |
 | Cookie revision pinned at submission or startup | Determines what queued jobs do after a source refresh |
 | Imported managed copies versus linked files | Determines refresh and ownership semantics |
 | Browser support for the first release | Bounds OS-specific discovery/export work |
 | Cancellation, retry, duplicates, and concurrency | Defines scheduler and user-visible behavior |
-| VPN packaging and required/optional policy | Defines readiness checks and deployment permissions |
-| Archive/state migration locations | Avoids losing deduplication history |
+| VPN packaging and required/optional policy | Optional per config (DEC-11). Same container or a separate service is still open. |
+| Archive/state migration locations | Avoids losing deduplication history. Stage 1 leaves the gallery archive in place (DEC-13); Stage 3 decides. |
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
 The next design task is to settle configuration, cookie-source, and job contracts
