@@ -7,6 +7,7 @@ an operation the TUI will call (target design, *Host application*).
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from collections.abc import Sequence
@@ -85,7 +86,42 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--json", action="store_true", help="print JSON")
     show.set_defaults(handler=_config_show)
 
+    set_token = config_commands.add_parser(
+        "set-token",
+        help="validate and store the NordVPN token",
+        description="Store the NordVPN token in the credentials file. Without "
+        "TOKEN it prompts on a terminal, else reads one line from stdin.",
+    )
+    _add_global_options(set_token, 2)
+    set_token.add_argument("token", nargs="?", metavar="TOKEN")
+    set_token.set_defaults(handler=_config_set_token)
+
+    init = commands.add_parser(
+        "init", help="write a starter settings file (VPN off) if none exists"
+    )
+    _add_global_options(init, 1)
+    init.set_defaults(handler=_init)
+
     return parser
+
+
+def _init(args: argparse.Namespace, options: GlobalOptions) -> int:
+    path = operations.init(options.config, options.overrides)
+    print(f"Wrote {path}")
+    return 0
+
+
+def _read_token() -> str:
+    if sys.stdin.isatty():
+        return getpass.getpass("NordVPN token: ").strip()
+    return sys.stdin.readline().strip()
+
+
+def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
+    token = args.token if args.token is not None else _read_token()
+    path = operations.set_token(token, options.config, options.overrides)
+    print(f"Stored the NordVPN token in {path}")
+    return 0
 
 
 def _config_show(args: argparse.Namespace, options: GlobalOptions) -> int:
