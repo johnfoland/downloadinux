@@ -1,21 +1,22 @@
 # Status
 
-Last updated 2026-10-05 by `relay-setup`.
+Last updated 2026-10-05 by `relay-next`.
 Last review: none yet.
 
 ## Where this stands
 
-- The relay workflow was set up on 2026-10-05. No project is active and no
-  chunk is in flight.
-- The repo has no gate or CI yet.
-- **Do next:** `/relay-next` to cut the maintenance chunk that adds
-  `just check` and a CI workflow running it, then `/relay-project` to shape
-  Stage 1 of `docs/implementation-plan.md`.
+- No project is active. The repo has no gate or CI yet.
+- **F20261005-01** (maintenance, issue #3): adds `just check` and a CI
+  workflow running it. Brief cut 2026-10-05; ready for an executor. Its
+  executor needs the Docker daemon running, since the gate builds the image.
+- **After it:** the planner adds the gate to AGENTS.md and requires the CI
+  check on `master`; then `/relay-project` shapes Stage 1 of
+  `docs/implementation-plan.md`.
 
 ## In flight
 
-- **Chunk:** —
-- **State:** none
+- **Chunk:** F20261005-01
+- **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
 - **Units committed:** —
