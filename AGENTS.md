@@ -25,8 +25,12 @@ run it; `docs/` holds the planning documents for the refactor, and
 - `just doctor`: live health check of a running container (mount, cookies,
   user-agent, VPN, exit IP). It needs real credentials, so it is not a CI
   check.
-- There is no single check command or CI yet; adding `just check` and a CI
-  workflow that runs it is planned as the first maintenance chunk.
+- `just check`: the gate. In order, stopping at the first failure:
+  shellcheck over `scripts/*.sh`, `zsh -n` over the zsh sources, a compile of
+  `scripts/servers.py`, `docker compose config -q`, a Docker daemon check,
+  and `docker build --tag downloadinux:check .`. It needs the Docker daemon
+  running and no `.env`. Never run `docker compose config` without `-q`: it
+  prints the resolved file, NordVPN token included.
 
 ## Workflow
 
@@ -34,7 +38,7 @@ run it; `docs/` holds the planning documents for the refactor, and
   request per chunk, plus `plan/<slug>` branches for planning changes (see
   *Relay workflow*). Don't commit to `master` directly.
 - Short imperative commit subjects, a body that says why.
-- CI must pass before a merge, once it exists; don't bypass a failing required
+- CI must pass before a merge; don't bypass a failing required
   check (no `gh pr merge --admin`).
 - Keep README.md and the `just` recipe comments (they are the menu text) in
   step with any behavior change, in the same pull request. As refactor stages
@@ -98,11 +102,12 @@ said it, and cite the entry at the code site.
 - **Integration branch:** `master`. Chunk and planning pull requests
   squash-merge here.
 - **Release branch:** same as the integration branch.
-- **Gate:** none yet. The first maintenance chunk adds `just check` (at least
-  shellcheck over the scripts, `docker compose config`, and an image build)
-  and a CI workflow that runs it; until then, run whatever the brief's *Tests*
-  line names before every unit commit.
-- **CI:** none.
+- **Gate:** `just check` (steps under *Commands*). The gate matches CI: the
+  workflow installs tools and runs `just check` and nothing else, so a new
+  check goes into the recipe, never into the workflow alone.
+- **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, job
+  `check`), on pull requests into `master` and pushes to `master`. The `check`
+  status is required on `master`.
 - **Releases:** none.
 - **Issues:** GitHub Issues, as *Roadmap* describes: review follow-ups and
   ideas are filed as issues, a project or maintenance chunk may start from

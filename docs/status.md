@@ -1,22 +1,20 @@
 # Status
 
 Last updated 2026-10-05 by `relay-next`.
-Last review: none yet.
+Last review: 2026-10-05 (F20261005-01, accepted).
 
 ## Where this stands
 
-- No project is active. The repo has no gate or CI yet.
-- **F20261005-01** (maintenance, issue #3): adds `just check` and a CI
-  workflow running it. Brief cut 2026-10-05; ready for an executor. Its
-  executor needs the Docker daemon running, since the gate builds the image.
-- **After it:** the planner adds the gate to AGENTS.md and requires the CI
-  check on `master`; then `/relay-project` shapes Stage 1 of
-  `docs/implementation-plan.md`.
+- No project is active.
+- **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
+  request #6. The gate is `just check` (it needs the Docker daemon running),
+  CI runs it on every pull request, and `check` is required on `master`.
+- **Next:** `/relay-project` shapes Stage 1 of `docs/implementation-plan.md`.
 
 ## In flight
 
-- **Chunk:** F20261005-01
-- **State:** ready for an executor
+- **Chunk:** —
+- **State:** none
 - **Branch:** —
 - **Pull request:** —
 - **Units committed:** —

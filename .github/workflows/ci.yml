@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.40.0
+
+      # The runner's preinstalled shellcheck is older and can disagree with
+      # the local 0.11.0, so install the pinned release.
+      - name: Install shellcheck 0.11.0
+        run: |
+          curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
+            | tar -xJ -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-v0.11.0" >> "$GITHUB_PATH"
+
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      # The gate itself: CI runs exactly what `just check` runs locally.
+      - run: just check

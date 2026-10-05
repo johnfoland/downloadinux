@@ -394,6 +394,7 @@ just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
 
 just build           Build the image
+just check           Static checks and an image build (the CI gate)
 just up / down       Start / stop (volumes survive)
 just restart
 just logs            Follow container logs
@@ -407,6 +408,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 
 ```
 .
+├── .github/workflows/ci.yml      # CI: runs `just check` on pull requests and master
 ├── justfile
 ├── Dockerfile
 ├── docker-compose.yml
@@ -422,6 +424,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
+│   ├── servers.py                # filters NordVPN servers by city for `just servers`
 │   └── vpn.sh                    # the `vpn` helper
+├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # gitignored; your exported cookies.txt
 ```
