@@ -16,9 +16,9 @@ Last review: none yet.
 ## In flight
 
 - **Chunk:** F20261005-01
-- **State:** ready for an executor
-- **Branch:** —
-- **Pull request:** —
+- **State:** executing
+- **Branch:** `chunk/f20261005-01`
+- **Pull request:** pending
 - **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
