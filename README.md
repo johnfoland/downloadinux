@@ -424,6 +424,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
+│   ├── servers.py                # filters NordVPN servers by city for `just servers`
 │   └── vpn.sh                    # the `vpn` helper
+├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # gitignored; your exported cookies.txt
 ```
