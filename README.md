@@ -4,6 +4,10 @@ A headless Debian 13 "Trixie" container that runs your `dlmp4` / `dlgal`
 workflow — yt-dlp, gallery-dl, NordVPN, zsh — against the host `~/Downloads`
 folder.
 
+For the planned portable application and Python + Textual TUI, see the
+[architecture review and implementation plan](docs/README.md). Those documents
+describe future work; this README covers the current implementation.
+
 Your existing configs and shell functions were ported over as-is. The one
 thing that had to change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
 walks you through.
