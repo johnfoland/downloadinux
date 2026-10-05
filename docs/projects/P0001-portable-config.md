@@ -96,6 +96,7 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | target-design, *Health checks* (new) | Result shape, statuses, exit code, Stage 1 check list | Contract the TUI's status view will consume |
 | target-design, *Migration* (new) | `import-env`, `just` wrappers, batch and cookies during Stage 1 | Migration behavior users see |
 | [implementation-plan.md](../implementation-plan.md), status line, *Stage 1*, *Decisions to resolve* | Link to P0001; cite DEC-7 to DEC-13; mark resolved rows | Stage plan and open-decision register |
+| target-design, *Host application*, *Configuration and paths*, *Migration* ("pinned for P0001-C01" lists) | Python version and `tomlkit`; checkout root; global option placement; exit codes; atomic writes; XDG edge cases; computed defaults; `--set` parsing; credentials format; `config show` text and JSON; `init` and `set-token` behavior; `.env` parsing, key mapping, `--force`, and jar copy | Cutting P0001-C01: details D1's executor would otherwise have invented |
 
 ## 5. Delivery plan
 
@@ -227,7 +228,7 @@ implemented behavior.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| P0001-C01 | D1 | ready for an executor | — | — |
 
 ## 8. Closeout
 
