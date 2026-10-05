@@ -15,3 +15,9 @@ cookies/*
 *.webm
 *.part
 *.sqlite3
+
+# Python host application
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/

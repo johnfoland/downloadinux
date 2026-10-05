@@ -6,3 +6,4 @@ cookies/*
 .DS_Store
 README.md
 Makefile
+.venv

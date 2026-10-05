@@ -1,0 +1,86 @@
+"""The `downloadinux` / `dlx` command line (DEC-7).
+
+The CLI only parses arguments and prints; each subcommand is a thin front for
+an operation the TUI will call (target design, *Host application*).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from downloadinux.errors import DownloadinuxError
+
+PROG = "downloadinux"
+# Parser nesting depth: the top level, a command, a command's subcommand.
+_MAX_DEPTH = 2
+
+
+@dataclass(frozen=True)
+class GlobalOptions:
+    """`--config PATH` and repeatable `--set key=value`, from any position."""
+
+    config: str | None
+    overrides: tuple[str, ...]
+
+
+def _add_global_options(parser: argparse.ArgumentParser, level: int) -> None:
+    # Each parser level stores into its own attributes: argparse copies a
+    # subparser's namespace over its parent's, so a shared `dest` would let
+    # `--set` after the subcommand discard the ones before it.
+    group = parser.add_argument_group("global options")
+    group.add_argument(
+        "--config",
+        metavar="PATH",
+        dest=f"_config_{level}",
+        default=argparse.SUPPRESS,
+        help="settings file (default: $DOWNLOADINUX_CONFIG, then "
+        "$XDG_CONFIG_HOME/downloadinux/config.toml)",
+    )
+    group.add_argument(
+        "--set",
+        metavar="KEY=VALUE",
+        dest=f"_set_{level}",
+        action="append",
+        default=argparse.SUPPRESS,
+        help="override a setting for this invocation (repeatable)",
+    )
+
+
+def _global_options(namespace: argparse.Namespace) -> GlobalOptions:
+    config: str | None = None
+    overrides: list[str] = []
+    for level in range(_MAX_DEPTH + 1):
+        # Deeper levels were typed later: their --config wins, their --set
+        # values apply after the earlier ones.
+        config = getattr(namespace, f"_config_{level}", config)
+        overrides.extend(getattr(namespace, f"_set_{level}", []))
+    return GlobalOptions(config=config, overrides=tuple(overrides))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description="Run the downloadinux download container from the host.",
+    )
+    _add_global_options(parser, 0)
+    parser.add_subparsers(dest="command", metavar="COMMAND")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        # Bare invocation is reserved for the TUI; until Stage 4 it prints
+        # help (DEC-7).
+        parser.print_help()
+        return 0
+    try:
+        return handler(args, _global_options(args))
+    except DownloadinuxError as error:
+        print(f"{PROG}: error: {error}", file=sys.stderr)
+        return error.exit_status
