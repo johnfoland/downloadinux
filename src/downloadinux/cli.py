@@ -7,10 +7,12 @@ an operation the TUI will call (target design, *Host application*).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from downloadinux import operations
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -66,8 +68,69 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the downloadinux download container from the host.",
     )
     _add_global_options(parser, 0)
-    parser.add_subparsers(dest="command", metavar="COMMAND")
+    commands = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    config = commands.add_parser(
+        "config", help="inspect and migrate configuration"
+    )
+    _add_global_options(config, 1)
+    config_commands = config.add_subparsers(
+        dest="config_command", metavar="SUBCOMMAND", required=True
+    )
+
+    show = config_commands.add_parser(
+        "show", help="effective settings, their sources, and the mounts"
+    )
+    _add_global_options(show, 2)
+    show.add_argument("--json", action="store_true", help="print JSON")
+    show.set_defaults(handler=_config_show)
+
     return parser
+
+
+def _config_show(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.show_config(options.config, options.overrides)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(render_config(report))
+    return 0
+
+
+def _toml(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _missing(exists: bool) -> str:
+    return "" if exists else "  (missing)"
+
+
+def render_config(report: dict) -> str:
+    """`config show`'s text form: one `key = value  (source)` line per
+    setting, then the files, the token's state, and the mounts."""
+    lines = [
+        f"{s['key']} = {_toml(s['value'])}  ({s['source']})"
+        for s in report["settings"]
+    ]
+    config_file, creds_file = report["config_file"], report["credentials_file"]
+    lines += [
+        "",
+        f"settings file:    {config_file['path']}{_missing(config_file['exists'])}",
+        f"credentials file: {creds_file['path']}{_missing(creds_file['exists'])}",
+        f"token:            {report['token']}",
+        "",
+        "mounts:",
+    ]
+    lines += [
+        f"  {m['container']:<10} <- {m['host']}  ({m['access']})"
+        f"{_missing(m['exists'])}"
+        for m in report["mounts"]
+    ]
+    return "\n".join(lines)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
