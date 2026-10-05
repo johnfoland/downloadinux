@@ -61,8 +61,7 @@ start_nordvpn() {
   "$daemon" >/var/log/nordvpnd.log 2>&1 &
 
   # Wait for the control socket rather than sleeping a fixed guess.
-  local i
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     [[ -S /run/nordvpn/nordvpnd.sock ]] && break
     sleep 1
   done
@@ -93,9 +92,11 @@ start_nordvpn() {
       log "NordVPN: already logged in (state persisted in the nordvpn-data volume)."
     else
       log "NordVPN: logging in with token..."
-      nordvpn login --token "$NORDVPN_TOKEN" >/dev/null 2>&1 \
-        && log "NordVPN: logged in." \
-        || warn "NordVPN login failed — check NORDVPN_TOKEN."
+      if nordvpn login --token "$NORDVPN_TOKEN" >/dev/null 2>&1; then
+        log "NordVPN: logged in."
+      else
+        warn "NordVPN login failed — check NORDVPN_TOKEN."
+      fi
     fi
   else
     warn "NORDVPN_TOKEN not set. Run 'vpn login <token>' inside the container."
