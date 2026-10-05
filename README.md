@@ -375,6 +375,39 @@ exit IP.
 
 # Command reference
 
+## The host CLI (in progress)
+
+The refactor's host application is a Python package in `src/downloadinux/`.
+Install it once from the checkout, with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install --editable .
+```
+
+That puts `downloadinux` and its short name `dlx` on your `PATH`, working from
+any directory. So far it manages the new configuration files only:
+
+```
+dlx init                     Write a starter settings file (VPN off); refuses if one exists
+dlx config show [--json]     Effective settings, where each comes from, the files, the
+                               token's state (set/unset/malformed, never its value),
+                               and the container mounts
+dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, without TOKEN)
+dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
+                               cookies/cookies.txt into the managed cookies directory
+                               (--env PATH, --force; .env and the old jar stay put)
+```
+
+Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
+`$DOWNLOADINUX_CONFIG`, or `--config PATH`), the token in `credentials.toml`
+beside it (mode 0600). `--set table.key=value` overrides a setting for one
+invocation, on any command. `dlx` with no command prints help.
+
+The `just` recipes below do not read these files yet: they still run from
+`.env` until later Stage 1 chunks turn them into wrappers over the CLI.
+
+## `just` recipes
+
 ```
 just                 Show the menu
 
@@ -394,7 +427,7 @@ just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
 
 just build           Build the image
-just check           Static checks and an image build (the CI gate)
+just check           Static checks, the Python tests, and an image build (the CI gate)
 just up / down       Start / stop (volumes survive)
 just restart
 just logs            Follow container logs
@@ -426,6 +459,9 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── servers.py                # filters NordVPN servers by city for `just servers`
 │   └── vpn.sh                    # the `vpn` helper
+├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
+├── src/downloadinux/             # host CLI: settings, config commands
+├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # gitignored; your exported cookies.txt
 ```

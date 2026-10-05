@@ -194,3 +194,21 @@ decides its placement.
 *Where:* [target design](target-design.md), *Migration*;
 [implementation plan](implementation-plan.md), *Stage 1*. Added during
 project P0001.
+
+## DEC-14: `.env` lines the import rules leave open (2026-10)
+
+The `.env` reader in `config import-env` (DEC-13) treats a non-comment line
+without `=` as that key with an empty value, so it imports nothing and, for a
+key outside the mapping table, is listed as not imported. A key that appears
+twice takes its later value. Whitespace around the key and the value is
+trimmed before the quote rule applies, and nothing after an unquoted value is
+treated as a comment: the value is the rest of the line.
+
+These mirror what a shell or Compose does closely enough for the generated
+`.env` files this import exists for, without failing an import over a line
+that names no setting. Rejecting such lines as configuration errors was
+considered and lost: it would stop a migration for a line whose value could
+never have been imported.
+
+*Where:* [target design](target-design.md), *Migration*. Added during
+P0001-C01-d.

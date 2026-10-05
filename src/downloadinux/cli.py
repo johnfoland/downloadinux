@@ -12,8 +12,9 @@ import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
-from downloadinux import operations
+from downloadinux import migrate, operations
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -96,6 +97,25 @@ def build_parser() -> argparse.ArgumentParser:
     set_token.add_argument("token", nargs="?", metavar="TOKEN")
     set_token.set_defaults(handler=_config_set_token)
 
+    import_env = config_commands.add_parser(
+        "import-env",
+        help="migrate an existing .env (VPN on)",
+        description="Write the settings and credentials files from an "
+        "existing .env and copy cookies/cookies.txt beside it into the "
+        "managed cookies directory. The .env and the old jar stay in place.",
+    )
+    _add_global_options(import_env, 2)
+    import_env.add_argument(
+        "--env", metavar="PATH", help="the .env to import (default: the checkout's)"
+    )
+    import_env.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing settings and credentials files "
+        "(an existing cookie jar is always kept)",
+    )
+    import_env.set_defaults(handler=_config_import_env)
+
     init = commands.add_parser(
         "init", help="write a starter settings file (VPN off) if none exists"
     )
@@ -108,6 +128,30 @@ def build_parser() -> argparse.ArgumentParser:
 def _init(args: argparse.Namespace, options: GlobalOptions) -> int:
     path = operations.init(options.config, options.overrides)
     print(f"Wrote {path}")
+    return 0
+
+
+def _config_import_env(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = migrate.import_env(
+        args.env, args.force, options.config, options.overrides
+    )
+    for warning in result.warnings:
+        print(f"{PROG}: warning: {warning}", file=sys.stderr)
+    print(f"Wrote {result.settings_file} from {result.env_file}, importing:")
+    for key, value in result.imported:
+        print(f"  {key} = {_toml(value)}")
+    if result.credentials_file is not None:
+        print(f"Wrote {result.credentials_file} (token: {result.token.value})")
+    else:
+        print(f"No NordVPN token imported (token: {result.token.value})")
+    if result.jar is migrate.JarOutcome.COPIED:
+        print(f"Copied the cookie jar to {result.jar_destination}")
+    elif result.jar is migrate.JarOutcome.KEPT:
+        print(f"Kept the existing cookie jar at {result.jar_destination}")
+    else:
+        print(f"No cookie jar at {result.jar_source}; nothing copied")
+    if result.not_imported:
+        print(f"Not imported: {', '.join(result.not_imported)}")
     return 0
 
 
@@ -134,6 +178,8 @@ def _config_show(args: argparse.Namespace, options: GlobalOptions) -> int:
 
 
 def _toml(value: object) -> str:
+    if isinstance(value, Path):
+        value = str(value)
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):

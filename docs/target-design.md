@@ -54,7 +54,9 @@ this design does not require a network API merely to support local Docker.
 
 ## Host application
 
-Settled for Stage 1 (DEC-7); implementation pending.
+Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
+the `config` commands except `user-agent` are implemented (P0001-C01); the
+other subcommands are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -113,7 +115,9 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 ## Configuration and paths
 
-Settled for Stage 1 (DEC-8); implementation pending.
+Settled for Stage 1 (DEC-8). Implemented in P0001-C01: the settings and
+credentials files, their locations, `config show`, `init`, and
+`config set-token` (storing only; the login on set is pending).
 
 Separate installation files, user configuration, credentials, and mutable state.
 Routine operation must not rewrite tracked files in the checkout.
@@ -317,7 +321,8 @@ claims a login is valid.
 
 ## Migration
 
-Settled for Stage 1 (DEC-13); implementation pending.
+Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
+the `just` wrappers and the cookie-export change are pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
@@ -334,7 +339,9 @@ Import details, pinned for P0001-C01:
   `#` are skipped, an `export ` prefix is allowed, and one pair of matching
   surrounding single or double quotes is stripped. There is no variable
   interpolation. A key missing or empty is not imported, and its setting
-  keeps its default.
+  keeps its default. A line without `=` is a key with an empty value, a
+  repeated key takes its later value, whitespace around key and value is
+  trimmed, and an unquoted value runs to the end of the line (DEC-14).
 
   | `.env` key | Setting | Conversion |
   | --- | --- | --- |

@@ -203,14 +203,17 @@ TABLES: tuple[str, ...] = tuple(dict.fromkeys(s.table for s in SCHEMA))
 # --- validation ------------------------------------------------------------
 
 
-def validate(setting: Setting, value: Any, where: str) -> Any:
+def validate(
+    setting: Setting, value: Any, where: str, label: str | None = None
+) -> Any:
     """Check a raw TOML value against its setting and return the typed value.
 
-    `where` names the file (or `--set`) for the error message.
+    `where` names the file (or `--set`) for the error message, and `label`
+    the key when it is not the setting's own (a `.env` key on import).
     """
 
     def fail(problem: str) -> ConfigError:
-        return ConfigError(f"{where}: {setting.key}: {problem}")
+        return ConfigError(f"{where}: {label or setting.key}: {problem}")
 
     if setting.type in (STRING, PATH):
         if not isinstance(value, str):

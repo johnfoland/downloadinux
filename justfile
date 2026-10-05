@@ -272,7 +272,7 @@ servers city="New_York" country="228":
 build:
     {{compose}} build
 
-# Static checks and an image build (the CI gate)
+# Static checks, the Python tests, and an image build (the CI gate)
 check:
     #!/usr/bin/env bash
     set -euo pipefail
