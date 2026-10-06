@@ -16,14 +16,15 @@ Last review: 2026-10-06 (P0001-C03, accepted with follow-ups).
   2026-10-06, pull requests #15 and #16.
 - **P0001-C04** (D3: presets, `dl`, `batch`, `watch`, `config user-agent`,
   their wrappers, the end of DEC-15's links; issues #17 and #18 from the
-  C03 review): ready for an executor. Remaining after it: D4, D5.
+  C03 review): awaiting review, pull request #19. Remaining after it: D4,
+  D5.
 
 ## In flight
 
 - **Chunk:** P0001-C04
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0001-c04`
-- **Pull request:** `#19` (draft)
+- **Pull request:** `#19` (ready)
 - **Units committed:** a, b, c, d
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
