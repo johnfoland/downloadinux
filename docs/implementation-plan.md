@@ -1,6 +1,8 @@
 # Implementation plan
 
-Status: planning only. No refactor stage has been implemented. Stage 1 is
+Status: Stage 1 is partly implemented: D1's package and configuration commands
+(P0001-C01), and D2's Compose layer, mount contract, lifecycle commands, and
+gate smoke test (P0001-C02). Later stages remain proposals. Stage 1 is
 designed as project [P0001](projects/P0001-portable-config.md); its rules are in
 the [target design](target-design.md).
 

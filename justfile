@@ -1,12 +1,10 @@
 # downloadinux — run `just` for the menu, `just setup` for a cold start.
 
-set dotenv-load := true
 set positional-arguments := true
 
-user    := env_var_or_default("USERNAME", "dl")
-chome   := "/home/" + user
-compose := "docker compose"
-dex     := "docker compose exec -u " + user + " downloadinux"
+chome   := "/home/dl"
+compose := "uv run downloadinux compose --"
+dex     := compose + " exec -u dl downloadinux"
 probe   := "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
 
 # Show the menu
@@ -17,16 +15,19 @@ default:
 # First run
 # ---------------------------------------------------------------------------
 
-# Cold start: .env, NordVPN token, cookies, build, launch, health check
+# Cold start: import .env into settings, token, managed cookies, build, launch
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
     printf '\033[1;36m==> 1/5  Writing .env\033[0m\n'
     just env
+    if [[ "$(bash scripts/config-value.sh config_file.exists)" == false ]]; then
+      uv run downloadinux config import-env
+    fi
 
     printf '\n\033[1;36m==> 2/5  NordVPN token\033[0m\n'
-    if grep -qE '^NORDVPN_TOKEN=.+' .env; then
-      echo "    Already set in .env, leaving it alone."
+    if [[ "$(bash scripts/config-value.sh token)" == set ]]; then
+      echo "    Already set in credentials.toml, leaving it alone."
     else
       echo "    Get one at: https://my.nordaccount.com"
       echo "    Services > NordVPN > Manual setup > Set up NordVPN manually >"
@@ -43,7 +44,8 @@ setup:
     printf '\n\033[1;36m==> 3/5  Exporting browser cookies\033[0m\n'
     # Presence of the file proves nothing — yt-dlp writes its jar back on every
     # run, so an unauthenticated file still grows. Look for a real session.
-    if grep -qE 'instagram.*sessionid' cookies/cookies.txt 2>/dev/null; then
+    jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
+    if grep -qE 'instagram.*sessionid' "$jar" 2>/dev/null; then
       echo "    Already have an Instagram session, leaving cookies alone."
     else
       echo "    Make sure you're logged in to the sites you care about in Firefox."
@@ -51,10 +53,10 @@ setup:
     fi
 
     printf '\n\033[1;36m==> 4/5  Building the image (first run takes a few minutes)\033[0m\n'
-    {{compose}} build
+    uv run downloadinux build
 
     printf '\n\033[1;36m==> 5/5  Starting up\033[0m\n'
-    {{compose}} up -d
+    uv run downloadinux up
     sleep 10
     echo ""
     just doctor
@@ -80,64 +82,31 @@ env:
     chmod 600 .env
     echo "    Wrote .env  (PUID=$(id -u) PGID=$(id -g))"
 
-# Store a NordVPN token in .env, and log in now if the container is running
+# Validate and store a NordVPN token in credentials.toml
 token tok:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # `just --list` renders this recipe as "just token tok", which is easy to
-    # paste verbatim. Reject anything that isn't a real token rather than
-    # writing it to .env and failing opaquely at next boot.
-    if ! printf '%s' "$1" | grep -qE '^[0-9a-f]{64}$'; then
-      echo "  Not a NordVPN token: \"$1\" (${#1} chars)" >&2
-      echo "  Expected 64 lowercase hex characters." >&2
-      echo "  Get one: my.nordaccount.com > Services > NordVPN > Manual setup" >&2
-      echo "           > Set up NordVPN manually > Access token > Generate new" >&2
-      exit 1
-    fi
-    [[ -f .env ]] || just env
-    python3 - <<PY
-    import re, pathlib
-    p = pathlib.Path(".env"); t = p.read_text()
-    t = re.sub(r"^NORDVPN_TOKEN=.*$", "NORDVPN_TOKEN=$1", t, flags=re.M)
-    p.write_text(t)
-    PY
-    chmod 600 .env
-    echo "    Token saved to .env (gitignored)."
-    if docker compose ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then
-      if {{dex}} nordvpn login --token "$1" >/dev/null 2>&1; then
-        echo "    Logged in."
-        # Autoconnect only fires at boot, so without this you'd still be sat
-        # behind the killswitch with no traffic until the next restart.
-        if [[ "${NORDVPN_AUTOCONNECT:-false}" == "true" ]]; then
-          echo "    Connecting to ${NORDVPN_SERVER:-fastest available}..."
-          # shellcheck disable=SC2086
-          {{dex}} nordvpn connect ${NORDVPN_SERVER:-} >/dev/null 2>&1 \
-            && echo "    Connected. Run 'just doctor' to confirm." \
-            || echo "    Connect failed — try: just vpn on"
-        fi
-      else
-        echo "    Login failed — Nord rejected that token."
-      fi
-    else
-      echo "    Container isn't running; it'll log in on next 'just up'."
-    fi
+    @uv run downloadinux config set-token "$1"
 
-# Export Firefox cookies from the host into ./cookies/cookies.txt
+# Export Firefox cookies into the configured managed cookie jar
 cookies profile="":
     #!/usr/bin/env bash
     set -euo pipefail
     command -v yt-dlp >/dev/null || { echo "    Need yt-dlp on the host: brew install yt-dlp"; exit 1; }
-    src="firefox{{ if profile == "" { "" } else { ":" } }}{{profile}}"
+    umask 077
+    src="firefox${1:+:$1}"
+    directory=$(bash scripts/config-value.sh paths.cookies)
+    mkdir -p -m 700 "$directory"
+    chmod 700 "$directory"
+    jar="$directory/cookies.txt"
     echo "    Reading cookies from $src ..."
     # yt-dlp writes its cookie jar back to --cookies on exit, which turns a
     # live browser profile into the Netscape file both downloaders can read.
-    yt-dlp --cookies-from-browser "$src" --cookies cookies/cookies.txt \
+    yt-dlp --cookies-from-browser "$src" --cookies "$jar" \
            --simulate --quiet --no-warnings '{{probe}}'
-    chmod 600 cookies/cookies.txt
-    n=$(grep -cv '^#' cookies/cookies.txt || true)
-    echo "    Wrote cookies/cookies.txt — $n cookies."
+    chmod 600 "$jar"
+    n=$(grep -cv '^#' "$jar" || true)
+    echo "    Wrote $jar — $n cookies."
     for site in instagram youtube tiktok; do
-      c=$(grep -ci "$site" cookies/cookies.txt || true)
+      c=$(grep -ci "$site" "$jar" || true)
       printf '      %-10s %s\n' "$site" "$([[ $c -gt 0 ]] && echo "$c ✓" || echo "none — log in to it in Firefox, then rerun")"
     done
     # The cookies and the user-agent have to describe the same browser, so
@@ -207,7 +176,7 @@ dl kind +urls:
 batch kind file="":
     #!/usr/bin/env bash
     set -euo pipefail
-    dls="${HOST_DOWNLOADS:-$HOME/Downloads}"
+    dls=$(bash scripts/config-value.sh paths.downloads)
     case "$1" in
       video|v)     fn=dlmp4_batch; queue="$dls/dlmp4_queue"; session=batch-video ;;
       gallery|gal|g) fn=dlgal_batch; queue="$dls/dlgal_queue"; session=batch-gallery ;;
@@ -262,7 +231,7 @@ servers city="New_York" country="228":
       | python3 scripts/servers.py "{{city}}"
     # limit=0 means "all of them". Anything else returns a proximity-biased
     # subset — limit=500 still yielded only 8 US cities and no Chicago.
-    echo "  Use one with:  just vpn on <server>   or set NORDVPN_SERVER=<server> in .env"
+    echo "  Use one with: just vpn on <server> or set vpn.server in config.toml"
 
 # ---------------------------------------------------------------------------
 # Lifecycle & health
@@ -270,7 +239,7 @@ servers city="New_York" country="228":
 
 # Build the image
 build:
-    {{compose}} build
+    uv run downloadinux build
 
 # Static checks, Python tests, image build, and VPN-off smoke test (the CI gate)
 check:
@@ -312,20 +281,15 @@ check:
 
 # Start in the background
 up:
-    {{compose}} up -d
+    uv run downloadinux up
 
 # Stop and remove the container (volumes survive)
 down:
-    {{compose}} down
+    uv run downloadinux down
 
-# Restart, picking up any .env changes
-#
-# NOT `docker compose restart` — that reuses the existing container and
-# silently ignores .env edits. --force-recreate always rebuilds the container
-# from current config, so a restart is never a no-op either. (Comment lives
-# out here: comments inside a non-shebang recipe get echoed to the terminal.)
+# Recreate the container, applying the current settings and runtime identity
 restart:
-    {{compose}} up -d --force-recreate
+    uv run downloadinux restart
 
 # Follow container logs
 logs:
@@ -354,13 +318,14 @@ doctor:
     # Size and mtime prove nothing here: yt-dlp writes its cookie jar back on
     # every run, so the file grows and looks fresh even with zero logins.
     # Look for the actual session cookies instead.
-    if [[ -s cookies/cookies.txt ]]; then
-      n=$(grep -cv '^#' cookies/cookies.txt || true)
-      ok "cookies/cookies.txt — $n cookies"
-      grep -qE 'instagram.*sessionid' cookies/cookies.txt \
+    jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
+    if [[ -s "$jar" ]]; then
+      n=$(grep -cv '^#' "$jar" || true)
+      ok "$jar — $n cookies"
+      grep -qE 'instagram.*sessionid' "$jar" \
         && ok "  instagram: logged in" \
         || hm "  instagram: no session — log in via Firefox, then: just cookies"
-      grep -qE 'youtube.*(__Secure-3PSID|SAPISID)' cookies/cookies.txt \
+      grep -qE 'youtube.*(__Secure-3PSID|SAPISID)' "$jar" \
         && ok "  youtube: logged in" \
         || hm "  youtube: anonymous (fine unless you need age-gated video)"
     else
@@ -384,7 +349,7 @@ doctor:
       hm "user-agents disagree between configs ($uas variants) — run: just useragent"
     fi
 
-    if ! docker compose ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then
+    if ! {{compose}} ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then
       no "container not running — run: just up"; exit 1
     fi
     ok "container running"
@@ -428,8 +393,7 @@ status:
 
 # Rebuild with the latest yt-dlp / gallery-dl
 update:
-    {{compose}} build --no-cache
-    {{compose}} up -d
+    uv run downloadinux update
     @just doctor
 
 # Stop and delete volumes too — forces a fresh NordVPN login

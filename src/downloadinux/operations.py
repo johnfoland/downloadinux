@@ -29,6 +29,41 @@ def run_compose(
     return compose.invocation(effective, creds, host.environ).run(args, runner)
 
 
+LIFECYCLE = {
+    "build": (("build",),),
+    "up": (("up", "-d"),),
+    "down": (("down",),),
+    "restart": (("up", "-d", "--force-recreate"),),
+    "update": (("build", "--no-cache"), ("up", "-d")),
+}
+
+
+def lifecycle(
+    command: str,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> None:
+    """Container lifecycle, per target design, Host application's C02 list."""
+    effective = settings.load(config, overrides, host)
+    if command in {"up", "restart", "update"}:
+        downloads = effective["paths.downloads"]
+        if not downloads.is_dir():
+            raise DownloadinuxError(f"{downloads}: downloads directory missing; create or mount it before starting")
+        effective["paths.state"].mkdir(parents=True, exist_ok=True)
+        cookies = effective["paths.cookies"]
+        if not cookies.exists():
+            cookies.mkdir(parents=True, mode=0o700, exist_ok=True)
+            cookies.chmod(0o700)
+    creds = credentials.load(effective.credentials_file)
+    invocation = compose.invocation(effective, creds, host.environ)
+    for args in LIFECYCLE[command]:
+        status = invocation.run(args, runner)
+        if status != 0:
+            raise DownloadinuxError(f"docker: Compose {args[0]} failed (exit {status})")
+
+
 def _plain(value: Any) -> Any:
     return str(value) if isinstance(value, Path) else value
 

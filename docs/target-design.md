@@ -56,8 +56,9 @@ this design does not require a network API merely to support local Docker.
 ## Host application
 
 Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
-the `config` commands except `user-agent` are implemented (P0001-C01); the
-other subcommands are pending.
+the `config` commands except `user-agent` are implemented (P0001-C01).
+Compose and the lifecycle commands are implemented (P0001-C02); the
+remaining subcommands and login on token changes are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -416,7 +417,9 @@ claims a login is valid.
 ## Migration
 
 Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
-the `just` wrappers and the cookie-export change are pending.
+the lifecycle/token wrappers, computed Compose access, managed cookie export,
+and setup's import step are implemented (P0001-C02). The download and batch
+operation wrappers and full setup rewrite remain pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
