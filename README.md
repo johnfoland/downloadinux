@@ -407,7 +407,8 @@ uv tool install --editable .
 ```
 
 That puts `downloadinux` and its short name `dlx` on your `PATH`, working from
-any directory. It manages settings and the container lifecycle:
+any directory. It manages settings, the container lifecycle, and the commands
+that run inside the container:
 
 ```
 dlx init                     Write a starter settings file (VPN off); refuses if one exists
@@ -422,6 +423,12 @@ dlx build / up / down        Build, start in the background, or stop the configu
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
+dlx shell                    zsh inside the container as dl; exits with its status
+dlx vpn [args...]            The container's vpn helper (on [server], off, status, ip, or
+                               any nordvpn subcommand; status when none). Refuses,
+                               exit 1, when vpn.enabled is false
+dlx servers [city] [country] Least-loaded NordVPN servers in a city (default New_York,
+                               country 228); works with the VPN on or off
 ```
 
 Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
@@ -429,9 +436,10 @@ Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
 beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
-Every recipe reaches the configured container through the CLI. Lifecycle
-and token recipes are wrappers; the download, batch, VPN, and health recipes
-retain their existing implementation behind the computed Compose invocation.
+Every recipe reaches the configured container through the CLI. Lifecycle,
+token, `shell`, `vpn`, `servers`, and `status` recipes are wrappers; the
+download, batch, and health recipes retain their existing implementation
+behind the computed Compose invocation.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -456,6 +464,7 @@ just batch gallery [file]   Same, for galleries (~/Downloads/dlgal_queue)
 just watch video|gallery    Attach to a running batch session
 just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
+just servers [city] [id]    Rank a city's NordVPN servers by load
 
 just build           Build the image
 just check           Static checks, Python tests, image build, VPN-off smoke (the CI gate)
@@ -489,12 +498,12 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
-│   ├── servers.py                # filters NordVPN servers by city for `just servers`
 │   ├── config-value.sh           # recipes read config show --json
 │   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
-├── src/downloadinux/             # host CLI: settings, Compose, lifecycle
+├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # old jar, retained only for migration

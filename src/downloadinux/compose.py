@@ -1,7 +1,8 @@
-"""Computed Docker invocation (target design, Host application, C02 list).
+"""Computed Docker invocation (target design, Host application, C02 and C03
+lists).
 
 Tokens travel only in the VPN-enabled process environment. All operations
-use the same injectable runner; tests never need Docker.
+use the same injectable runners; tests never need Docker.
 """
 
 from __future__ import annotations
@@ -16,6 +17,12 @@ from downloadinux.credentials import Credentials, TokenState
 from downloadinux.settings import Settings
 
 Runner = Callable[[Sequence[str], Mapping[str, str]], int]
+# Returns the exit status and standard output; standard error is not captured.
+Capture = Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]]
+
+SERVICE = "downloadinux"
+# Target design, Host application, C03 list: "the container is running".
+RUNNING = ("ps", "--status", "running", "--quiet", SERVICE)
 
 # Target design, Container contract and VPN mode: exact interpolation tables.
 BASE_VARIABLES = {
@@ -36,6 +43,22 @@ def run_process(argv: Sequence[str], environ: Mapping[str, str]) -> int:
     return subprocess.run(list(argv), env=dict(environ), check=False).returncode
 
 
+def capture_process(argv: Sequence[str], environ: Mapping[str, str]) -> tuple[int, str]:
+    """Run with standard output captured. Standard error stays on the
+    terminal, so Compose's own failures remain visible (DEC-17)."""
+    completed = subprocess.run(
+        list(argv), env=dict(environ), stdout=subprocess.PIPE,
+        encoding="utf-8", errors="replace", check=False,
+    )
+    return completed.returncode, completed.stdout
+
+
+def exec_args(program: Sequence[str], *, captured: bool = False) -> list[str]:
+    """Compose `exec` of `program` as `dl`, as a list: `-T` exactly when the
+    CLI captures the output, never for an interactive command (C03 list)."""
+    return ["exec", *(["-T"] if captured else []), "-u", "dl", SERVICE, *program]
+
+
 @dataclass(frozen=True)
 class Invocation:
     argv: tuple[str, ...]
@@ -43,6 +66,15 @@ class Invocation:
 
     def run(self, args: Sequence[str], runner: Runner | None = None) -> int:
         return (runner or run_process)([*self.argv, *args], self.environ)
+
+    def capture(self, args: Sequence[str], capture: Capture | None = None) -> tuple[int, str]:
+        return (capture or capture_process)([*self.argv, *args], self.environ)
+
+    def running(self, capture: Capture | None = None) -> bool:
+        """`ps --status running --quiet downloadinux` exits 0 with output; a
+        stopped service or project exits 0 with none."""
+        status, out = self.capture(RUNNING, capture)
+        return status == 0 and bool(out.strip())
 
 
 def invocation(

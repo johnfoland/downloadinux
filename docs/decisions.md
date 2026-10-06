@@ -254,3 +254,35 @@ of storing a credential.
 
 *Where:* [target design](target-design.md), *Host application* ("Commands in
 the container, pinned for P0001-C03"). Added cutting P0001-C03.
+
+## DEC-17: Captured commands keep standard error on the terminal (2026-10)
+
+The capture runner the C03 list adds (for the running check, `servers`, and
+the login on `set-token`) captures a command's standard output only;
+standard error passes through to the terminal. The `nordvpn` client prints
+its results and refusals on standard output (checked against a running
+container: a failed `nordvpn account` writes nothing to standard error), so
+"the login's output is discarded" drops everything the daemon says, while a
+Compose failure (a stopped service, an unreachable Docker daemon) is still
+shown next to the CLI's own message instead of being hidden behind "could
+not reach the Nord API" or "the daemon refused it". Capturing and
+discarding standard error too, as the old `token` recipe's `2>/dev/null`
+did, was rejected for that reason; nothing on that stream carries the
+token, which travels only in the process environment.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands
+in the container, pinned for P0001-C03"); `compose.capture_process`. Added
+during P0001-C03-b.
+
+## DEC-18: A JSON body that is not the server list fails like a non-JSON one (2026-10)
+
+`servers` treats a body that parses as JSON but is not a list of servers
+with a city name, hostname, and load (an API error object, say) as the same
+operation failure as a body that is not JSON: exit 1 with the pinned "could
+not reach the Nord API" message. The old script would have stopped with a
+traceback there, which the CLI's error contract rules out, and a separate
+message would name a cause the user can do nothing different about.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands
+in the container, pinned for P0001-C03"); `servers.rank`. Added during
+P0001-C03-b.

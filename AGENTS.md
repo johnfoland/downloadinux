@@ -25,11 +25,11 @@ run it; `docs/` holds the planning documents for the refactor, and
 - `just doctor`: live health check of a running container (mount, cookies,
   user-agent, VPN, exit IP). It needs real credentials, so it is not a CI
   check.
-- `just check`: the gate. In order, stopping at the first failure:
-  shellcheck over `scripts/*.sh`, `zsh -n` over the zsh sources, a compile of
-  `scripts/servers.py`, the Python tests (`uv run --locked pytest -q`),
-  two quiet Compose validations through the CLI (VPN off and on, using an
-  absent temporary settings file), a Docker daemon check,
+- `just check`: the gate, seven steps. In order, stopping at the first
+  failure: shellcheck over `scripts/*.sh`, `zsh -n` over the zsh sources,
+  the Python tests (`uv run --locked pytest -q`), two quiet Compose
+  validations through the CLI (VPN off and on, using an absent temporary
+  settings file), a Docker daemon check,
   `docker build --tag downloadinux:check .`, and a VPN-off container smoke
   test with temporary mounts under project `downloadinux-check` (cleaned up
   on exit). It needs the Docker daemon

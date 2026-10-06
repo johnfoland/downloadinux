@@ -132,7 +132,8 @@ Commands in the container, pinned for P0001-C03:
   output (`servers`, the login below), never for `shell`. "The container is
   running" means `ps --status running --quiet downloadinux` exits 0 with
   non-empty output; the injectable runner gains a way to capture a
-  command's standard output for this and for `servers`.
+  command's standard output for this and for `servers`. Standard error is
+  never captured: Compose's own failures stay on the terminal (DEC-17).
 - `shell` runs `zsh` that way and exits with its status. It checks no path.
 - `vpn [args…]` runs the container's `vpn` helper (`scripts/vpn.sh`) with
   `args`, `status` when there are none, and exits with its status. With
@@ -143,14 +144,15 @@ Commands in the container, pinned for P0001-C03:
   'https://api.nordvpn.com/v1/servers/recommendations?filters[country_id]=<country>&limit=0'`
   in the container, which is the thing on the VPN (`-g`: the brackets are
   literal, not a curl glob), and ranks the captured JSON on the host. An
-  underscore in `city` stands for a space. The output is today's
-  `scripts/servers.py` output, unchanged: up to eight servers in that city,
-  least load first, or, when it has none, the wrapped list of cities, both
-  exit 0. A fetch that exits non-zero or a body that is not JSON is an
-  operation failure, exit 1: `could not reach the Nord API from the container
-  (VPN down, or killswitch blocking?)`. It runs whether or not the VPN is
-  enabled. The ranking moves into the package; `scripts/servers.py` and the
-  gate step that compiles it are removed.
+  underscore in `city` stands for a space. The output is the old script's,
+  unchanged: up to eight servers in that city, least load first, or, when it
+  has none, the wrapped list of cities, both exit 0. A fetch that exits
+  non-zero or a body that is not JSON, or is JSON but not the server list
+  (DEC-18), is an operation failure, exit 1: `could not reach the Nord API
+  from the container (VPN down, or killswitch blocking?)`. It runs whether
+  or not the VPN is enabled. The ranking lives in the package
+  (`downloadinux.servers`); the old script and the gate step that compiled
+  it are gone.
 - `config set-token` stores the token as before, then, when `vpn.enabled` is
   true and the container is running, logs the daemon in:
   `exec -T -u dl -e NORDVPN_TOKEN downloadinux sh -c 'nordvpn login --token

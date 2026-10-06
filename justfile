@@ -155,7 +155,7 @@ useragent:
 
 # Drop into zsh inside the container
 shell:
-    @{{dex}} zsh
+    @uv run downloadinux shell
 
 # Download: just dl video <url>...  |  just dl gallery <url>...
 dl kind +urls:
@@ -215,22 +215,16 @@ watch kind="video":
 
 # NordVPN control: just vpn on us8649 | just vpn off | just vpn status | just vpn ip
 vpn *args="status":
-    @{{dex}} vpn "$@"
+    @uv run downloadinux vpn -- "$@"
 
 # List least-loaded servers for a city, e.g. `just servers New_York`
 servers city="New_York" country="228":
     #!/usr/bin/env bash
     set -euo pipefail
-    # country 228 = United States. `nordvpn countries` lists names, but the
-    # numeric ids live in the API; 228/US covers the common case here.
-    echo "  Least-loaded servers in $(printf '%s' "{{city}}" | tr '_' ' '):"
-    # curl runs in the container (it is the thing on the VPN); parsing happens
-    # here with python3 rather than jq — host jq is an asdf shim that may have
-    # no version pinned, and this needs no dependency at all.
-    {{dex}} sh -c "curl -s --max-time 40 'https://api.nordvpn.com/v1/servers/recommendations?filters\[country_id\]={{country}}&limit=0'" \
-      | python3 scripts/servers.py "{{city}}"
-    # limit=0 means "all of them". Anything else returns a proximity-biased
-    # subset — limit=500 still yielded only 8 US cities and no Chicago.
+    # country 228 = United States. The CLI fetches in the container (it is the
+    # thing on the VPN) and ranks on the host.
+    echo "  Least-loaded servers in $(printf '%s' "$1" | tr '_' ' '):"
+    uv run downloadinux servers "$1" "$2"
     echo "  Use one with: just vpn on <server> or set vpn.server in config.toml"
 
 # ---------------------------------------------------------------------------
@@ -246,38 +240,35 @@ check:
     #!/usr/bin/env bash
     set -euo pipefail
     step(){ printf '\033[1;36m==> %s\033[0m\n' "$*"; }
-    step "1/8  shellcheck scripts/*.sh"
+    step "1/7  shellcheck scripts/*.sh"
     shellcheck scripts/*.sh
     # shellcheck has no zsh support, so the zsh files get a syntax check only.
-    step "2/8  zsh -n on the zsh sources"
+    step "2/7  zsh -n on the zsh sources"
     for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
-    # compile() rather than py_compile, which would leave scripts/__pycache__.
-    step "3/8  python3 compile scripts/servers.py"
-    python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' scripts/servers.py
     # --locked fails when uv.lock is stale rather than rewriting it.
-    step "4/8  pytest (uv run --locked)"
+    step "3/7  pytest (uv run --locked)"
     uv run --locked pytest -q
     # -q is mandatory: without it compose prints the resolved file, which
     # includes the token when VPN is enabled. Use absent settings so the
     # gate never reads the host's settings or credentials.
-    step "5/8  Compose config -q (VPN off and on)"
+    step "4/7  Compose config -q (VPN off and on)"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     uv run --locked downloadinux --config "$tmp/absent.toml" compose -- config -q
     uv run --locked downloadinux --config "$tmp/absent.toml" --set vpn.enabled=true compose -- config -q
-    step "6/8  Docker daemon reachable"
+    step "5/7  Docker daemon reachable"
     if ! docker info >/dev/null 2>&1; then
       echo "Docker daemon not reachable — start Docker and re-run" >&2
       exit 1
     fi
     # Its own tag, so the gate never replaces the image `just up` runs.
-    step "7/8  docker build --tag downloadinux:check ."
+    step "6/7  docker build --tag downloadinux:check ."
     docker build --tag downloadinux:check .
-    step "8/8  VPN-off container smoke test"
+    step "7/7  VPN-off container smoke test"
     bash scripts/smoke.sh
-    printf '\033[1;32mjust check: all 8 steps passed.\033[0m\n'
+    printf '\033[1;32mjust check: all 7 steps passed.\033[0m\n'
 
 # Start in the background
 up:
@@ -387,7 +378,7 @@ doctor:
 # Container + VPN state, briefly
 status:
     @{{compose}} ps
-    @{{dex}} nordvpn status || true
+    @uv run downloadinux vpn status || true
 
 # Rebuild with the latest yt-dlp / gallery-dl
 update:

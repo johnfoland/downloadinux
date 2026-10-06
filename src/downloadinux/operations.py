@@ -10,10 +10,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, settings
+from downloadinux import compose, credentials, files, servers, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
+
+
+def _invocation(effective: settings.Settings, host: Host) -> compose.Invocation:
+    creds = credentials.load(effective.credentials_file)
+    return compose.invocation(effective, creds, host.environ)
 
 
 def run_compose(
@@ -25,8 +30,57 @@ def run_compose(
 ) -> int:
     """Pass arguments through unchanged, preserving Docker's exit status."""
     effective = settings.load(config, overrides, host)
-    creds = credentials.load(effective.credentials_file)
-    return compose.invocation(effective, creds, host.environ).run(args, runner)
+    return _invocation(effective, host).run(args, runner)
+
+
+def shell(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`shell`: interactive zsh as `dl`; its exit status (C03 list)."""
+    effective = settings.load(config, overrides, host)
+    return _invocation(effective, host).run(compose.exec_args(["zsh"]), runner)
+
+
+def vpn(
+    args: Sequence[str],
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`vpn`: the container's `vpn` helper with `args`, `status` when none.
+    With the VPN off no `nordvpnd` runs, so it refuses and runs nothing
+    (DEC-16)."""
+    effective = settings.load(config, overrides, host)
+    if not effective["vpn.enabled"]:
+        raise DownloadinuxError(
+            "vpn.enabled is false, so the container runs no NordVPN daemon; "
+            "set vpn.enabled = true and run dlx restart to use it"
+        )
+    program = ["vpn", *(args or ["status"])]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+def list_servers(
+    city: str = servers.DEFAULT_CITY,
+    country: str = servers.DEFAULT_COUNTRY,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    capture: compose.Capture | None = None,
+) -> list[str]:
+    """`servers`: fetch Nord's recommendations in the container, which is
+    the thing on the VPN, and rank them here. Runs with the VPN on or off
+    (DEC-16)."""
+    effective = settings.load(config, overrides, host)
+    fetch = compose.exec_args(servers.fetch_argv(country), captured=True)
+    status, body = _invocation(effective, host).capture(fetch, capture)
+    if status != 0:
+        raise DownloadinuxError(servers.UNREACHABLE)
+    return servers.rank(body, city)
 
 
 LIFECYCLE = {
@@ -56,8 +110,7 @@ def lifecycle(
         if not cookies.exists():
             cookies.mkdir(parents=True, mode=0o700, exist_ok=True)
             cookies.chmod(0o700)
-    creds = credentials.load(effective.credentials_file)
-    invocation = compose.invocation(effective, creds, host.environ)
+    invocation = _invocation(effective, host)
     for args in LIFECYCLE[command]:
         status = invocation.run(args, runner)
         if status != 0:

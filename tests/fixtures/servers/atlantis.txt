@@ -1,0 +1,4 @@
+    No servers in Atlantis. Available cities:
+      Ashburn Atlanta Buffalo Charlotte Chicago Dallas Denver Houston
+      Kansas_City Los_Angeles McAllen Miami Nashville New_York Omaha
+      Phoenix Pittsburgh Saint_Louis Salt_Lake_City San_Francisco Seattle
