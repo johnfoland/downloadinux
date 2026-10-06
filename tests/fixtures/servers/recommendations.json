@@ -1,0 +1,1052 @@
+[
+ {
+  "hostname": "us13311.nordvpn.com",
+  "load": 11,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13319.nordvpn.com",
+  "load": 11,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us6947.nordvpn.com",
+  "load": 12,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us11695.nordvpn.com",
+  "load": 12,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us6827.nordvpn.com",
+  "load": 10,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12289.nordvpn.com",
+  "load": 10,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12287.nordvpn.com",
+  "load": 13,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13992.nordvpn.com",
+  "load": 13,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13996.nordvpn.com",
+  "load": 14,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us5827.nordvpn.com",
+  "load": 14,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us11703.nordvpn.com",
+  "load": 15,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13989.nordvpn.com",
+  "load": 15,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us6825.nordvpn.com",
+  "load": 16,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13129.nordvpn.com",
+  "load": 16,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13995.nordvpn.com",
+  "load": 17,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13988.nordvpn.com",
+  "load": 17,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us8500.nordvpn.com",
+  "load": 18,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13135.nordvpn.com",
+  "load": 18,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13325.nordvpn.com",
+  "load": 19,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us5846.nordvpn.com",
+  "load": 19,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us8658.nordvpn.com",
+  "load": 21,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14356.nordvpn.com",
+  "load": 21,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12124.nordvpn.com",
+  "load": 24,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13993.nordvpn.com",
+  "load": 24,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14083.nordvpn.com",
+  "load": 23,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13316.nordvpn.com",
+  "load": 27,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13328.nordvpn.com",
+  "load": 27,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13494.nordvpn.com",
+  "load": 31,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13517.nordvpn.com",
+  "load": 30,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13491.nordvpn.com",
+  "load": 30,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "New York"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13916.nordvpn.com",
+  "load": 3,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Buffalo"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13187.nordvpn.com",
+  "load": 4,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Buffalo"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13531.nordvpn.com",
+  "load": 10,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Ashburn"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13017.nordvpn.com",
+  "load": 10,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Ashburn"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14215.nordvpn.com",
+  "load": 7,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Pittsburgh"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14222.nordvpn.com",
+  "load": 7,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Pittsburgh"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13933.nordvpn.com",
+  "load": 7,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Chicago"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13498.nordvpn.com",
+  "load": 9,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Chicago"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13043.nordvpn.com",
+  "load": 4,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Charlotte"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13606.nordvpn.com",
+  "load": 4,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Charlotte"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14041.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Nashville"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14038.nordvpn.com",
+  "load": 7,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Nashville"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us8208.nordvpn.com",
+  "load": 9,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Atlanta"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us11588.nordvpn.com",
+  "load": 8,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Atlanta"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13688.nordvpn.com",
+  "load": 5,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Saint Louis"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13700.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Saint Louis"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14009.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Omaha"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14007.nordvpn.com",
+  "load": 7,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Omaha"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13752.nordvpn.com",
+  "load": 2,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Kansas City"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13409.nordvpn.com",
+  "load": 3,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Kansas City"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14183.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Miami"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13921.nordvpn.com",
+  "load": 5,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Miami"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12925.nordvpn.com",
+  "load": 5,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Denver"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us14135.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Denver"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us9169.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Dallas"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us9168.nordvpn.com",
+  "load": 6,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Dallas"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13897.nordvpn.com",
+  "load": 9,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Seattle"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13558.nordvpn.com",
+  "load": 8,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Seattle"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13777.nordvpn.com",
+  "load": 9,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Houston"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13782.nordvpn.com",
+  "load": 9,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Houston"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13720.nordvpn.com",
+  "load": 8,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Salt Lake City"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13712.nordvpn.com",
+  "load": 8,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Salt Lake City"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13801.nordvpn.com",
+  "load": 5,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "McAllen"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13811.nordvpn.com",
+  "load": 5,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "McAllen"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12190.nordvpn.com",
+  "load": 4,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Phoenix"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12179.nordvpn.com",
+  "load": 4,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Phoenix"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13444.nordvpn.com",
+  "load": 2,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "San Francisco"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us13945.nordvpn.com",
+  "load": 20,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "San Francisco"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us5861.nordvpn.com",
+  "load": 16,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Los Angeles"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "hostname": "us12855.nordvpn.com",
+  "load": 18,
+  "locations": [
+   {
+    "country": {
+     "name": "United States",
+     "code": "US",
+     "city": {
+      "name": "Los Angeles"
+     }
+    }
+   }
+  ]
+ }
+]

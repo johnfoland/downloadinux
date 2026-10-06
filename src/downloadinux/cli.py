@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import migrate, operations
+from downloadinux import migrate, operations, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -89,9 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     set_token = config_commands.add_parser(
         "set-token",
-        help="validate and store the NordVPN token",
+        help="validate and store the NordVPN token; log in if the container runs",
         description="Store the NordVPN token in the credentials file. Without "
-        "TOKEN it prompts on a terminal, else reads one line from stdin.",
+        "TOKEN it prompts on a terminal, else reads one line from stdin. With "
+        "the VPN enabled and the container running, it then logs the daemon "
+        "in (and connects when vpn.autoconnect is true).",
     )
     _add_global_options(set_token, 2)
     set_token.add_argument("token", nargs="?", metavar="TOKEN")
@@ -138,12 +140,65 @@ def build_parser() -> argparse.ArgumentParser:
         _add_global_options(lifecycle, 1)
         lifecycle.set_defaults(handler=_lifecycle)
 
+    shell = commands.add_parser("shell", help="interactive zsh in the container as dl")
+    _add_global_options(shell, 1)
+    shell.set_defaults(handler=_shell)
+
+    vpn = commands.add_parser(
+        "vpn",
+        help="the container's NordVPN helper (status when no arguments)",
+        description="Run the container's vpn helper: on [server], off, "
+        "status, ip, or any nordvpn subcommand. Refuses when vpn.enabled is "
+        "false.",
+    )
+    _add_global_options(vpn, 1)
+    vpn.add_argument("args", nargs=argparse.REMAINDER, help="vpn helper arguments")
+    vpn.set_defaults(handler=_vpn)
+
+    servers_parser = commands.add_parser(
+        "servers",
+        help="least-loaded NordVPN servers in a city",
+        description="Rank a city's NordVPN servers by load, fetched from "
+        "inside the container. An underscore in CITY stands for a space; an "
+        "unknown city lists the available ones.",
+    )
+    _add_global_options(servers_parser, 1)
+    servers_parser.add_argument(
+        "city", nargs="?", default=servers.DEFAULT_CITY,
+        help=f"default: {servers.DEFAULT_CITY}",
+    )
+    servers_parser.add_argument(
+        "country", nargs="?", default=servers.DEFAULT_COUNTRY,
+        help=f"Nord's numeric country id (default: {servers.DEFAULT_COUNTRY}, "
+        "the United States)",
+    )
+    servers_parser.set_defaults(handler=_servers)
+
     return parser
 
 
+def _passthrough(args: list[str]) -> list[str]:
+    return args[1:] if args[:1] == ["--"] else args
+
+
 def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
-    remainder = args.args[1:] if args.args[:1] == ["--"] else args.args
-    return operations.run_compose(remainder, options.config, options.overrides)
+    return operations.run_compose(_passthrough(args.args), options.config, options.overrides)
+
+
+def _shell(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.shell(options.config, options.overrides)
+
+
+def _vpn(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.vpn(_passthrough(args.args), options.config, options.overrides)
+
+
+def _servers(args: argparse.Namespace, options: GlobalOptions) -> int:
+    for line in operations.list_servers(
+        args.city, args.country, options.config, options.overrides
+    ):
+        print(line)
+    return 0
 
 
 def _lifecycle(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -190,7 +245,24 @@ def _read_token() -> str:
 def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
     token = args.token if args.token is not None else _read_token()
     path = operations.set_token(token, options.config, options.overrides)
-    print(f"Stored the NordVPN token in {path}")
+    # Flushed so it precedes Docker's and the login's own messages in a log.
+    print(f"Stored the NordVPN token in {path}", flush=True)
+    result = operations.log_in(token, options.config, options.overrides)
+    if result.login is operations.Login.VPN_OFF:
+        print("vpn.enabled is false: the token is kept for when the VPN is enabled.")
+    elif result.login is operations.Login.NOT_RUNNING:
+        print("The container is not running; it logs in with the token at the next dlx up.")
+    else:
+        print("Logged in.")
+        if result.connect is not None:
+            target = " ".join(result.connect.server) or "the fastest server"
+            if result.connect.connected:
+                print(f"Connected to {target}.")
+            else:
+                print(
+                    f"{PROG}: warning: could not connect to {target}; try dlx vpn on",
+                    file=sys.stderr,
+                )
     return 0
 
 

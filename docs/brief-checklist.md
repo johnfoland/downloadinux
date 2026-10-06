@@ -57,3 +57,20 @@ committing such a brief, grep the repo for the retired source (`git grep
 *Found:* P0001-C02: the goal said the `.env` coupling was gone, but the
 brief moved only `doctor`'s jar path; its `.env` requirement and token read
 survived, so after `just token` the recipe reported the old token.
+
+### §3. A kickoff note restates a pinned rule more strongly than the rule
+
+Kickoff notes compress the authority into a few lines, and a compression
+can turn a narrow rule into a broader one ("the token in no environment"
+where the rule said "this variable only in that process"). The broader
+reading then contradicts a contract an earlier chunk pinned, and the
+executor has to choose between the note and the doc. Before committing a
+brief, check each kickoff and *Tests* line that paraphrases a rule against
+the rule's own words and against the contracts already in force, and
+quote the rule where a paraphrase would widen it.
+
+*Found:* P0001-C03: the note said the fake token must be in no environment
+when the container is stopped, "nothing runs then"; the running check does
+run, and under C02's invocation contract every VPN-on Compose call carries
+`DOWNLOADINUX_NORDVPN_TOKEN`. The executor implemented the contract and
+reported the conflict.

@@ -7,13 +7,20 @@ CLI (and later the TUI) only parses and presents.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, settings
+from downloadinux import compose, credentials, files, servers, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
+
+
+def _invocation(effective: settings.Settings, host: Host) -> compose.Invocation:
+    creds = credentials.load(effective.credentials_file)
+    return compose.invocation(effective, creds, host.environ)
 
 
 def run_compose(
@@ -25,8 +32,57 @@ def run_compose(
 ) -> int:
     """Pass arguments through unchanged, preserving Docker's exit status."""
     effective = settings.load(config, overrides, host)
-    creds = credentials.load(effective.credentials_file)
-    return compose.invocation(effective, creds, host.environ).run(args, runner)
+    return _invocation(effective, host).run(args, runner)
+
+
+def shell(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`shell`: interactive zsh as `dl`; its exit status (C03 list)."""
+    effective = settings.load(config, overrides, host)
+    return _invocation(effective, host).run(compose.exec_args(["zsh"]), runner)
+
+
+def vpn(
+    args: Sequence[str],
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`vpn`: the container's `vpn` helper with `args`, `status` when none.
+    With the VPN off no `nordvpnd` runs, so it refuses and runs nothing
+    (DEC-16)."""
+    effective = settings.load(config, overrides, host)
+    if not effective["vpn.enabled"]:
+        raise DownloadinuxError(
+            "vpn.enabled is false, so the container runs no NordVPN daemon; "
+            "set vpn.enabled = true and run dlx restart to use it"
+        )
+    program = ["vpn", *(args or ["status"])]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+def list_servers(
+    city: str = servers.DEFAULT_CITY,
+    country: str = servers.DEFAULT_COUNTRY,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    capture: compose.Capture | None = None,
+) -> list[str]:
+    """`servers`: fetch Nord's recommendations in the container, which is
+    the thing on the VPN, and rank them here. Runs with the VPN on or off
+    (DEC-16)."""
+    effective = settings.load(config, overrides, host)
+    fetch = compose.exec_args(servers.fetch_argv(country), captured=True)
+    status, body = _invocation(effective, host).capture(fetch, capture)
+    if status != 0:
+        raise DownloadinuxError(servers.UNREACHABLE)
+    return servers.rank(body, city)
 
 
 LIFECYCLE = {
@@ -56,8 +112,7 @@ def lifecycle(
         if not cookies.exists():
             cookies.mkdir(parents=True, mode=0o700, exist_ok=True)
             cookies.chmod(0o700)
-    creds = credentials.load(effective.credentials_file)
-    invocation = compose.invocation(effective, creds, host.environ)
+    invocation = _invocation(effective, host)
     for args in LIFECYCLE[command]:
         status = invocation.run(args, runner)
         if status != 0:
@@ -149,11 +204,72 @@ def set_token(
     overrides: Sequence[str] = (),
     host: Host = Host(),
 ) -> Path:
-    """`config set-token`: validate and store the NordVPN token. It only
-    stores; logging in to a running container comes with the lifecycle
-    commands (P0001 D2)."""
+    """`config set-token`'s first step: validate and store the NordVPN
+    token. `log_in` follows it."""
     effective = settings.load(config, overrides, host)
     if not credentials.token_is_valid(token):
         raise DownloadinuxError(malformed_token_message(token))
     store_token(effective.credentials_file, token)
     return effective.credentials_file
+
+
+class Login(str, Enum):
+    VPN_OFF = "vpn-off"
+    NOT_RUNNING = "not-running"
+    LOGGED_IN = "logged-in"
+
+
+@dataclass(frozen=True)
+class Connect:
+    server: tuple[str, ...]
+    connected: bool
+
+
+@dataclass(frozen=True)
+class LoginResult:
+    login: Login
+    # Set when the login worked and vpn.autoconnect asked for a connect.
+    connect: Connect | None = None
+
+
+# Single-quoted for the container's sh: the token is expanded there, from the
+# environment, and never appears in an argument list (DEC-16).
+LOGIN_SCRIPT = 'nordvpn login --token "$NORDVPN_TOKEN"'
+REFUSED = (
+    "the token is stored, but the NordVPN daemon refused the login; a daemon "
+    "already logged in needs dlx vpn logout first, then set the token again"
+)
+
+
+def log_in(
+    token: str,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    capture: compose.Capture | None = None,
+) -> LoginResult:
+    """`config set-token`'s second step (Host application, C03 list;
+    DEC-16): with the VPN enabled and the container running, log the daemon
+    in with `token`, which travels only in that `docker compose` process's
+    environment, then connect when `vpn.autoconnect` is true. A refused login
+    is an operation failure; a failed connect is reported, not raised. It
+    never logs a daemon out."""
+    effective = settings.load(config, overrides, host)
+    if not effective["vpn.enabled"]:
+        return LoginResult(Login.VPN_OFF)
+    invocation = _invocation(effective, host)
+    if not invocation.running(capture):
+        return LoginResult(Login.NOT_RUNNING)
+    login = compose.exec_args(
+        ["sh", "-c", LOGIN_SCRIPT], captured=True, variables=["NORDVPN_TOKEN"]
+    )
+    # The login's output is discarded (DEC-17).
+    status, _ = invocation.capture(login, capture, {"NORDVPN_TOKEN": token})
+    if status != 0:
+        raise DownloadinuxError(REFUSED)
+    if not effective["vpn.autoconnect"]:
+        return LoginResult(Login.LOGGED_IN)
+    server = tuple(effective["vpn.server"].split())
+    connect = compose.exec_args(["nordvpn", "connect", *server], captured=True)
+    status, _ = invocation.capture(connect, capture)
+    return LoginResult(Login.LOGGED_IN, Connect(server, status == 0))

@@ -1,28 +1,26 @@
 # Status
 
 Last updated 2026-10-06 by `relay-next`.
-Last review: 2026-10-06 (P0001-C02, accepted with follow-ups).
+Last review: 2026-10-06 (P0001-C03, accepted with follow-ups).
 
 ## Where this stands
 
 - **P0001** (Stage 1, portable configuration and shared operations) is
-  active: DEC-7 to DEC-16, delivery items D1–D5.
+  active: DEC-7 to DEC-21, delivery items D1–D5.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
 - **D1** done: P0001-C01, accepted with follow-ups 2026-10-06, pull
   request #12.
-- **P0001-C02** (D2, first part: Compose files and layer, image and
-  entrypoint, lifecycle commands, recipe rewiring, gate smoke test):
-  accepted with follow-ups 2026-10-06, pull request #15.
-- **P0001-C03** (D2, the rest: `shell`, `vpn`, `servers`, login on
-  `set-token`, their wrappers, the side-by-side check; C02 review findings
-  1–2): ready for an executor.
-  Remaining after it: D3–D5.
+- **D2** done: P0001-C02 and P0001-C03, accepted with follow-ups
+  2026-10-06, pull requests #15 and #16.
+- **P0001-C04** (D3: presets, `dl`, `batch`, `watch`, `config user-agent`,
+  their wrappers, the end of DEC-15's links; issues #17 and #18 from the
+  C03 review): ready for an executor. Remaining after it: D4, D5.
 
 ## In flight
 
-- **Chunk:** P0001-C03
+- **Chunk:** P0001-C04
 - **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
@@ -49,4 +47,5 @@ One line per chunk: the decision-log IDs it added.
 
 - P0001-C01: DEC-14.
 - P0001-C02 (cut): DEC-15.
-- P0001-C03 (cut): DEC-16.
+- P0001-C03: DEC-16 (cut), DEC-17 and DEC-18 (executor), DEC-19 (review).
+- P0001-C04 (cut): DEC-20, DEC-21.

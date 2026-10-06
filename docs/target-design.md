@@ -57,8 +57,10 @@ this design does not require a network API merely to support local Docker.
 
 Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
 the `config` commands except `user-agent` are implemented (P0001-C01).
-Compose and the lifecycle commands are implemented (P0001-C02); the
-remaining subcommands and login on token changes are pending.
+Compose and the lifecycle commands are implemented (P0001-C02), and `shell`,
+`vpn`, `servers`, and the login on `config set-token` (P0001-C03): every D2
+command is implemented. `config user-agent`, `dl`, `batch`, `watch`, and
+`doctor` are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -132,7 +134,8 @@ Commands in the container, pinned for P0001-C03:
   output (`servers`, the login below), never for `shell`. "The container is
   running" means `ps --status running --quiet downloadinux` exits 0 with
   non-empty output; the injectable runner gains a way to capture a
-  command's standard output for this and for `servers`.
+  command's standard output for this and for `servers`. Standard error is
+  never captured: Compose's own failures stay on the terminal (DEC-17).
 - `shell` runs `zsh` that way and exits with its status. It checks no path.
 - `vpn [args…]` runs the container's `vpn` helper (`scripts/vpn.sh`) with
   `args`, `status` when there are none, and exits with its status. With
@@ -143,14 +146,15 @@ Commands in the container, pinned for P0001-C03:
   'https://api.nordvpn.com/v1/servers/recommendations?filters[country_id]=<country>&limit=0'`
   in the container, which is the thing on the VPN (`-g`: the brackets are
   literal, not a curl glob), and ranks the captured JSON on the host. An
-  underscore in `city` stands for a space. The output is today's
-  `scripts/servers.py` output, unchanged: up to eight servers in that city,
-  least load first, or, when it has none, the wrapped list of cities, both
-  exit 0. A fetch that exits non-zero or a body that is not JSON is an
-  operation failure, exit 1: `could not reach the Nord API from the container
-  (VPN down, or killswitch blocking?)`. It runs whether or not the VPN is
-  enabled. The ranking moves into the package; `scripts/servers.py` and the
-  gate step that compiles it are removed.
+  underscore in `city` stands for a space. The output is the old script's,
+  unchanged: up to eight servers in that city, least load first, or, when it
+  has none, the wrapped list of cities, both exit 0. A fetch that exits
+  non-zero or a body that is not JSON, or is JSON but not the server list
+  (DEC-18), is an operation failure, exit 1: `could not reach the Nord API
+  from the container (VPN down, or killswitch blocking?)`. It runs whether
+  or not the VPN is enabled. The ranking lives in the package
+  (`downloadinux.servers`); the old script and the gate step that compiled
+  it are gone.
 - `config set-token` stores the token as before, then, when `vpn.enabled` is
   true and the container is running, logs the daemon in:
   `exec -T -u dl -e NORDVPN_TOKEN downloadinux sh -c 'nordvpn login --token
@@ -161,10 +165,69 @@ Commands in the container, pinned for P0001-C03:
   on whitespace (no argument when empty), reporting whether it connected; a
   failed connect is a warning, exit 0. A failed login exits 1, saying the
   token is stored but the daemon refused it, and that a daemon already
-  logged in needs `dlx vpn logout` first. When the container is not
+  logged in needs `dlx vpn logout --persist-token` first (a plain `logout`
+  revokes the daemon's token, DEC-19). When the container is not
   running, it says the login happens at the next `dlx up`; when the VPN is
   disabled, it says the token is stored for when it is enabled and runs
   nothing; both exit 0 (DEC-16).
+
+Downloads, pinned for P0001-C04:
+
+- `dl <preset> <url>…` takes at least one URL; `preset` is `video` (`v`)
+  or `gallery` (`gal`, `g`), anything else a usage error, exit 2. It runs
+  the preset's argument list (*Presets*) with the URLs appended, through
+  `exec -u dl downloadinux` uncaptured (no `-T`: the downloaders draw
+  progress on the terminal), and exits with its status. It needs neither
+  the VPN nor a running check: Compose reports a stopped service itself.
+- `batch <preset> [queue]`: the queue defaults to the preset's default
+  queue file in `paths.downloads`. A given path expands a leading `~` and
+  is made absolute against the working directory without resolving links
+  (`os.path.abspath`). It must be an existing file, else exit 1,
+  `no such queue file: <path>`, and lie under `paths.downloads` compared
+  the same way, else exit 1, `<path> is outside paths.downloads (<dir>); the
+  container cannot see it`. Its container path is `/downloads/` plus its
+  path relative to `paths.downloads`. The command then runs, through
+  `exec -u dl downloadinux` uncaptured, `tmux new-session -d -s <session>
+  -c /downloads zsh -f -c <script> zsh <container queue> <log prefix>
+  <title> <colour> <argv…>`, each a separate argument. `<script>` is
+  `source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@";
+  echo; echo "[done — press a key]"; read -k1`; `zsh -f` reads none of
+  `dl`'s startup files. `<argv…>` is the preset's argument list without URLs, and for
+  `gallery` has `-q` right after `gallery-dl`, as `dlgal_batch` does today
+  (DEC-6). tmux runs a command given as several arguments directly, without
+  a shell, so every word arrives intact (checked against the image's tmux
+  3.5a). On success it prints `Queue: <container queue>` and `Running
+  detached in tmux session <session>. Watch it with: dlx watch <preset>`,
+  exit 0. A non-zero status from Compose (a session of that name already
+  running, a stopped container) exits 1: `could not start tmux session
+  <session>; if one is already running, attach with dlx watch <preset>`.
+
+  | Preset | Session | Default queue | Log prefix | Title | Colour |
+  | --- | --- | --- | --- | --- | --- |
+  | `video` | `batch-video` | `dlmp4_queue` | `dlmp4` | `Batch Download` | `blue` |
+  | `gallery` | `batch-gallery` | `dlgal_queue` | `dlgal` | `Gallery Batch Download` | `magenta` |
+
+- `watch [preset]` (default `video`) maps `video`/`v` to `batch-video` and
+  `gallery`/`gal`/`g` to `batch-gallery`; any other word is taken as a tmux
+  session name, as today. It runs `tmux attach -t <session>` through
+  `exec -u dl downloadinux` uncaptured and exits with its status.
+- `config user-agent` reads `CFBundleShortVersionString` from
+  `/Applications/Google Chrome.app/Contents/Info.plist` with `plistlib`
+  (no `defaults` subprocess). The major version is the text before the
+  first `.` and must be all digits. It sets `downloads.user_agent` to
+  `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+  (KHTML, like Gecko) Chrome/<major>.0.0.0 Safari/537.36` (Chrome freezes
+  the macOS version and zeroes everything after the major) and prints
+  `User-agent pinned to Chrome <major> (host has <version>).`. An existing
+  settings file is edited with `tomlkit`, so comments survive (adding a
+  `[downloads]` table when it has none), written atomically with its
+  current permission bits, and not written at all when it already holds
+  that value. A missing settings file is written as the starter file `init`
+  would write (`--set` values included), with the new value in place of
+  `downloads.user_agent`. When the version cannot be read
+  it prints `downloadinux: warning: cannot read Chrome's version from
+  <plist path>; downloads.user_agent is unchanged`, writes nothing, and
+  exits 0 (DEC-21).
 
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
@@ -346,6 +409,7 @@ Compose files and the entrypoint, pinned for P0001-C02:
   | `DOWNLOADINUX_COOKIES` | `paths.cookies` | bind source of `/cookies` |
   | `DOWNLOADINUX_UID`, `DOWNLOADINUX_GID` | `container.uid`, `container.gid` | `DL_UID`, `DL_GID` |
   | `DOWNLOADINUX_TZ` | `container.timezone` | `TZ` |
+  | `DOWNLOADINUX_USER_AGENT` | `downloads.user_agent` | `DL_USER_AGENT` (from P0001-C04, DEC-20) |
 
   The prefix keeps Compose's automatic read of a `.env` in the project
   directory from supplying any of them: the legacy `.env` names none.
@@ -368,6 +432,29 @@ Compose files and the entrypoint, pinned for P0001-C02:
   `/home/dl/cookies` → `/cookies`, `/home/dl/.config/yt-dlp` →
   `/legacy/yt-dlp`, and `/home/dl/.config/gallery-dl` → `/legacy/gallery-dl`,
   after applying the IDs.
+
+Pinned for P0001-C04, the end of DEC-15's interval:
+
+- The base file's environment gains `DL_USER_AGENT` from
+  `DOWNLOADINUX_USER_AGENT` (table above, DEC-20), in both VPN modes.
+- The `/legacy/` binds, the four links, and the entrypoint loop that
+  removes stale links before `usermod` are gone, and so is the checkout's
+  `config/` directory (*Presets*). Nothing in the image, the entrypoint, or
+  the `zsh/` files names `/home/dl/Downloads`, `~/cookies`,
+  `~/.config/yt-dlp`, or `~/.config/gallery-dl`; the interactive shell
+  starts in `/downloads`. The gate's smoke test asserts that the four old
+  paths do not exist and that `/config/video/yt-dlp.conf` and
+  `/config/gallery/config.json` are readable as `dl`.
+- The container's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` keep
+  their names and run the argument lists of *Presets* and of `batch`
+  (*Host application*), with `$DL_USER_AGENT` as the user-agent. The batch
+  loop, `_batch_downloader_core`, moves unchanged into its own file,
+  `zsh/batch.zsh` (in the image `/home/dl/.zsh-custom/batch.zsh`), which
+  `batch` sources and the interactive shell sources with the other `zsh/`
+  files; `exifmod` stays in `functions.zsh`.
+- Entrypoint messages (issue #18): without a token, `NORDVPN_TOKEN not set.
+  Store one on the host with: just token <token>`; the last line, `Ready.
+  Shell in with: just shell (or dlx shell)`.
 
 ## Presets
 
@@ -396,10 +483,50 @@ file under `/state`; shipped preset files are never written.
 Stage 1 it keeps today's source, the host Chrome major version on macOS, and
 reports when it cannot read one; Stage 2 replaces that lookup.
 
+Pinned for P0001-C04:
+
+- `presets/video/yt-dlp.conf` is today's `config/yt-dlp/dlmp4.conf` and
+  `presets/gallery/config.json` is `config/gallery-dl/config.json`, moved
+  with `git mv` so their history follows; `config/` is then gone. Stripped
+  from the video preset: `--paths`, `--cookies`, and `--user-agent`, with
+  the comments that describe only them. Stripped from the gallery preset:
+  `extractor.user-agent`, `extractor.archive`, and `extractor.instagram`'s
+  `user-agent`, `base-directory`, and `cookies`. Every other line stays as
+  it is and in order (the gallery file keeps its tabs and empty stub
+  sections); `presets/README.md` describes the two.
+- The operations layer builds these argument lists, each item one list
+  element, `<ua>` being `downloads.user_agent`, with the URLs after them
+  (DEC-20). `video`:
+
+  ```
+  yt-dlp --config-locations /config/video/yt-dlp.conf
+    --paths /downloads/dlmp4 --cookies /cookies/cookies.txt
+    --add-headers User-Agent:<ua>
+  ```
+
+  `gallery`:
+
+  ```
+  gallery-dl --config /config/gallery/config.json
+    -o extractor.archive=/downloads/dlgal/gallery-dl-archive.sqlite3
+    -o extractor.user-agent=<ua> -o extractor.instagram.user-agent=<ua>
+    -o extractor.instagram.base-directory=/downloads/dlgal
+    -o extractor.instagram.cookies=/cookies/cookies.txt
+  ```
+
+  The gallery overrides keep today's scoping: user-agent and archive for
+  every extractor, output root and cookies for Instagram only. gallery-dl
+  applies each dotted `-o` key inside the loaded configuration, after
+  loading it (checked against the image's gallery-dl 1.32.15).
+  `--add-headers User-Agent:<ua>` is the documented spelling of the
+  preset's old `--user-agent`, which yt-dlp 2026.08.19 hides from `--help`
+  and turns into the same header.
+
 ## VPN mode
 
-Settled for Stage 1 (DEC-11). Implemented in P0001-C02: base/overlay
-selection and the entrypoint switch; VPN helper commands are still pending.
+Settled for Stage 1 (DEC-11). Implemented: base/overlay selection and the
+entrypoint switch (P0001-C02), and the VPN helper commands and the login on
+`config set-token` (P0001-C03), so every D2 command is implemented.
 
 `vpn.enabled = false` starts Compose from the base file only: no added
 capabilities, no `/dev/net/tun`, no `systempaths=unconfined`, and no NordVPN
@@ -460,8 +587,11 @@ claims a login is valid.
 
 Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
 the lifecycle/token wrappers, computed Compose access, managed cookie export,
-and setup's import step are implemented (P0001-C02). The download and batch
-operation wrappers and full setup rewrite remain pending.
+and setup's import step are implemented (P0001-C02); the `shell`, `vpn`,
+`servers`, and `status` wrappers and `doctor`'s token line without `.env`
+are implemented (P0001-C03), so every D2 command and wrapper is implemented.
+The download and batch operation wrappers and full setup rewrite remain
+pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
@@ -515,8 +645,9 @@ Import details, pinned for P0001-C01:
 The `just` recipes keep their names and run `uv run downloadinux …`. `just
 batch` and `just watch` keep tmux until Stage 3: the CLI starts the existing
 zsh loop non-interactively, sourcing only the loop's own file, with the
-argument list the `dl` operation would use. The queue file must still be
-under the downloads root.
+argument list the `dl` operation would use (plus gallery-dl's `-q`, as
+today's gallery batch has). The queue file must still be under the
+downloads root.
 
 `just cookies` keeps its Firefox export through host yt-dlp until Stage 2
 replaces it, but writes the managed jar (`paths.cookies`/`cookies.txt`) instead
@@ -550,6 +681,20 @@ Pinned for P0001-C03, completing D2's wrappers:
 - `doctor` no longer reads or requires `.env`: its token line reports the
   `token` state from `config show --json` (`set`, `unset`, or `malformed`).
   The rest of the recipe waits for D4.
+
+Pinned for P0001-C04, D3's wrappers:
+
+- `dl`, `batch`, and `watch` run the CLI commands of the same names
+  (`batch` passes the queue only when one is given); `useragent` runs
+  `config user-agent`; `cookies` keeps its export and still ends with
+  `just useragent`. No recipe names `/home/dl` any more, so the `chome`
+  variable goes.
+- `doctor` changes only where the retired paths reach it: its user-agent
+  line reads `downloads.user_agent` through `scripts/config-value.sh` and
+  compares its Chrome major with the host's as before (the "configs
+  disagree" arm goes with the configs: there is one value now), and its
+  mount line tests `/downloads` instead of `/home/dl/Downloads`. The rest
+  waits for D4.
 
 ## Named cookie sources
 

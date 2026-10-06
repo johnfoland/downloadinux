@@ -254,3 +254,96 @@ of storing a credential.
 
 *Where:* [target design](target-design.md), *Host application* ("Commands in
 the container, pinned for P0001-C03"). Added cutting P0001-C03.
+
+## DEC-17: Captured commands keep standard error on the terminal (2026-10)
+
+The capture runner the C03 list adds (for the running check, `servers`, and
+the login on `set-token`) captures a command's standard output only;
+standard error passes through to the terminal. The `nordvpn` client prints
+its results and refusals on standard output (checked against a running
+container: a failed `nordvpn account` writes nothing to standard error), so
+"the login's output is discarded" drops everything the daemon says, while a
+Compose failure (a stopped service, an unreachable Docker daemon) is still
+shown next to the CLI's own message instead of being hidden behind "could
+not reach the Nord API" or "the daemon refused it". Capturing and
+discarding standard error too, as the old `token` recipe's `2>/dev/null`
+did, was rejected for that reason; nothing on that stream carries the
+token, which travels only in the process environment.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands
+in the container, pinned for P0001-C03"); `compose.capture_process`. Added
+during P0001-C03-b.
+
+## DEC-18: A JSON body that is not the server list fails like a non-JSON one (2026-10)
+
+`servers` treats a body that parses as JSON but is not a list of servers
+with a city name, hostname, and load (an API error object, say) as the same
+operation failure as a body that is not JSON: exit 1 with the pinned "could
+not reach the Nord API" message. The old script would have stopped with a
+traceback there, which the CLI's error contract rules out, and a separate
+message would name a cause the user can do nothing different about.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands
+in the container, pinned for P0001-C03"); `servers.rank`. Added during
+P0001-C03-b.
+
+## DEC-19: The refused-login hint keeps the daemon's token valid (2026-10)
+
+When `config set-token`'s login is refused, the message points at
+`dlx vpn logout --persist-token`, not a plain `dlx vpn logout`. A NordVPN
+daemon that is already logged in refuses every login, even with the token
+it already holds, and NordVPN 5.4's `logout` revokes that token unless
+`--persist-token` is given. Re-running `just token` with the working token
+(after `just up` logged in at start, say) and following a plain-logout hint
+therefore revoked the token being stored, and the next login was refused
+again.
+
+Checking `nordvpn account` first and treating "already logged in" as its
+own outcome was rejected: the daemon cannot say whether its token is the
+one being stored, so that outcome would still need the same hint, and
+DEC-16's exit 1 for a refused login stands. The cost of the persisting
+logout is that a rotated-away token stays valid until it expires or is
+revoked in the Nord dashboard, which README already tells the user to do.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands in
+the container, pinned for P0001-C03"). Added in the P0001-C03 review
+(issue #17).
+
+## DEC-20: Preset overrides are downloader arguments; the shell reads the user-agent from the environment (2026-10)
+
+The operations layer gives a preset its output root, cookie jar,
+user-agent, and (for `gallery`) the archive as downloader arguments on
+every invocation (`--paths`, `--cookies`, `--add-headers` for yt-dlp;
+`-o key=value` for gallery-dl), never as a generated file under `/state`.
+The argument list is then the whole contract, testable without a container
+and fresh on every run, with no file to go stale between a settings change
+and the next download. The archive location is an argument too, since it is
+a path under the output root and DEC-10 keeps paths out of presets.
+
+The container shell's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch`
+cannot read host settings, so Compose passes `downloads.user_agent` into the
+container as `DL_USER_AGENT` (Compose variable `DOWNLOADINUX_USER_AGENT`),
+and those helpers build the same argument lists with it. The value is
+fixed when the container is created, so after `config user-agent` the shell
+helpers follow at the next `dlx up` or `restart`; `dl` and `batch` pass the
+setting directly and need neither. Dropping the user-agent from the shell
+helpers was rejected: Instagram serves its 1080p ladder only to Chrome
+user-agents and flags a session whose user-agent does not match its
+cookies.
+
+*Where:* [target design](target-design.md), *Presets* and *Container
+contract* ("pinned for P0001-C04"). Added cutting P0001-C04.
+
+## DEC-21: `config user-agent` without a readable Chrome, or without a settings file (2026-10)
+
+When the host Chrome's version cannot be read (no Chrome at the macOS
+path, as on every Linux host, or a version that does not start with a
+number), `config user-agent` warns, writes nothing, and exits 0. `just
+cookies` runs it after every export, as today's recipe did, and a Linux
+user without Chrome must not see the cookie export fail; exit 1 was
+rejected for that reason. When the settings file does not exist, the
+command writes the starter file `init` would, with the new value in place,
+so a later `dlx init` is not refused over a file holding one key.
+
+*Where:* [target design](target-design.md), *Host application* ("Downloads,
+pinned for P0001-C04"). Added cutting P0001-C04.
