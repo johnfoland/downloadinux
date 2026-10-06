@@ -114,6 +114,8 @@ the credential-free container smoke test in the gate.
 
 ### D1 — Package, settings model, and `config` commands
 
+**Implemented:** P0001-C01, accepted 2026-10-06 (pull request #12).
+
 **Build:** `pyproject.toml` and `src/downloadinux/` with entry points
 `downloadinux` and `dlx` (bare invocation prints help) (DEC-7); the settings
 model, XDG resolution, `--config`/`DOWNLOADINUX_CONFIG`, `--set` overrides,
@@ -136,6 +138,11 @@ expected files with mode 0600 and output that never contains the token, and
 outside the checkout. `just check` runs the tests in CI.
 
 ### D2 — Container contract, lifecycle commands, and VPN mode
+
+**Partly implemented:** P0001-C02 (pull request #15): Compose files/layer,
+image/entrypoint, lifecycle commands, recipe access, managed cookie export,
+and gate smoke test. `shell`, `vpn`, `servers`, login on set-token, their
+wrappers, and the two-project manual check remain pending.
 
 **Build:** Compose base file with long-syntax binds to `/downloads`,
 `/config`, `/state`, `/cookies`, no `container_name`, no `.env` reference, and

@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-06 by `relay-next`.
+Last updated 2026-10-06 by `relay-execute`.
 Last review: 2026-10-06 (P0001-C01, accepted with follow-ups).
 
 ## Where this stands
@@ -14,16 +14,17 @@ Last review: 2026-10-06 (P0001-C01, accepted with follow-ups).
   with follow-ups 2026-10-06, pull request #12. D1 is done.
 - **P0001-C02** (D2, first part: Compose files and layer, image and
   entrypoint, lifecycle commands, recipe rewiring, smoke test; the C01
-  error-handling follow-up): cut 2026-10-06, ready for an executor.
+  error-handling follow-up): executed 2026-10-06, pull request #15,
+  awaiting review.
   Remaining after it: the rest of D2 (`shell`, `vpn`, `servers`, login on
   set-token, their wrappers, the side-by-side check), then D3–D5.
 
 ## In flight
 
 - **Chunk:** P0001-C02
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0001-c02`
-- **Pull request:** #15 (draft)
+- **Pull request:** #15 (ready)
 - **Units committed:** a, b, c, d
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
