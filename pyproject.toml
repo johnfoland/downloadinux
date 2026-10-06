@@ -1,0 +1,21 @@
+[project]
+name = "downloadinux"
+version = "0.1.0"
+description = "Host CLI for the downloadinux download container"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["tomlkit>=0.13"]
+
+[project.scripts]
+downloadinux = "downloadinux.cli:main"
+dlx = "downloadinux.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

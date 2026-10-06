@@ -4,7 +4,7 @@
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
 - **Completed:** —
-- **Decisions:** DEC-7 to DEC-13
+- **Decisions:** DEC-7 to DEC-15
 
 ## 1. Problem and outcome
 
@@ -97,6 +97,10 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | target-design, *Migration* (new) | `import-env`, `just` wrappers, batch and cookies during Stage 1 | Migration behavior users see |
 | [implementation-plan.md](../implementation-plan.md), status line, *Stage 1*, *Decisions to resolve* | Link to P0001; cite DEC-7 to DEC-13; mark resolved rows | Stage plan and open-decision register |
 | target-design, *Host application*, *Configuration and paths*, *Migration* ("pinned for P0001-C01" lists) | Python version and `tomlkit`; checkout root; global option placement; exit codes; atomic writes; XDG edge cases; computed defaults; `--set` parsing; credentials format; `config show` text and JSON; `init` and `set-token` behavior; `.env` parsing, key mapping, `--force`, and jar copy | Cutting P0001-C01: details D1's executor would otherwise have invented |
+| [decisions.md](../decisions.md), DEC-14 | Added by P0001-C01-d: `.env` lines the import rules left open | The executor's gap, recorded where the import rules live |
+| target-design, *Configuration and paths* | `--set` rule says "string or path setting" | P0001-C01 review: the executor's reading was right, the wording ambiguous |
+| target-design, *Host application* (OS failures; "Docker invocation, pinned for P0001-C02"), *Container contract* ("Compose files and the entrypoint"), *VPN mode* (overlay table), *Migration* ("Recipes when the Compose files change") | Error contract for OS failures; Compose argv, environment, and `DOWNLOADINUX_*` variables; lifecycle commands; image identity and entrypoint; transitional links; recipe rewiring | Cutting P0001-C02: details D2's executor would otherwise have invented |
+| [decisions.md](../decisions.md), DEC-15 | Added: old in-container paths stay linked from D2 until D3 | Cutting P0001-C02: D2 and D3 are separate chunks, and master must keep downloading in between |
 
 ## 5. Delivery plan
 
@@ -142,7 +146,10 @@ directories as `dl`, and skipping `nordvpnd` when the VPN is off; `build`,
 `up`, `down`, `restart`, `update`, `compose`, `shell`, `vpn`, `servers`, and
 login-on-set for `config set-token`, all computing project, files, and
 environment from settings (*Host application*). The lifecycle, `shell`, `vpn`,
-`servers`, `token`, `status`, `logs`, and `nuke` recipes become wrappers. The
+`servers`, `token`, `status`, `logs`, and `nuke` recipes become wrappers.
+Until D3, the old in-container paths stay linked to the new mounts (DEC-15),
+and `just cookies` already writes the managed jar (moved here from D3, since
+the container stops seeing `cookies/` in D2). The
 gate validates both Compose configurations (quietly) and gains a smoke test:
 run the image VPN-disabled with temporary host directories (one path with a
 space) as UID/GID of the runner, and assert the entrypoint's directories exist
@@ -166,8 +173,9 @@ paths, and user-agents (*Presets*, DEC-10); the download operation building
 the argument list per preset and running it through `docker compose exec` as
 `dl`; `dl`, `batch`, and `watch` commands (batch through the non-interactive
 loop, *Migration*); `config user-agent`; `just dl`, `batch`, `watch`,
-`useragent`, and `cookies` as wrappers, with `cookies` writing the managed
-jar. Container shell aliases `dlmp4`/`dlgal` follow the new paths.
+`useragent`, and `cookies` as wrappers (`cookies` already writes the managed
+jar from D2). Container shell aliases `dlmp4`/`dlgal` follow the new paths.
+The `/legacy/` binds and the old-path links of DEC-15 are removed.
 
 **Depends on:** D2.
 
@@ -228,7 +236,8 @@ implemented behavior.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| P0001-C01 | D1 | ready for an executor | — | — |
+| P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | — |
+| P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | ready for an executor | — | — |
 
 ## 8. Closeout
 

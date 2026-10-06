@@ -30,5 +30,9 @@ jobs:
       - name: Install zsh
         run: sudo apt-get update && sudo apt-get install -y zsh
 
+      # uv provisions Python from .python-version for the pytest step.
+      # setup-uv publishes no floating major tag, so pin the release.
+      - uses: astral-sh/setup-uv@v10.2.0
+
       # The gate itself: CI runs exactly what `just check` runs locally.
       - run: just check

@@ -16,9 +16,10 @@ These are recorded in the [decision log](decisions.md), with their reasons:
 5. Build the TUI in **Python + Textual** (DEC-5).
 6. Preserve useful existing download behavior through explicit presets (DEC-6).
 
-Stage 1 (project P0001) added DEC-7 to DEC-13: the host application and its
+Stage 1 (project P0001) added DEC-7 to DEC-15: the host application and its
 installation, configuration and locations, the container contract, presets,
-VPN mode, structured health checks, and migration. The sections below say
+VPN mode, structured health checks, migration, the `.env` reader's edge
+cases, and the D2-to-D3 transition. The sections below say
 which parts are settled.
 
 Native downloader execution and a remote-server control protocol are not required
@@ -54,7 +55,9 @@ this design does not require a network API merely to support local Docker.
 
 ## Host application
 
-Settled for Stage 1 (DEC-7); implementation pending.
+Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
+the `config` commands except `user-agent` are implemented (P0001-C01); the
+other subcommands are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -91,6 +94,34 @@ Package details, pinned for P0001-C01:
   configuration error names the file (or `--set`) and the key.
 - Writes to the settings and credentials files are atomic: a temporary file
   in the same directory, created with the final mode, then renamed into place.
+- A failure the operating system reports (a directory that cannot be created,
+  a file that cannot be written or read, a missing `docker` executable) is an
+  operation failure: exit 1, reported as `downloadinux: error: <path>: <reason>`,
+  never a traceback.
+
+Docker invocation, pinned for P0001-C02:
+
+- Every command that runs Compose runs `docker compose --project-name
+  <container.project> --project-directory <checkout root> --file
+  compose/base.yaml`, adding `--file compose/vpn.yaml` when `vpn.enabled` is
+  true, as an argument list. The Compose files are install assets (a missing
+  one fails as above).
+- Its environment is the CLI's own, with every inherited variable whose name
+  starts `DOWNLOADINUX_` removed except `DOWNLOADINUX_CONFIG` and
+  `DOWNLOADINUX_IMAGE`, and then the variables of *Container contract*'s
+  table set from the effective settings. The `DOWNLOADINUX_NORDVPN_*`
+  variables are set only when `vpn.enabled` is true; otherwise the token
+  appears nowhere in the command or its environment.
+- `compose -- <args>` appends `<args>` unchanged and exits with
+  `docker compose`'s own status. It creates no directory and checks no path.
+- `build` runs `build`; `up` runs `up -d`; `down` runs `down`; `restart` runs
+  `up -d --force-recreate`; `update` runs `build --no-cache`, then `up -d`.
+  `up`, `restart`, and `update` first refuse, exit 1, when `paths.downloads`
+  does not exist (naming it), and create `paths.state` and `paths.cookies`
+  (the cookies directory at mode 0700) when absent. A lifecycle command whose
+  `docker compose` exits non-zero exits 1.
+- Operations run `docker` through an injectable runner, so no test starts a
+  process.
 
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
@@ -113,7 +144,9 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 ## Configuration and paths
 
-Settled for Stage 1 (DEC-8); implementation pending.
+Settled for Stage 1 (DEC-8). Implemented in P0001-C01: the settings and
+credentials files, their locations, `config show`, `init`, and
+`config set-token` (storing only; the login on set is pending).
 
 Separate installation files, user configuration, credentials, and mutable state.
 Routine operation must not rewrite tracked files in the checkout.
@@ -185,10 +218,10 @@ Further rules, pinned for P0001-C01:
   to `$XDG_DATA_HOME/downloadinux/cookies`. Paths are expanded (`~`) but not
   resolved, so a symlinked drive keeps the path the user wrote.
 - `--set` takes `table.key=value`; a missing `=` or an unknown key is a
-  configuration error naming `--set`. For a string setting, a value that is
-  not a quoted TOML string is the plain text after `=` (so
-  `--set vpn.server=123` is the string `123`); other settings parse the value
-  as TOML. A `--set` is validated like a file value.
+  configuration error naming `--set`. For a string or path setting, a value
+  that is not a quoted TOML string is the plain text after `=` (so
+  `--set vpn.server=123` is the string `123`); integer and boolean settings
+  parse the value as TOML. A `--set` is validated like a file value.
 - Loading settings never checks that `paths.downloads` exists: `config show`
   marks it missing, `up` refuses to start without it, and `doctor` reports
   it.
@@ -245,6 +278,53 @@ mount. The worker never needs the host username or home directory (DEC-2).
 Compose sets no `container_name`; `container.project` names the project, so
 two configs with different project names run side by side.
 
+Compose files and the entrypoint, pinned for P0001-C02:
+
+- `compose/base.yaml` defines the one service, `downloadinux` (hostname
+  `downloadinux`, image `${DOWNLOADINUX_IMAGE:-downloadinux:latest}`, build
+  context the project directory, `stdin_open`, `tty`,
+  `restart: unless-stopped`), the four binds above in long syntax, and the
+  named volumes `nordvpn-data` (at `/var/lib/nordvpn`) and `zsh-history` (at
+  `/home/dl/.local/share/downloadinux`). It has no `container_name`, no
+  `env_file`, no build arguments, and apart from the image name interpolates
+  only the variables below, each without a default. The default project
+  name, `downloadinux`, is the one Compose derived from the checkout's
+  directory before, so the existing named volumes and the NordVPN login carry
+  over. `compose/vpn.yaml` is in
+  *VPN mode*. `DOWNLOADINUX_IMAGE` is a test seam the gate's smoke test sets;
+  the CLI never sets it.
+
+  | Compose variable | From | Container environment |
+  | --- | --- | --- |
+  | `DOWNLOADINUX_DOWNLOADS` | `paths.downloads` | bind source of `/downloads` |
+  | `DOWNLOADINUX_PRESETS` | the checkout's `presets/` | bind source of `/config` |
+  | `DOWNLOADINUX_STATE` | `paths.state` | bind source of `/state` |
+  | `DOWNLOADINUX_COOKIES` | `paths.cookies` | bind source of `/cookies` |
+  | `DOWNLOADINUX_UID`, `DOWNLOADINUX_GID` | `container.uid`, `container.gid` | `DL_UID`, `DL_GID` |
+  | `DOWNLOADINUX_TZ` | `container.timezone` | `TZ` |
+
+  The prefix keeps Compose's automatic read of a `.env` in the project
+  directory from supplying any of them: the legacy `.env` names none.
+- The image builds user `dl` as UID and GID 1000 with home `/home/dl`, and
+  its working directory is `/downloads`. At start the entrypoint, as root,
+  applies `DL_UID` and `DL_GID` (either unset keeps the image's value): a GID
+  that already names a group makes that group `dl`'s primary group, else
+  `dl`'s own group takes the GID; a UID already used by another account is an
+  error that stops the container with a message naming it. Ownership changes
+  stay inside the image's `/home/dl` and never follow a link. Then, as `dl`,
+  it creates `/downloads/dlmp4` and `/downloads/dlgal`, and the placeholder
+  `/cookies/cookies.txt` (mode 0600) when absent; a mount it cannot write is
+  a warning, not a stop, so `doctor` can report it.
+- The checkout's `presets/` exists from P0001-C02 (holding a README until D3
+  moves the presets in), since a long-syntax bind fails on a missing source.
+- Until D3 the entrypoint also keeps the old in-container paths working
+  (DEC-15): the base file binds the checkout's `config/yt-dlp` and
+  `config/gallery-dl` read-only at `/legacy/yt-dlp` and `/legacy/gallery-dl`,
+  and the entrypoint links `/home/dl/Downloads` → `/downloads`,
+  `/home/dl/cookies` → `/cookies`, `/home/dl/.config/yt-dlp` →
+  `/legacy/yt-dlp`, and `/home/dl/.config/gallery-dl` → `/legacy/gallery-dl`,
+  after applying the IDs.
+
 ## Presets
 
 Settled for Stage 1 (DEC-6, DEC-10); implementation pending.
@@ -285,6 +365,22 @@ The token reaches Compose only through the environment of the CLI's
 NordVPN remains the only provider. Whether VPN runs in the worker container or
 a separate service remains open.
 
+Pinned for P0001-C02: `compose/vpn.yaml` adds to the service `cap_add`
+`NET_ADMIN` and `NET_RAW`, the device `/dev/net/tun`, the sysctl
+`net.ipv4.conf.all.src_valid_mark: 1`, `security_opt`
+`systempaths=unconfined`, and this environment, which the entrypoint reads:
+
+| Compose variable | From | Container environment |
+| --- | --- | --- |
+| (none) | | `DL_VPN=on` |
+| `DOWNLOADINUX_NORDVPN_TOKEN` | credentials `nordvpn.token` (empty when unset or malformed) | `NORDVPN_TOKEN` |
+| `DOWNLOADINUX_NORDVPN_SERVER` | `vpn.server` | `NORDVPN_SERVER` |
+| `DOWNLOADINUX_NORDVPN_TECHNOLOGY` | `vpn.technology` | `NORDVPN_TECHNOLOGY` |
+| `DOWNLOADINUX_NORDVPN_KILLSWITCH` | `vpn.killswitch`: `on` or `off` | `NORDVPN_KILLSWITCH` |
+| `DOWNLOADINUX_NORDVPN_AUTOCONNECT` | `vpn.autoconnect`: `true` or `false` | `NORDVPN_AUTOCONNECT` |
+
+The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
+
 ## Health checks
 
 Settled for Stage 1 (DEC-12); implementation pending.
@@ -317,7 +413,8 @@ claims a login is valid.
 
 ## Migration
 
-Settled for Stage 1 (DEC-13); implementation pending.
+Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
+the `just` wrappers and the cookie-export change are pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
@@ -334,7 +431,9 @@ Import details, pinned for P0001-C01:
   `#` are skipped, an `export ` prefix is allowed, and one pair of matching
   surrounding single or double quotes is stripped. There is no variable
   interpolation. A key missing or empty is not imported, and its setting
-  keeps its default.
+  keeps its default. A line without `=` is a key with an empty value, a
+  repeated key takes its later value, whitespace around key and value is
+  trimmed, and an unquoted value runs to the end of the line (DEC-14).
 
   | `.env` key | Setting | Conversion |
   | --- | --- | --- |
@@ -375,6 +474,26 @@ under the downloads root.
 `just cookies` keeps its Firefox export through host yt-dlp until Stage 2
 replaces it, but writes the managed jar (`paths.cookies`/`cookies.txt`) instead
 of the checkout's `cookies/` directory.
+
+Recipes when the Compose files change, pinned for P0001-C02 (the old
+`docker-compose.yml` is removed then, so no recipe may call `docker compose`
+directly from that point):
+
+- The justfile's Compose access goes through the CLI: its `compose` variable
+  becomes `uv run downloadinux compose --`, and `dex` that plus
+  `exec -u dl downloadinux`, so recipes not yet converted (`dl`, `batch`,
+  `watch`, `shell`, `vpn`, `servers`, `status`, `logs`, `nuke`, `doctor`)
+  reach the container of the configured project.
+- `build`, `up`, `down`, `restart`, and `update` run the CLI commands of the
+  same names (`update` then runs `just doctor`, as before). `token` runs
+  `config set-token`.
+- Recipes that need a setting read it from `config show --json`: `batch`
+  takes the downloads root from `paths.downloads` instead of
+  `HOST_DOWNLOADS`, and `cookies`, `setup`, and `doctor` use the jar at
+  `paths.cookies`/`cookies.txt` (`cookies` creating the directory at 0700 and
+  writing the jar at 0600) instead of `cookies/cookies.txt`.
+- `setup` runs `config import-env` right after writing `.env` when no
+  settings file exists, so a cold start still produces a VPN-on config.
 
 ## Named cookie sources
 

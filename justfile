@@ -272,34 +272,37 @@ servers city="New_York" country="228":
 build:
     {{compose}} build
 
-# Static checks and an image build (the CI gate)
+# Static checks, the Python tests, and an image build (the CI gate)
 check:
     #!/usr/bin/env bash
     set -euo pipefail
     step(){ printf '\033[1;36m==> %s\033[0m\n' "$*"; }
-    step "1/6  shellcheck scripts/*.sh"
+    step "1/7  shellcheck scripts/*.sh"
     shellcheck scripts/*.sh
     # shellcheck has no zsh support, so the zsh files get a syntax check only.
-    step "2/6  zsh -n on the zsh sources"
+    step "2/7  zsh -n on the zsh sources"
     for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
     # compile() rather than py_compile, which would leave scripts/__pycache__.
-    step "3/6  python3 compile scripts/servers.py"
+    step "3/7  python3 compile scripts/servers.py"
     python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' scripts/servers.py
+    # --locked fails when uv.lock is stale rather than rewriting it.
+    step "4/7  pytest (uv run --locked)"
+    uv run --locked pytest -q
     # -q is mandatory: without it compose prints the resolved file, which
     # includes NORDVPN_TOKEN from .env.
-    step "4/6  docker compose config -q"
+    step "5/7  docker compose config -q"
     docker compose config -q
-    step "5/6  Docker daemon reachable"
+    step "6/7  Docker daemon reachable"
     if ! docker info >/dev/null 2>&1; then
       echo "Docker daemon not reachable — start Docker and re-run" >&2
       exit 1
     fi
     # Its own tag, so the gate never replaces the image `just up` runs.
-    step "6/6  docker build --tag downloadinux:check ."
+    step "7/7  docker build --tag downloadinux:check ."
     docker build --tag downloadinux:check .
-    printf '\033[1;32mjust check: all 6 steps passed.\033[0m\n'
+    printf '\033[1;32mjust check: all 7 steps passed.\033[0m\n'
 
 # Start in the background
 up:
