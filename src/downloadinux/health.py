@@ -233,6 +233,120 @@ def _process_environment(host: Host) -> dict[str, str]:
     return {key: value for key, value in source.items() if not key.startswith("DOWNLOADINUX_")}
 
 
+def _container_capture(
+    invocation: compose.Invocation,
+    program: list[str],
+    capture: compose.Capture,
+) -> tuple[int, str]:
+    try:
+        return invocation.capture(
+            compose.exec_args(program, captured=True), capture
+        )
+    except OSError:
+        return 1, ""
+
+
+def _container_checks(
+    settings: Settings,
+    invocation: compose.Invocation | None,
+    capture: compose.Capture,
+    running: Check,
+) -> list[Check]:
+    ids = [
+        "mount.downloads.mounted", "mount.downloads.writable",
+        "mount.config.mounted", "mount.config.readonly",
+        "mount.state.mounted", "mount.state.writable",
+        "mount.cookies.mounted", "mount.cookies.writable",
+        "tools.yt-dlp", "tools.gallery-dl",
+    ]
+    if running.status is not Status.OK or invocation is None:
+        return [_check(id, Status.SKIP, "container not running") for id in ids]
+
+    checks = []
+    uid = settings["container.uid"]
+    for mount in mounts(settings):
+        name = mount.container.removeprefix("/")
+        status, _ = _container_capture(
+            invocation, ["mountpoint", "-q", mount.container], capture
+        )
+        mounted = _check(
+            f"mount.{name}.mounted",
+            Status.OK if status == 0 else Status.FAIL,
+            (
+                f"{mount.container} is a mount point"
+                if status == 0
+                else f"{mount.container} is not a mount point"
+            ),
+            None if status == 0 else "dlx restart",
+        )
+        checks.append(mounted)
+
+        if mount.access == "ro":
+            status, _ = _container_capture(
+                invocation, ["test", "-w", mount.container], capture
+            )
+            checks.append(
+                _check(
+                    f"mount.{name}.readonly",
+                    Status.OK if status != 0 else Status.FAIL,
+                    (
+                        f"{mount.container} is read-only"
+                        if status != 0
+                        else f"{mount.container} is writable"
+                    ),
+                    None if status != 0 else "dlx restart",
+                )
+            )
+            continue
+
+        if mounted.status is not Status.OK:
+            checks.append(
+                _check(
+                    f"mount.{name}.writable",
+                    Status.SKIP,
+                    f"{mount.container} is not a mount point",
+                )
+            )
+            continue
+        status, _ = _container_capture(
+            invocation,
+            [
+                "sh", "-c",
+                'f=$(mktemp -p "$1" .downloadinux-doctor.XXXXXX 2>/dev/null) && rm -f "$f"',
+                "sh", mount.container,
+            ],
+            capture,
+        )
+        checks.append(
+            _check(
+                f"mount.{name}.writable",
+                Status.OK if status == 0 else Status.FAIL,
+                (
+                    f"dl (uid {uid}) can write {mount.container}"
+                    if status == 0
+                    else f"dl (uid {uid}) cannot write {mount.container}"
+                ),
+                None if status == 0 else f"make {mount.host} writable by uid {uid}",
+            )
+        )
+
+    for tool in ("yt-dlp", "gallery-dl"):
+        status, output = _container_capture(
+            invocation, [tool, "--version"], capture
+        )
+        version = output.splitlines()[0].strip() if output.splitlines() else ""
+        worked = status == 0 and bool(version)
+        checks.append(
+            _check(
+                f"tools.{tool}",
+                Status.OK if worked else Status.FAIL,
+                f"{tool} {version}" if worked else f"{tool} did not run",
+                None if worked else "dlx update",
+            )
+        )
+    return checks
+
+
 def inspect(
     settings: Settings,
     creds: credentials.Credentials,
@@ -293,9 +407,10 @@ def inspect(
             )
     checks.append(docker)
 
+    invocation = None
     if docker.status is not Status.OK:
-        checks.append(
-            _check("container.running", Status.SKIP, "Docker daemon not reachable")
+        running_check = _check(
+            "container.running", Status.SKIP, "Docker daemon not reachable"
         )
     else:
         invocation = compose.invocation(settings, creds, host.environ)
@@ -303,16 +418,16 @@ def inspect(
             running = invocation.running(run_capture)
         except OSError:
             running = False
-        checks.append(
-            _check(
-                "container.running",
-                Status.OK if running else Status.FAIL,
-                (
-                    f"container running (project {settings['container.project']})"
-                    if running
-                    else "container not running"
-                ),
-                None if running else "dlx up",
-            )
+        running_check = _check(
+            "container.running",
+            Status.OK if running else Status.FAIL,
+            (
+                f"container running (project {settings['container.project']})"
+                if running
+                else "container not running"
+            ),
+            None if running else "dlx up",
         )
+    checks.append(running_check)
+    checks += _container_checks(settings, invocation, run_capture, running_check)
     return Result(tuple(checks))

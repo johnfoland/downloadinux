@@ -24,6 +24,18 @@ HOST_IDS = [
     "docker.daemon",
     "container.running",
 ]
+CONTAINER_IDS = [
+    "mount.downloads.mounted",
+    "mount.downloads.writable",
+    "mount.config.mounted",
+    "mount.config.readonly",
+    "mount.state.mounted",
+    "mount.state.writable",
+    "mount.cookies.mounted",
+    "mount.cookies.writable",
+    "tools.yt-dlp",
+    "tools.gallery-dl",
+]
 
 
 class Docker:
@@ -32,6 +44,7 @@ class Docker:
 
     def __init__(self):
         self.calls = []
+        self.container = {}
 
     def capture(self, argv, environ):
         argv, environ = list(argv), dict(environ)
@@ -42,6 +55,22 @@ class Docker:
             "ps", "--status", "running", "--quiet", "downloadinux"
         ]:
             return self.running
+        args = compose_args(argv)
+        prefix = ["exec", "-T", "-u", "dl", "downloadinux"]
+        if args[:5] == prefix:
+            program = tuple(args[5:])
+            if program in self.container:
+                return self.container[program]
+            if program[:2] == ("mountpoint", "-q"):
+                return 0, ""
+            if program[:2] == ("sh", "-c"):
+                return 0, ""
+            if program == ("test", "-w", "/config"):
+                return 1, ""
+            if program == ("yt-dlp", "--version"):
+                return 0, "2026.10.01\n"
+            if program == ("gallery-dl", "--version"):
+                return 0, "1.30.10\n"
         raise AssertionError(f"unexpected capture: {argv}")
 
 
@@ -108,7 +137,7 @@ def test_host_checks_are_ordered_and_warns_and_skips_are_ok(
 ):
     status, report, err = run_json(capsys, doctor_paths)
     assert (status, err, report["ok"]) == (0, "", True)
-    assert [check["id"] for check in report["checks"]] == HOST_IDS
+    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS
     checks = by_id(report)
     assert checks["config.file"] == {
         "id": "config.file",
@@ -359,6 +388,113 @@ def test_stopped_container_fails_with_dlx_up(docker, doctor_paths, capsys):
         "id": "container.running", "status": "fail",
         "summary": "container not running", "fix": "dlx up",
     }
+
+
+WRITE_PROBE = (
+    "sh", "-c",
+    'f=$(mktemp -p "$1" .downloadinux-doctor.XXXXXX 2>/dev/null) && rm -f "$f"',
+    "sh",
+)
+
+
+def test_every_container_check_uses_its_whole_pinned_compose_argv(
+    docker, doctor_paths, capsys
+):
+    from downloadinux.checkout import checkout_root
+
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 0
+    checks = by_id(report)
+    assert all(checks[id]["status"] == "ok" for id in CONTAINER_IDS)
+    root = checkout_root()
+    prefix = [
+        "docker", "compose", "--project-name", "downloadinux",
+        "--project-directory", str(root), "--file", str(root / "compose/base.yaml"),
+        "exec", "-T", "-u", "dl", "downloadinux",
+    ]
+    programs = [
+        ["mountpoint", "-q", "/downloads"], [*WRITE_PROBE, "/downloads"],
+        ["mountpoint", "-q", "/config"], ["test", "-w", "/config"],
+        ["mountpoint", "-q", "/state"], [*WRITE_PROBE, "/state"],
+        ["mountpoint", "-q", "/cookies"], [*WRITE_PROBE, "/cookies"],
+        ["yt-dlp", "--version"], ["gallery-dl", "--version"],
+    ]
+    assert [call for call, _ in docker.calls[2:]] == [
+        [*prefix, *program] for program in programs
+    ]
+
+
+def test_not_a_mount_fails_then_skips_its_write_probe(
+    docker, doctor_paths, capsys
+):
+    docker.container[("mountpoint", "-q", "/downloads")] = (1, "")
+    status, report, _ = run_json(capsys, doctor_paths)
+    checks = by_id(report)
+    assert status == 1
+    assert checks["mount.downloads.mounted"] == {
+        "id": "mount.downloads.mounted", "status": "fail",
+        "summary": "/downloads is not a mount point", "fix": "dlx restart",
+    }
+    assert checks["mount.downloads.writable"] == {
+        "id": "mount.downloads.writable", "status": "skip",
+        "summary": "/downloads is not a mount point",
+    }
+    programs = [compose_args(call)[5:] for call, _ in docker.calls[2:]]
+    assert [*WRITE_PROBE, "/downloads"] not in programs
+
+
+def test_unwritable_mount_names_uid_and_host_path_in_the_fix(
+    docker, doctor_paths, capsys
+):
+    docker.container[(*WRITE_PROBE, "/downloads")] = (1, "")
+    status, report, _ = run_json(
+        capsys, doctor_paths, "--set", "container.uid=1234"
+    )
+    assert status == 1
+    assert by_id(report)["mount.downloads.writable"] == {
+        "id": "mount.downloads.writable", "status": "fail",
+        "summary": "dl (uid 1234) cannot write /downloads",
+        "fix": f"make {doctor_paths['downloads']} writable by uid 1234",
+    }
+
+
+def test_writable_config_mount_fails(docker, doctor_paths, capsys):
+    docker.container[("test", "-w", "/config")] = (0, "")
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 1
+    assert by_id(report)["mount.config.readonly"] == {
+        "id": "mount.config.readonly", "status": "fail",
+        "summary": "/config is writable", "fix": "dlx restart",
+    }
+
+
+@pytest.mark.parametrize(
+    "tool,outcome",
+    [("yt-dlp", (1, "old version\n")), ("gallery-dl", (0, ""))],
+)
+def test_a_tool_that_exits_nonzero_or_prints_nothing_fails(
+    docker, doctor_paths, capsys, tool, outcome
+):
+    docker.container[(tool, "--version")] = outcome
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 1
+    assert by_id(report)[f"tools.{tool}"] == {
+        "id": f"tools.{tool}", "status": "fail",
+        "summary": f"{tool} did not run", "fix": "dlx update",
+    }
+
+
+def test_stopped_container_skips_every_container_check_without_exec(
+    docker, doctor_paths, capsys
+):
+    docker.running = (0, "")
+    _, report, _ = run_json(capsys, doctor_paths)
+    checks = by_id(report)
+    assert [checks[id] for id in CONTAINER_IDS] == [
+        {"id": id, "status": "skip", "summary": "container not running"}
+        for id in CONTAINER_IDS
+    ]
+    assert len(docker.calls) == 2
 
 
 @pytest.mark.parametrize(
