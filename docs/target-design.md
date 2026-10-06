@@ -258,7 +258,8 @@ Further rules, pinned for P0001-C01:
 
 ## Container contract
 
-Settled for Stage 1 (DEC-9); implementation pending.
+Settled for Stage 1 (DEC-9). Implemented in P0001-C02: Compose files,
+runtime identity, mount preparation, and transitional links (DEC-15).
 
 | Container location | Host source | Access | Purpose |
 | --- | --- | --- | --- |
@@ -354,7 +355,8 @@ reports when it cannot read one; Stage 2 replaces that lookup.
 
 ## VPN mode
 
-Settled for Stage 1 (DEC-11); implementation pending.
+Settled for Stage 1 (DEC-11). Implemented in P0001-C02: base/overlay
+selection and the entrypoint switch; VPN helper commands are still pending.
 
 `vpn.enabled = false` starts Compose from the base file only: no added
 capabilities, no `/dev/net/tun`, no `systempaths=unconfined`, and no NordVPN

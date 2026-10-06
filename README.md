@@ -278,14 +278,18 @@ without pinning to an Ubuntu codename. No desktop, no GUI packages.
 
 ## The shared volume
 
-Host `~/Downloads` is mounted at `~/Downloads` in the container. Because the
-paths line up, your configs work verbatim:
+The configured host downloads root is mounted at `/downloads`. Transitional
+links from `/home/dl/Downloads` and `/home/dl/cookies` keep the existing
+download configs working until the preset migration:
 
 - `config/yt-dlp/dlmp4.conf` → `~/Downloads/dlmp4`
 - `config/gallery-dl/config.json` → `~/Downloads/dlgal`, archive DB included
 
-Point `HOST_DOWNLOADS` in `.env` at something else — an external drive — if
-you'd rather not use `~/Downloads`.
+The image uses user `dl`, with UID/GID applied at container start. `/config`
+holds shipped presets read-only (a placeholder until D3), `/state` holds
+mutable state, and `/cookies` holds the managed cookie jar. VPN-off mode has
+no VPN capabilities or daemon. `just check` builds a separate check image
+and smoke-tests these mounts and identities with temporary directories.
 
 ## Live-mounted config
 

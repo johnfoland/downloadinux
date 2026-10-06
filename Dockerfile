@@ -8,18 +8,12 @@
 # ---------------------------------------------------------------------------
 FROM debian:trixie-slim
 
-ARG PUID=1000
-ARG PGID=1000
-ARG USERNAME=dl
-
-# DL_USER duplicates USERNAME because zsh overwrites $USERNAME with the
-# *current* user — so zsh startup files must read DL_USER instead.
+# zsh overwrites USERNAME; startup files use DL_USER instead.
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TERM=xterm-256color \
-    USERNAME=${USERNAME} \
-    DL_USER=${USERNAME}
+    DL_USER=dl
 
 # --- Base system + media tooling -------------------------------------------
 # atomicparsley  -> yt-dlp --embed-thumbnail for mp4/m4a
@@ -70,29 +64,23 @@ RUN python3 -m venv "$VIRTUAL_ENV" \
         rich-cli
 
 # --- User -------------------------------------------------------------------
-# Match the host UID/GID so files landing in the shared ~/Downloads mount
-# come back owned by you. GID may already exist in Debian (e.g. 20 = dialout).
-RUN if ! getent group "${PGID}" >/dev/null; then groupadd -g "${PGID}" "${USERNAME}"; fi \
-    && useradd -m -u "${PUID}" -g "${PGID}" -s /usr/bin/zsh "${USERNAME}" \
-    && usermod -aG nordvpn "${USERNAME}" \
-    && mkdir -p "/home/${USERNAME}/Downloads" "/home/${USERNAME}/cookies" \
-                "/home/${USERNAME}/.config/yt-dlp" "/home/${USERNAME}/.config/gallery-dl" \
-    && chown -R "${PUID}:${PGID}" "/home/${USERNAME}"
+# Host identity is applied at start, never baked into the image (DEC-9).
+RUN groupadd -g 1000 dl \
+    && useradd -m -u 1000 -g 1000 -s /usr/bin/zsh dl \
+    && usermod -aG nordvpn dl
 
 # --- zsh / oh-my-zsh --------------------------------------------------------
-USER ${USERNAME}
-WORKDIR /home/${USERNAME}
-ENV ZSH=/home/${USERNAME}/.oh-my-zsh
+USER dl
+WORKDIR /home/dl
+ENV ZSH=/home/dl/.oh-my-zsh
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended \
     && git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
          "${ZSH}/custom/plugins/zsh-autosuggestions" \
     && git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
          "${ZSH}/custom/plugins/zsh-syntax-highlighting" \
-    && printf '%s\n' 'source "$HOME/.zsh-custom/zshrc"' > "/home/${USERNAME}/.zshrc"
+    && printf '%s\n' 'source "$HOME/.zsh-custom/zshrc"' > /home/dl/.zshrc
 
-COPY --chown=${PUID}:${PGID} zsh/            /home/${USERNAME}/.zsh-custom/
-COPY --chown=${PUID}:${PGID} config/yt-dlp/     /home/${USERNAME}/.config/yt-dlp/
-COPY --chown=${PUID}:${PGID} config/gallery-dl/ /home/${USERNAME}/.config/gallery-dl/
+COPY --chown=1000:1000 zsh/ /home/dl/.zsh-custom/
 
 USER root
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -101,6 +89,6 @@ COPY scripts/vpn.sh        /usr/local/bin/vpn
 COPY scripts/root.zshrc    /root/.zshrc
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/vpn
 
-WORKDIR /home/${USERNAME}/Downloads
+WORKDIR /downloads
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["sleep", "infinity"]

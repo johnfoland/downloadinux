@@ -30,7 +30,9 @@ run it; `docs/` holds the planning documents for the refactor, and
   `scripts/servers.py`, the Python tests (`uv run --locked pytest -q`),
   two quiet Compose validations through the CLI (VPN off and on, using an
   absent temporary settings file), a Docker daemon check,
-  and `docker build --tag downloadinux:check .`. It needs the Docker daemon
+  `docker build --tag downloadinux:check .`, and a VPN-off container smoke
+  test with temporary mounts under project `downloadinux-check` (cleaned up
+  on exit). It needs the Docker daemon
   running and no `.env`. Never run `docker compose config` without `-q`: it
   prints the resolved file, NordVPN token included.
 

@@ -272,41 +272,43 @@ servers city="New_York" country="228":
 build:
     {{compose}} build
 
-# Static checks, the Python tests, and an image build (the CI gate)
+# Static checks, Python tests, image build, and VPN-off smoke test (the CI gate)
 check:
     #!/usr/bin/env bash
     set -euo pipefail
     step(){ printf '\033[1;36m==> %s\033[0m\n' "$*"; }
-    step "1/7  shellcheck scripts/*.sh"
+    step "1/8  shellcheck scripts/*.sh"
     shellcheck scripts/*.sh
     # shellcheck has no zsh support, so the zsh files get a syntax check only.
-    step "2/7  zsh -n on the zsh sources"
+    step "2/8  zsh -n on the zsh sources"
     for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
     # compile() rather than py_compile, which would leave scripts/__pycache__.
-    step "3/7  python3 compile scripts/servers.py"
+    step "3/8  python3 compile scripts/servers.py"
     python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' scripts/servers.py
     # --locked fails when uv.lock is stale rather than rewriting it.
-    step "4/7  pytest (uv run --locked)"
+    step "4/8  pytest (uv run --locked)"
     uv run --locked pytest -q
     # -q is mandatory: without it compose prints the resolved file, which
     # includes the token when VPN is enabled. Use absent settings so the
     # gate never reads the host's settings or credentials.
-    step "5/7  Compose config -q (VPN off and on)"
+    step "5/8  Compose config -q (VPN off and on)"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     uv run --locked downloadinux --config "$tmp/absent.toml" compose -- config -q
     uv run --locked downloadinux --config "$tmp/absent.toml" --set vpn.enabled=true compose -- config -q
-    step "6/7  Docker daemon reachable"
+    step "6/8  Docker daemon reachable"
     if ! docker info >/dev/null 2>&1; then
       echo "Docker daemon not reachable — start Docker and re-run" >&2
       exit 1
     fi
     # Its own tag, so the gate never replaces the image `just up` runs.
-    step "7/7  docker build --tag downloadinux:check ."
+    step "7/8  docker build --tag downloadinux:check ."
     docker build --tag downloadinux:check .
-    printf '\033[1;32mjust check: all 7 steps passed.\033[0m\n'
+    step "8/8  VPN-off container smoke test"
+    bash scripts/smoke.sh
+    printf '\033[1;32mjust check: all 8 steps passed.\033[0m\n'
 
 # Start in the background
 up:
