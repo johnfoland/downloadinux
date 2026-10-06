@@ -229,3 +229,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DownloadinuxError as error:
         print(f"{PROG}: error: {error}", file=sys.stderr)
         return error.exit_status
+    except OSError as error:
+        # Host application: OS failures are operation errors, including
+        # reads, atomic writes, and subprocess creation (review-checklist §1).
+        failure = DownloadinuxError(
+            f"{error.filename or '<stdin/stdout>'}: {error.strerror}"
+        )
+        print(f"{PROG}: error: {failure}", file=sys.stderr)
+        return failure.exit_status
