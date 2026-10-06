@@ -6,13 +6,15 @@ CLI (and later the TUI) only parses and presents.
 
 from __future__ import annotations
 
+import stat
+import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, servers, settings
+from downloadinux import compose, credentials, files, servers, settings, useragent
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -274,3 +276,54 @@ def log_in(
     connect = compose.exec_args(["nordvpn", "connect", *server], captured=True)
     status, _ = invocation.capture(connect, capture)
     return LoginResult(Login.LOGGED_IN, Connect(server, status == 0))
+
+
+USER_AGENT_KEY = "downloads.user_agent"
+
+
+@dataclass(frozen=True)
+class UserAgentResult:
+    plist: Path
+    settings_file: Path
+    # Both None when Chrome's version could not be read: nothing was written.
+    version: str | None = None
+    major: str | None = None
+    written: bool = False
+
+
+def refresh_user_agent(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+) -> UserAgentResult:
+    """`config user-agent` (Host application, "Downloads, pinned for
+    P0001-C04"; DEC-10, DEC-21): pin `downloads.user_agent` in the settings
+    file to the host Chrome's major version. An unreadable version writes
+    nothing; the CLI warns and exits 0. An existing file is edited in place
+    (comments and permission bits kept) and left alone when it already holds
+    the value; a missing one is written as `init`'s starter file."""
+    effective = settings.load(config, overrides, host)  # rejects a bad file or --set
+    plist = useragent.CHROME_PLIST
+    result = UserAgentResult(plist, effective.file)
+    version = useragent.chrome_version(plist)
+    major = useragent.major(version) if version is not None else None
+    if major is None:
+        return result
+    value = useragent.user_agent(major)
+    path = effective.file
+    if effective.file_exists:
+        text = path.read_text(encoding="utf-8")
+        if tomllib.loads(text).get("downloads", {}).get("user_agent") == value:
+            return UserAgentResult(plist, path, version, major, written=False)
+        files.write_atomic(
+            path,
+            files.setting_text(text, USER_AGENT_KEY, value),
+            stat.S_IMODE(path.stat().st_mode),
+        )
+    else:
+        values = {**settings.parse_overrides(overrides), USER_AGENT_KEY: value}
+        files.write_atomic(
+            path, files.starter_text(values, host), files.default_file_mode(),
+            replace=False,
+        )
+    return UserAgentResult(plist, path, version, major, written=True)

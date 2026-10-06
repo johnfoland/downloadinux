@@ -113,41 +113,9 @@ cookies profile="":
     # resync the UA whenever the cookies are refreshed.
     just useragent
 
-# Pin both configs' user-agent to your host Chrome version
+# Pin downloads.user_agent to your host Chrome version (settings, not the checkout)
 useragent:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Chrome, not Firefox, even though the cookies come from Firefox:
-    # Instagram only serves its 1080p ladder to Chrome user-agents.
-    v=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)
-    if [[ -z "$v" ]]; then
-      echo "    Chrome not found in /Applications — leaving the configs alone."
-      exit 0
-    fi
-    maj="${v%%.*}"
-    # Chrome freezes the macOS version at 10_15_7 (underscores) and zeroes out
-    # everything after the major in its UA.
-    ua="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${maj}.0.0.0 Safari/537.36"
-    python3 - "$ua" <<'PY'
-    import json, pathlib, re, sys
-    ua = sys.argv[1]
-
-    p = pathlib.Path("config/yt-dlp/dlmp4.conf")
-    p.write_text(re.sub(r'^--user-agent .*$', f'--user-agent "{ua}"',
-                        p.read_text(), flags=re.M))
-
-    # Rewrite values in place rather than json.dump, to keep the file's
-    # hand-written formatting and empty stub sections intact. Both the global
-    # key and the per-extractor one: gallery-dl ignores the global setting for
-    # extractors that ship their own UA (Instagram declares Chrome), so the
-    # instagram block needs its own copy to take effect.
-    p = pathlib.Path("config/gallery-dl/config.json")
-    t = re.sub(r'("user-agent":\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(ua),
-               p.read_text())
-    json.loads(t)  # fail loudly rather than write a broken config
-    p.write_text(t)
-    PY
-    echo "    User-agent pinned to Chrome ${maj} (host has ${v})."
+    @uv run downloadinux config user-agent
 
 # ---------------------------------------------------------------------------
 # Daily use
@@ -321,21 +289,17 @@ doctor:
       hm "no cookies yet — run: just cookies  (public downloads still work)"
     fi
 
-    # yt-dlp, gallery-dl's global setting and its instagram override must all
-    # agree, and should track the Firefox the cookies came from.
-    uas=$(grep -oh 'Mozilla/5.0 ([^"]*' config/yt-dlp/dlmp4.conf config/gallery-dl/config.json | sort -u | wc -l | tr -d ' ')
-    if [[ "$uas" == "1" ]]; then
-      maj=$(grep -oh 'Chrome/[0-9]*' config/yt-dlp/dlmp4.conf | head -1 | cut -d/ -f2)
-      cv=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
-      if [[ -z "$maj" ]]; then
-        hm "user-agent is not Chrome — Instagram will cap video at 720p (run: just useragent)"
-      elif [[ -n "$cv" && "$cv" != "$maj" ]]; then
-        hm "user-agent says Chrome $maj, host Chrome is $cv — run: just useragent"
-      else
-        ok "user-agent consistent across both tools (Chrome $maj)"
-      fi
+    # Both downloaders get downloads.user_agent; it should be Chrome's and
+    # track the host Chrome (cookies/README.md says why).
+    ua=$(bash scripts/config-value.sh downloads.user_agent)
+    maj=$(grep -o 'Chrome/[0-9]*' <<<"$ua" | head -1 | cut -d/ -f2)
+    cv=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
+    if [[ -z "$maj" ]]; then
+      hm "user-agent is not Chrome — Instagram will cap video at 720p (run: just useragent)"
+    elif [[ -n "$cv" && "$cv" != "$maj" ]]; then
+      hm "user-agent says Chrome $maj, host Chrome is $cv — run: just useragent"
     else
-      hm "user-agents disagree between configs ($uas variants) — run: just useragent"
+      ok "user-agent is Chrome $maj"
     fi
 
     if ! {{compose}} ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then

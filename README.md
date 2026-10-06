@@ -138,9 +138,14 @@ directory. The container reads it at `/cookies/cookies.txt`; a transitional
 home link keeps the old downloader configs working. The checkout's old jar
 is no longer read by the container.
 
-`just cookies` also runs `just useragent`, which pins both downloaders'
-user-agent to your host **Chrome** version. Run it on its own after a Chrome
-update; `just doctor` warns when the two configs drift apart.
+`just cookies` also runs `just useragent` (`dlx config user-agent`), which
+sets `downloads.user_agent` in `config.toml` to the user-agent of your host
+**Chrome** version (`Chrome/<major>.0.0.0`, as Chrome itself reports), so the
+checkout stays clean. Run it on its own after a Chrome update; `just doctor`
+warns when the setting falls behind the host Chrome. Without Chrome in
+`/Applications` (any Linux host) it warns and changes nothing, so `just
+cookies` still succeeds; with no settings file yet it writes the starter file
+`dlx init` would, holding the new value.
 
 > **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
 > only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
@@ -435,6 +440,8 @@ dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, w
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
+dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
+                               (macOS); without a readable Chrome, warn and change nothing
 dlx build / up / down        Build, start in the background, or stop the configured project
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
@@ -453,9 +460,9 @@ beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
 Every recipe reaches the configured container through the CLI. Lifecycle,
-token, `shell`, `vpn`, `servers`, and `status` recipes are wrappers; the
-download, batch, and health recipes retain their existing implementation
-behind the computed Compose invocation.
+token, `useragent`, `shell`, `vpn`, `servers`, and `status` recipes are
+wrappers; the download, batch, and health recipes retain their existing
+implementation behind the computed Compose invocation.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -471,7 +478,7 @@ just env             Write .env with your real UID/GID
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
-just useragent       Pin both configs' UA to your host Chrome version
+just useragent       Pin downloads.user_agent to your host Chrome version
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries

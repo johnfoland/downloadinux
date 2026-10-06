@@ -33,8 +33,17 @@ def test_vpn_off_project_files_and_base_environment(tmp_path):
         "DOWNLOADINUX_PRESETS": str(root / "presets"),
         "DOWNLOADINUX_UID": "501", "DOWNLOADINUX_GID": "20",
         "DOWNLOADINUX_TZ": "Europe/Paris",
+        "DOWNLOADINUX_USER_AGENT": settings.DEFAULT_USER_AGENT,
     }
     assert FAKE_TOKEN not in repr(call) + repr(call.environ)
+
+
+@pytest.mark.parametrize("vpn", [False, True])
+def test_user_agent_reaches_the_environment_in_both_vpn_modes(tmp_path, vpn):
+    # Container contract table, DEC-20: DL_USER_AGENT for the shell helpers.
+    agent = "Mozilla/5.0 (X11; Linux x86_64) Chrome/150.0.0.0 'quoted' $HOME"
+    _, call = make_invocation(tmp_path, vpn, overrides=[f"downloads.user_agent={agent}"])
+    assert call.environ["DOWNLOADINUX_USER_AGENT"] == agent
 
 
 @pytest.mark.parametrize("enabled", [True, False])

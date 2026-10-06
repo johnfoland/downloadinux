@@ -118,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_env.set_defaults(handler=_config_import_env)
 
+    user_agent = config_commands.add_parser(
+        "user-agent",
+        help="pin downloads.user_agent to the host Chrome's major version",
+        description="Read the host Chrome's version (macOS, /Applications) and "
+        "write the matching Chrome user-agent into the settings file. Without "
+        "a readable Chrome it warns and changes nothing.",
+    )
+    _add_global_options(user_agent, 2)
+    user_agent.set_defaults(handler=_config_user_agent)
+
     init = commands.add_parser(
         "init", help="write a starter settings file (VPN off) if none exists"
     )
@@ -263,6 +273,21 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
                     f"{PROG}: warning: could not connect to {target}; try dlx vpn on",
                     file=sys.stderr,
                 )
+    return 0
+
+
+def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = operations.refresh_user_agent(options.config, options.overrides)
+    if result.major is None:
+        # DEC-21: `just cookies` runs this after every export, so a host
+        # without Chrome must not fail it.
+        print(
+            f"{PROG}: warning: cannot read Chrome's version from {result.plist}; "
+            "downloads.user_agent is unchanged",
+            file=sys.stderr,
+        )
+        return 0
+    print(f"User-agent pinned to Chrome {result.major} (host has {result.version}).")
     return 0
 
 

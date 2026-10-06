@@ -67,3 +67,18 @@ def test_gate_has_seven_steps_and_no_servers_script():
     assert "all 7 steps passed" in body
     assert "servers.py" not in body
     assert not (checkout.checkout_root() / "scripts" / "servers.py").exists()
+
+
+def test_useragent_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04" (DEC-10).
+    body = recipe("useragent")
+    assert body[-1].strip() == "@uv run downloadinux config user-agent"
+    assert "python3" not in "\n".join(body)
+    assert recipe("cookies")[-1].strip() == "just useragent"
+
+
+def test_doctor_reads_the_user_agent_setting_and_no_config_file():
+    body = "\n".join(recipe("doctor"))
+    assert "config-value.sh downloads.user_agent" in body
+    assert "config/" not in body
+    assert "disagree" not in body

@@ -69,22 +69,26 @@ attention, roughly in order:
 3. **A UA that keeps changing** — which is why it's pinned rather than derived
    live.
 
-Consistency matters more than which browser you claim to be. All three places
-that send a user-agent are pinned to the same string:
+Consistency matters more than which browser you claim to be. One setting,
+`downloads.user_agent` in your `config.toml`, holds the string, and every
+download passes it to all three places that send a user-agent:
 
-- `config/yt-dlp/dlmp4.conf` → `--user-agent`
-- `config/gallery-dl/config.json` → `extractor.user-agent`
-- `config/gallery-dl/config.json` → `extractor.instagram.user-agent`
+- yt-dlp → its `User-Agent` header
+- gallery-dl → `extractor.user-agent`
+- gallery-dl → `extractor.instagram.user-agent`
 
 That third one is not redundant. gallery-dl's Instagram extractor declares its
 own `useragent`, and gallery-dl deliberately ignores the *global*
 `extractor.user-agent` for any extractor that does — only an extractor-specific
 key overrides it.
 
-`just cookies` runs `just useragent` automatically, which reads your host
-Chrome version and rewrites all three. Run `just useragent` on its own after a
-Chrome update; `just doctor` warns if they drift apart, fall behind the host
-version, or stop being Chrome.
+`just cookies` runs `just useragent` (`dlx config user-agent`) automatically,
+which reads your host Chrome version and writes the matching user-agent into
+the setting; no file in the checkout changes. Run `just useragent` on its own
+after a Chrome update; `just doctor` warns if the setting falls behind the
+host version or stops being Chrome. Without Chrome in `/Applications` (any
+Linux host) it warns and leaves the setting alone, so the export still
+succeeds.
 
 If Instagram ever does challenge the session, the fix is the same as for
 expiry: clear it in Firefox, then re-run `just cookies`.

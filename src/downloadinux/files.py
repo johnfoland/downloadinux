@@ -95,6 +95,18 @@ def starter_text(values: Mapping[str, Any] | None = None, host: Host = Host()) -
     return "\n".join(lines) + "\n"
 
 
+def setting_text(existing: str, key: str, value: Any) -> str:
+    """`existing` settings text with `key` (`table.name`) set to `value`,
+    edited so its comments and layout survive; the table is added at the end
+    when the file has none."""
+    table, _, name = key.partition(".")
+    document = tomlkit.parse(existing)
+    if table not in document:
+        document[table] = tomlkit.table()
+    document[table][name] = str(value) if isinstance(value, Path) else value
+    return tomlkit.dumps(document)
+
+
 def credentials_text(token: str, existing: str | None = None) -> str:
     """The credentials file with `[nordvpn] token` set, editing `existing`
     so its comments survive."""

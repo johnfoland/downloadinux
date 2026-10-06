@@ -22,6 +22,7 @@ service = json.load(sys.stdin)["services"]["downloadinux"]
 for key in ("cap_add", "devices", "security_opt"):
     assert not service.get(key), f"VPN-off service has {key}"
 assert not any(k.startswith("NORDVPN_") or k == "DL_VPN" for k in service["environment"]), "VPN environment in base service"
+assert service["environment"].get("DL_USER_AGENT"), "DL_USER_AGENT missing or empty"
 '
 
 # The single-quoted script expands variables inside the container.
