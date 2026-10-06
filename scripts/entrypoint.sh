@@ -1,14 +1,38 @@
 #!/usr/bin/env bash
-# downloadinux entrypoint — runs as root, prepares the box, drops to $USERNAME.
+# downloadinux entrypoint: applies runtime identity, prepares mounts, drops to dl.
 set -euo pipefail
-
-USERNAME="${USERNAME:-dl}"
-HOME_DIR="$(getent passwd "$USERNAME" | cut -d: -f6)"
-PUID="$(id -u "$USERNAME")"
-PGID="$(id -g "$USERNAME")"
 
 log()  { printf '\033[1;36m[downloadinux]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[downloadinux]\033[0m %s\n' "$*" >&2; }
+
+# --- Runtime identity (DEC-9, target design, Container contract) -------------
+old_uid=$(id -u dl)
+old_gid=$(id -g dl)
+uid=${DL_UID:-$old_uid}
+gid=${DL_GID:-$old_gid}
+if [[ "$uid" != "$old_uid" ]]; then
+  clash=$(getent passwd "$uid" | cut -d: -f1 || true)
+  if [[ -n "$clash" && "$clash" != dl ]]; then
+    warn "UID $uid is already used by $clash; cannot start as dl."
+    exit 1
+  fi
+fi
+# A restart may already have the transitional links. Remove only those
+# links before usermod visits the home; it must never reach a bind (DEC-15).
+for link in /home/dl/Downloads /home/dl/cookies /home/dl/.config/yt-dlp /home/dl/.config/gallery-dl; do
+  [[ ! -L "$link" ]] || unlink "$link"
+done
+if [[ "$gid" != "$old_gid" ]]; then
+  if getent group "$gid" >/dev/null; then
+    usermod -g "$gid" dl
+  else
+    groupmod -g "$gid" dl
+    usermod -g "$gid" dl
+  fi
+fi
+if [[ "$uid" != "$old_uid" ]]; then
+  usermod -u "$uid" dl
+fi
 
 # --- Timezone ---------------------------------------------------------------
 if [[ -n "${TZ:-}" && -f "/usr/share/zoneinfo/${TZ}" ]]; then
@@ -17,33 +41,38 @@ if [[ -n "${TZ:-}" && -f "/usr/share/zoneinfo/${TZ}" ]]; then
 fi
 
 # --- Directories ------------------------------------------------------------
-# Only touch what we create. Never chown -R the Downloads bind mount; on a
-# large host folder that takes minutes and can rewrite ownership you wanted.
-for d in \
-  "$HOME_DIR/Downloads/dlmp4" \
-  "$HOME_DIR/Downloads/dlgal" \
-  "$HOME_DIR/cookies" \
-  "$HOME_DIR/.local/share/downloadinux"
-do
-  mkdir -p "$d"
+# Create as the downloader user. An unwritable mount warns so doctor can
+# still inspect the running container; never chown recursively on a mount.
+for d in /downloads/dlmp4 /downloads/dlgal; do
+  gosu dl mkdir -p "$d" || warn "Cannot create $d as dl (uid $uid, gid $gid); check the host mount permissions."
 done
-chown "$PUID:$PGID" "$HOME_DIR/cookies" "$HOME_DIR/.local/share/downloadinux" 2>/dev/null || true
+for mount in /downloads /state /cookies; do
+  gosu dl test -w "$mount" || warn "$mount is not writable by dl (uid $uid, gid $gid)."
+done
+mkdir -p /home/dl/.local/share/downloadinux /home/dl/.config
+chown "$uid:$gid" /home/dl/.local/share/downloadinux /home/dl/.config
 
 # A missing --cookies file is a hard error in yt-dlp, so seed a valid empty
 # one. Drop a real export over it whenever you need authenticated sites.
-COOKIE_FILE="$HOME_DIR/cookies/cookies.txt"
-if [[ ! -s "$COOKIE_FILE" ]]; then
-  printf '# Netscape HTTP Cookie File\n' > "$COOKIE_FILE"
-  chown "$PUID:$PGID" "$COOKIE_FILE"
-  chmod 600 "$COOKIE_FILE"
-  warn "No cookies exported yet — placeholder written to ~/cookies/cookies.txt."
-  warn "Authenticated sites (Instagram, age-gated YouTube) will fail until you add a real one."
+if [[ ! -e /cookies/cookies.txt ]]; then
+  if gosu dl sh -c 'umask 077; printf "# Netscape HTTP Cookie File\n" > /cookies/cookies.txt'; then
+    warn "No cookies exported yet: placeholder written to /cookies/cookies.txt."
+    warn "Authenticated sites need a real export; run just cookies on the host."
+  else
+    warn "Cannot create /cookies/cookies.txt as dl; check the host mount permissions."
+  fi
 fi
+
+# Old downloader and zsh paths until D3 moves configs to presets (DEC-15).
+ln -sfn /downloads /home/dl/Downloads
+ln -sfn /cookies /home/dl/cookies
+ln -sfn /legacy/yt-dlp /home/dl/.config/yt-dlp
+ln -sfn /legacy/gallery-dl /home/dl/.config/gallery-dl
 
 # --- NordVPN ----------------------------------------------------------------
 start_nordvpn() {
   if [[ ! -e /dev/net/tun ]]; then
-    warn "/dev/net/tun missing — VPN disabled. Check the 'devices:' block in docker-compose.yml."
+    warn "/dev/net/tun missing — VPN disabled. Check the devices in compose/vpn.yaml."
     return 0
   fi
 
@@ -123,9 +152,11 @@ start_nordvpn() {
   fi
 }
 
-start_nordvpn
+if [[ "${DL_VPN:-off}" == on ]]; then
+  start_nordvpn
+fi
 
 # Note the -u: this entrypoint stays root for nordvpnd, so an unqualified
 # `exec` would give you a root shell with none of the config.
-log "Ready. Shell in with:  just shell   (docker compose exec -u $USERNAME downloadinux zsh)"
-exec gosu "$USERNAME" "$@"
+log "Ready. Shell in with: just shell (dlx compose -- exec -u dl downloadinux zsh)"
+exec gosu dl "$@"

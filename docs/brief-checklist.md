@@ -44,3 +44,16 @@ which one it pinned.
 *Found:* P0001-C01: the brief asked for `astral-sh/setup-uv` "at its current
 major tag"; the action publishes no floating major tag, and the executor
 pinned `v10.2.0`.
+
+### §2. The brief retires a source but lists its readers by hand
+
+A chunk that removes or replaces where something is read from (a file, a
+variable, a path) must move every reader, but a brief that names the
+readers it remembers leaves the rest pointing at the retired source, and
+the executor, building the brief, has no reason to look further. Before
+committing such a brief, grep the repo for the retired source (`git grep
+-n '<name>'`) and give every hit a unit or an *Out of scope* line.
+
+*Found:* P0001-C02: the goal said the `.env` coupling was gone, but the
+brief moved only `doctor`'s jar path; its `.env` requirement and token read
+survived, so after `just token` the recipe reported the old token.

@@ -1,0 +1,46 @@
+services:
+  downloadinux:
+    build:
+      context: .
+    image: ${DOWNLOADINUX_IMAGE:-downloadinux:latest}
+    hostname: downloadinux
+    environment:
+      DL_UID: ${DOWNLOADINUX_UID}
+      DL_GID: ${DOWNLOADINUX_GID}
+      TZ: ${DOWNLOADINUX_TZ}
+    volumes:
+      - type: bind
+        source: ${DOWNLOADINUX_DOWNLOADS}
+        target: /downloads
+      - type: bind
+        source: ${DOWNLOADINUX_PRESETS}
+        target: /config
+        read_only: true
+      - type: bind
+        source: ${DOWNLOADINUX_STATE}
+        target: /state
+      - type: bind
+        source: ${DOWNLOADINUX_COOKIES}
+        target: /cookies
+      # Transitional configs, removed when D3 ships presets (DEC-15).
+      - type: bind
+        source: ./config/yt-dlp
+        target: /legacy/yt-dlp
+        read_only: true
+      - type: bind
+        source: ./config/gallery-dl
+        target: /legacy/gallery-dl
+        read_only: true
+      - type: volume
+        source: nordvpn-data
+        target: /var/lib/nordvpn
+      - type: volume
+        source: zsh-history
+        target: /home/dl/.local/share/downloadinux
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  nordvpn-data:
+  zsh-history:

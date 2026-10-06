@@ -16,10 +16,10 @@ These are recorded in the [decision log](decisions.md), with their reasons:
 5. Build the TUI in **Python + Textual** (DEC-5).
 6. Preserve useful existing download behavior through explicit presets (DEC-6).
 
-Stage 1 (project P0001) added DEC-7 to DEC-15: the host application and its
+Stage 1 (project P0001) added DEC-7 to DEC-16: the host application and its
 installation, configuration and locations, the container contract, presets,
 VPN mode, structured health checks, migration, the `.env` reader's edge
-cases, and the D2-to-D3 transition. The sections below say
+cases, the D2-to-D3 transition, and the VPN helpers with the VPN off. The sections below say
 which parts are settled.
 
 Native downloader execution and a remote-server control protocol are not required
@@ -56,8 +56,9 @@ this design does not require a network API merely to support local Docker.
 ## Host application
 
 Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
-the `config` commands except `user-agent` are implemented (P0001-C01); the
-other subcommands are pending.
+the `config` commands except `user-agent` are implemented (P0001-C01).
+Compose and the lifecycle commands are implemented (P0001-C02); the
+remaining subcommands and login on token changes are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -122,6 +123,48 @@ Docker invocation, pinned for P0001-C02:
   `docker compose` exits non-zero exits 1.
 - Operations run `docker` through an injectable runner, so no test starts a
   process.
+
+Commands in the container, pinned for P0001-C03:
+
+- A command that runs a program inside the container runs Compose's
+  `exec -u dl downloadinux <argv>` through the invocation above, the program
+  and its arguments as a list. It adds `-T` whenever the CLI captures the
+  output (`servers`, the login below), never for `shell`. "The container is
+  running" means `ps --status running --quiet downloadinux` exits 0 with
+  non-empty output; the injectable runner gains a way to capture a
+  command's standard output for this and for `servers`.
+- `shell` runs `zsh` that way and exits with its status. It checks no path.
+- `vpn [args…]` runs the container's `vpn` helper (`scripts/vpn.sh`) with
+  `args`, `status` when there are none, and exits with its status. With
+  `vpn.enabled` false it runs nothing and exits 1 with an error naming
+  `vpn.enabled` (DEC-16).
+- `servers [city] [country]` (defaults `New_York` and `228`, the United
+  States) runs `curl -sg --max-time 40
+  'https://api.nordvpn.com/v1/servers/recommendations?filters[country_id]=<country>&limit=0'`
+  in the container, which is the thing on the VPN (`-g`: the brackets are
+  literal, not a curl glob), and ranks the captured JSON on the host. An
+  underscore in `city` stands for a space. The output is today's
+  `scripts/servers.py` output, unchanged: up to eight servers in that city,
+  least load first, or, when it has none, the wrapped list of cities, both
+  exit 0. A fetch that exits non-zero or a body that is not JSON is an
+  operation failure, exit 1: `could not reach the Nord API from the container
+  (VPN down, or killswitch blocking?)`. It runs whether or not the VPN is
+  enabled. The ranking moves into the package; `scripts/servers.py` and the
+  gate step that compiles it are removed.
+- `config set-token` stores the token as before, then, when `vpn.enabled` is
+  true and the container is running, logs the daemon in:
+  `exec -T -u dl -e NORDVPN_TOKEN downloadinux sh -c 'nordvpn login --token
+  "$NORDVPN_TOKEN"'`, with `NORDVPN_TOKEN` set only in that `docker compose`
+  process's environment, so the token is in no host argument list. The
+  login's output is discarded. On success it prints `Logged in.` and, when
+  `vpn.autoconnect` is true, runs `nordvpn connect` with `vpn.server` split
+  on whitespace (no argument when empty), reporting whether it connected; a
+  failed connect is a warning, exit 0. A failed login exits 1, saying the
+  token is stored but the daemon refused it, and that a daemon already
+  logged in needs `dlx vpn logout` first. When the container is not
+  running, it says the login happens at the next `dlx up`; when the VPN is
+  disabled, it says the token is stored for when it is enabled and runs
+  nothing; both exit 0 (DEC-16).
 
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
@@ -258,7 +301,8 @@ Further rules, pinned for P0001-C01:
 
 ## Container contract
 
-Settled for Stage 1 (DEC-9); implementation pending.
+Settled for Stage 1 (DEC-9). Implemented in P0001-C02: Compose files,
+runtime identity, mount preparation, and transitional links (DEC-15).
 
 | Container location | Host source | Access | Purpose |
 | --- | --- | --- | --- |
@@ -354,7 +398,8 @@ reports when it cannot read one; Stage 2 replaces that lookup.
 
 ## VPN mode
 
-Settled for Stage 1 (DEC-11); implementation pending.
+Settled for Stage 1 (DEC-11). Implemented in P0001-C02: base/overlay
+selection and the entrypoint switch; VPN helper commands are still pending.
 
 `vpn.enabled = false` starts Compose from the base file only: no added
 capabilities, no `/dev/net/tun`, no `systempaths=unconfined`, and no NordVPN
@@ -414,7 +459,9 @@ claims a login is valid.
 ## Migration
 
 Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
-the `just` wrappers and the cookie-export change are pending.
+the lifecycle/token wrappers, computed Compose access, managed cookie export,
+and setup's import step are implemented (P0001-C02). The download and batch
+operation wrappers and full setup rewrite remain pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
@@ -494,6 +541,15 @@ directly from that point):
   writing the jar at 0600) instead of `cookies/cookies.txt`.
 - `setup` runs `config import-env` right after writing `.env` when no
   settings file exists, so a cold start still produces a VPN-on config.
+
+Pinned for P0001-C03, completing D2's wrappers:
+
+- `shell`, `vpn`, and `servers` run the CLI commands of the same names;
+  `status` runs `compose -- ps`, then `vpn status`, ignoring its failure;
+  `logs` and `nuke` stay on `compose --` (`logs -f`, `down -v`).
+- `doctor` no longer reads or requires `.env`: its token line reports the
+  `token` state from `config show --json` (`set`, `unset`, or `malformed`).
+  The rest of the recipe waits for D4.
 
 ## Named cookie sources
 

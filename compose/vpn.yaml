@@ -1,0 +1,19 @@
+services:
+  downloadinux:
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: 1
+    # NordVPN needs writable /proc/sys for its IPv6 setup.
+    security_opt:
+      - systempaths=unconfined
+    environment:
+      DL_VPN: "on"
+      NORDVPN_TOKEN: ${DOWNLOADINUX_NORDVPN_TOKEN}
+      NORDVPN_SERVER: ${DOWNLOADINUX_NORDVPN_SERVER}
+      NORDVPN_TECHNOLOGY: ${DOWNLOADINUX_NORDVPN_TECHNOLOGY}
+      NORDVPN_KILLSWITCH: ${DOWNLOADINUX_NORDVPN_KILLSWITCH}
+      NORDVPN_AUTOCONNECT: ${DOWNLOADINUX_NORDVPN_AUTOCONNECT}

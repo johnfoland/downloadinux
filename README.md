@@ -33,6 +33,7 @@ You already have all of these; listed so future-you knows what to reinstall.
 |---|---|
 | Docker Desktop | must be **running** — `docker ps` should not error |
 | `just` | pinned to 1.40.0 in `.tool-versions` (asdf picks it up here) |
+| `uv` | runs the host CLI from the checkout and installs `dlx` |
 | `yt-dlp` on the host | only for the cookie export in Step 3 — `brew install yt-dlp` |
 | A Firefox profile | logged in to the sites you want to download from |
 
@@ -41,17 +42,24 @@ cd ~/Code/downloadinux
 just            # shows the full menu of commands
 ```
 
-## Step 1 — Create your `.env`
+## Step 1 — Create and import your settings
 
 ```sh
 just env
+uv run downloadinux config import-env
 ```
 
-Copies `.env.example` to `.env` and fills in your **real UID/GID** (502/20), so
-files the container writes into `~/Downloads` come back owned by `john:staff`
-rather than by root. Chmods it to 600.
+`just env` copies `.env.example` to `.env` and fills in your host UID/GID.
+The import writes `~/.config/downloadinux/config.toml` with VPN enabled and
+copies an existing token into `credentials.toml` beside it (0600). It copies
+the old cookie jar to the managed directory and leaves the originals in place.
+`just setup` runs this import automatically when the settings file is absent.
 
-`.env` is gitignored. It's the only file in the repo that holds secrets.
+For an existing installation, run `dlx config import-env` once before the next
+`just up` (or `uv run downloadinux config import-env` before installing `dlx`).
+The import refuses to overwrite settings without `--force`. Edit the TOML
+settings after migration; the recipes now read them instead of `.env`.
+For a fresh configuration without VPN, use `dlx init` instead of the import.
 
 ## Step 2 — Get your NordVPN token
 
@@ -73,9 +81,10 @@ Then hand it to the repo:
 just token 8f3c...your-token
 ```
 
-That writes it into `.env` and, if the container is already running, logs in
-right away. The login persists in a Docker volume, so rebuilds don't log you
-out (only `just nuke` does).
+That validates and stores it in `credentials.toml` (0600). Run `just restart`
+to use it in a running container; immediate login on token changes arrives
+in the next chunk. The login persists in a Docker volume, so rebuilds don't
+log you out (only `just nuke` does).
 
 > If you lose the token, generate a new one — there's no way to view an old
 > one. Old tokens keep working until they expire, so revoke it in the same
@@ -100,7 +109,7 @@ file.
    ```
 3. Read the summary it prints. It tells you how many cookies it found per site:
    ```
-   Wrote cookies/cookies.txt — 108 cookies.
+   Wrote /home/you/.local/share/downloadinux/cookies/cookies.txt — 108 cookies.
      instagram  8 ✓
      youtube    8 ✓
      tiktok     23 ✓
@@ -115,8 +124,11 @@ ls ~/Library/Application\ Support/Firefox/Profiles/
 just cookies widfsx0p.default-release
 ```
 
-The result lands in `cookies/cookies.txt`, chmod 600, gitignored. Both
-downloaders read it from `~/cookies/cookies.txt` inside the container.
+The result lands at `paths.cookies`/`cookies.txt` (by default
+`~/.local/share/downloadinux/cookies/cookies.txt`), mode 0600 in a 0700
+directory. The container reads it at `/cookies/cookies.txt`; a transitional
+home link keeps the old downloader configs working. The checkout's old jar
+is no longer read by the container.
 
 `just cookies` also runs `just useragent`, which pins both downloaders'
 user-agent to your host **Chrome** version. Run it on its own after a Chrome
@@ -160,7 +172,7 @@ just doctor
 downloadinux
   ✓ .env present
   ✓ NordVPN token in .env
-  ✓ cookies/cookies.txt — 108 cookies
+  ✓ /home/you/.local/share/downloadinux/cookies/cookies.txt — 108 cookies
   ✓   instagram: logged in
   ! youtube: anonymous (fine unless you need age-gated video)
   ✓ container running
@@ -174,11 +186,16 @@ downloadinux
 Every `!` line names the command that fixes it. If the exit IP is your real
 one and you wanted the VPN, `just vpn on`.
 
+`just doctor` is still the legacy diagnostic until D4: its token checks read
+the old `.env`, and its VPN checks expect VPN mode. Its cookie checks and
+container access already follow the configured managed jar and project.
+
 ---
 
 # Daily use
 
-Everything works from the host — you don't have to shell in unless you want to.
+Everything works from the host. Recipes use the selected settings file;
+`DOWNLOADINUX_CONFIG` selects a different one for `just` invocations.
 
 ```sh
 just dl video 'https://youtube.com/watch?v=...'   # one or more URLs
@@ -201,8 +218,8 @@ routes to yt-dlp, `gallery` to gallery-dl. `v` and `g` work as shorthands.
 
 `nordvpn connect` takes any of: nothing (Nord picks the fastest), a country
 code (`us`), a country name (`United_States`), a city (`New_York`), a server
-group (`p2p`), or a **specific server number** (`us8649`). `NORDVPN_SERVER` in
-`.env` is passed straight through, so it accepts all the same forms and is what
+group (`p2p`), or a **specific server number** (`us8649`). `vpn.server` in
+`config.toml` is passed straight through, so it accepts all the same forms and is what
 autoconnect uses at boot.
 
 To choose deliberately, rank a city's servers by load:
@@ -217,8 +234,8 @@ just servers New_York
     us14080      load 15%
 ```
 
-Then `just vpn on us14079` for one session, or set `NORDVPN_SERVER=us14079` in
-`.env` to pin it at every boot. Pinning one server is also marginally better for
+Then `just vpn on us14079` for one session, or set `server = "us14079"` under
+`[vpn]` in `config.toml` to pin it at every boot. Pinning one server is also marginally better for
 staying un-flagged than hopping exit IPs on the same Instagram session.
 
 Another country takes its Nord country id — `just servers Toronto 38`. Give a
@@ -239,14 +256,14 @@ just batch gallery             # defaults to ~/Downloads/dlgal_queue
 just watch gallery
 ```
 
-Both default to the queue files you already keep in `~/Downloads`. Pass a path
+Both default to queue files under `paths.downloads` (`~/Downloads` by default). Pass a path
 to use a different one:
 
 ```sh
 just batch video ~/Downloads/some-other-queue.txt
 ```
 
-The queue file must live under `~/Downloads` — that's the only host directory
+The queue file must live under `paths.downloads` — that's the output directory
 the container can see. `just batch` translates the host path to the container's
 view for you and refuses paths outside the volume rather than failing
 confusingly later.
@@ -278,23 +295,30 @@ without pinning to an Ubuntu codename. No desktop, no GUI packages.
 
 ## The shared volume
 
-Host `~/Downloads` is mounted at `~/Downloads` in the container. Because the
-paths line up, your configs work verbatim:
+The configured host downloads root is mounted at `/downloads`. Transitional
+links from `/home/dl/Downloads` and `/home/dl/cookies` keep the existing
+download configs working until the preset migration:
 
 - `config/yt-dlp/dlmp4.conf` → `~/Downloads/dlmp4`
 - `config/gallery-dl/config.json` → `~/Downloads/dlgal`, archive DB included
 
-Point `HOST_DOWNLOADS` in `.env` at something else — an external drive — if
-you'd rather not use `~/Downloads`.
+Set `paths.downloads` in `config.toml` to use an external drive; that
+directory must exist before starting. The CLI never creates it.
 
-## Live-mounted config
+The image uses user `dl`, with UID/GID applied at container start. `/config`
+holds shipped presets read-only (a placeholder until D3), `/state` holds
+mutable state, and `/cookies` holds the managed cookie jar. VPN-off mode has
+no VPN capabilities or daemon. `just check` builds a separate check image
+and smoke-tests these mounts and identities with temporary directories.
 
-These are bind-mounted, so edit on the host and the container sees it
-immediately. No rebuild:
+## Mounted config and installed shell files
+
+The downloader configs are mounted read-only under `/legacy/`, with home
+links for compatibility. Host edits appear immediately:
 
 - `config/yt-dlp/` and `config/gallery-dl/` — the downloader configs
-- `zsh/aliases.zsh`, `zsh/functions.zsh` — `dlmp4`, `dlgal`, `*_batch`, `exifmod`
-- `zsh/zshrc` — the shell config itself (`exec zsh` to reload)
+
+The `zsh/` files are copied into the image; rebuild after editing them.
 
 `~/.zshrc` in the image is a one-line stub that sources `zsh/zshrc`.
 
@@ -302,17 +326,15 @@ immediately. No rebuild:
 
 | You changed | What to run | Why |
 |---|---|---|
-| `config/**`, `zsh/**` | **nothing** | bind-mounted; live immediately (`exec zsh` to reload the shell itself) |
-| `.env` — `TZ`, `NORDVPN_*`, `HOST_DOWNLOADS` | `just restart` | runtime env; needs the container recreated |
-| `.env` — `PUID`, `PGID`, `USERNAME` | `just build && just up` | these are Dockerfile `ARG`s, baked in at build |
-| `Dockerfile`, `scripts/**` | `just build && just up` | `scripts/` is `COPY`'d into the image, *not* mounted |
-| `docker-compose.yml` | `just restart` | unless you touched `build:`, then rebuild |
+| `config/**` | **nothing** | read-only bind mounts; host edits appear immediately |
+| `config.toml`, `credentials.toml` | `just restart` | recreate with current settings, token, and UID/GID |
+| `Dockerfile`, `zsh/**`, container `scripts/**` | `just build && just up` | copied into the image |
+| `compose/base.yaml`, `compose/vpn.yaml` | `just restart` | unless you touched `build:`, then rebuild |
 
 Two traps worth knowing, both of which bit me while building this:
 
-**`docker compose restart` does not re-read `.env`.** It reuses the existing
-container, so an edited `.env` is silently ignored — you get no error, just old
-behaviour. `just restart` therefore runs `up -d --force-recreate` instead, which
+**A Compose restart reuses the existing container.** `just restart` runs
+`up -d --force-recreate` instead, which
 always applies current config *and* is never a no-op. Takes about 1.5s.
 
 **`scripts/` is copied into the image, not bind-mounted.** Editing
@@ -330,15 +352,15 @@ letting you find out three downloads later.
 
 ## The killswitch
 
-`NORDVPN_KILLSWITCH=on` blocks **all** network traffic whenever the tunnel is
+`vpn.killswitch = true` blocks **all** network traffic whenever the tunnel is
 down — including when it was never up. Verified: with the VPN disconnected,
 `curl` gets nothing at all. Nothing leaks.
 
 Two consequences worth internalising:
 
-**Pair it with `NORDVPN_AUTOCONNECT=true`.** Killswitch on plus autoconnect off
+**Pair it with `vpn.autoconnect = true`.** Killswitch on plus autoconnect off
 means the container boots with no internet, every time, until you remember to
-`just vpn on`. Both are enabled in your `.env`.
+`just vpn on`. The import preserves both values from your old `.env`.
 
 **Blocked traffic hangs; it does not error.** The killswitch *drops* packets
 rather than rejecting them, so yt-dlp sits through its entire retry schedule
@@ -361,13 +383,13 @@ exit IP.
   found` and every connect fails.
 - **Technology defaults to `openvpn`.** NordLynx (WireGuard) wants a kernel
   module Docker Desktop's Linux VM doesn't ship. On a real Linux host with the
-  module loaded, set `NORDVPN_TECHNOLOGY=nordlynx` for better throughput.
+  module loaded, set `vpn.technology = "nordlynx"` for better throughput.
 - Requires `NET_ADMIN` + `/dev/net/tun`, both already wired in
-  `docker-compose.yml`. If the daemon misbehaves, `/var/log/nordvpnd.log`
+  `compose/vpn.yaml` when `vpn.enabled = true`. If the daemon misbehaves, `/var/log/nordvpnd.log`
   inside the container has the detail (it contains binary bytes — pipe it
   through `tr -c '[:print:]\n' ' '` before grepping).
-- **The login lives in the `nordvpn-data` volume, not in `.env`.** Once you
-  have logged in, clearing `NORDVPN_TOKEN` changes nothing — the daemon stays
+- **The login lives in the `nordvpn-data` volume.** Once you
+  have logged in, clearing the stored token changes nothing — the daemon stays
   authenticated across restarts and rebuilds. Only `just nuke` drops it, and
   then you need the token again.
 
@@ -385,7 +407,7 @@ uv tool install --editable .
 ```
 
 That puts `downloadinux` and its short name `dlx` on your `PATH`, working from
-any directory. So far it manages the new configuration files only:
+any directory. It manages settings and the container lifecycle:
 
 ```
 dlx init                     Write a starter settings file (VPN off); refuses if one exists
@@ -396,6 +418,10 @@ dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, w
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
+dlx build / up / down        Build, start in the background, or stop the configured project
+dlx restart                 Recreate with current settings (up -d --force-recreate)
+dlx update                  Build --no-cache, then up -d; stops if the build fails
+dlx compose -- <args>        Run Compose with the computed project, files, and environment
 ```
 
 Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
@@ -403,8 +429,13 @@ Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
 beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
-The `just` recipes below do not read these files yet: they still run from
-`.env` until later Stage 1 chunks turn them into wrappers over the CLI.
+Every recipe reaches the configured container through the CLI. Lifecycle
+and token recipes are wrappers; the download, batch, VPN, and health recipes
+retain their existing implementation behind the computed Compose invocation.
+`up`, `restart`, and `update` prepare state and cookies before starting;
+`compose` passes arguments through unchanged and returns Docker's status.
+Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
+resolved config prints the token.
 
 ## `just` recipes
 
@@ -413,8 +444,8 @@ just                 Show the menu
 
 just setup           Cold start: everything below, in order, interactively
 just env             Write .env with your real UID/GID
-just token <token>   Save a NordVPN token and log in
-just cookies [prof]  Export Firefox cookies to cookies/cookies.txt
+just token <token>   Validate and save a NordVPN token in credentials.toml
+just cookies [prof]  Export Firefox cookies to the managed jar
 just useragent       Pin both configs' UA to your host Chrome version
 
 just dl video <url>...      Download video(s)
@@ -427,7 +458,7 @@ just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
 
 just build           Build the image
-just check           Static checks, the Python tests, and an image build (the CI gate)
+just check           Static checks, Python tests, image build, VPN-off smoke (the CI gate)
 just up / down       Start / stop (volumes survive)
 just restart
 just logs            Follow container logs
@@ -444,7 +475,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── .github/workflows/ci.yml      # CI: runs `just check` on pull requests and master
 ├── justfile
 ├── Dockerfile
-├── docker-compose.yml
+├── compose/base.yaml, vpn.yaml   # four mounts; optional VPN overlay
+├── presets/                     # read-only /config; presets arrive in D3
 ├── .env.example
 ├── .tool-versions                # pins just 1.40.0 for asdf
 ├── config/
@@ -458,10 +490,12 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── servers.py                # filters NordVPN servers by city for `just servers`
+│   ├── config-value.sh           # recipes read config show --json
+│   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
-├── src/downloadinux/             # host CLI: settings, config commands
+├── src/downloadinux/             # host CLI: settings, Compose, lifecycle
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
-└── cookies/                      # gitignored; your exported cookies.txt
+└── cookies/                      # old jar, retained only for migration
 ```

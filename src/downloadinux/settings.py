@@ -265,8 +265,6 @@ def read_toml(path: Path) -> dict[str, Any] | None:
         data = path.read_bytes()
     except FileNotFoundError:
         return None
-    except OSError as error:
-        raise ConfigError(f"{path}: cannot read: {error.strerror}") from None
     try:
         return tomllib.loads(data.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:

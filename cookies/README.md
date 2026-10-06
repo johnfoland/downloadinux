@@ -1,7 +1,9 @@
 # cookies/
 
-Everything in this directory is gitignored. `cookies.txt` holds live session
-credentials for every site you're logged in to — treat it like a password file.
+The cookie jar moved to the managed directory at `paths.cookies`, by default
+`~/.local/share/downloadinux/cookies/cookies.txt`. The old `cookies.txt` here
+is no longer read. `dlx config import-env` copies it once, leaving the original
+in place. Cookie files hold live session credentials; treat them like passwords.
 
 ## Just use the recipe
 
@@ -9,8 +11,8 @@ credentials for every site you're logged in to — treat it like a password file
 just cookies
 ```
 
-Reads your host Firefox profile and writes `cookies.txt` here in Netscape
-format, chmod 600, then reports which sites it actually found sessions for.
+Reads your host Firefox profile and writes `paths.cookies`/`cookies.txt` in
+Netscape format (0600 in a 0700 directory), then reports cookie counts by site.
 Multiple profiles:
 
 ```sh
@@ -23,20 +25,21 @@ just cookies widfsx0p.default-release
 The host configs used `--cookies-from-browser firefox` (yt-dlp) and
 `"cookies": ["firefox"]` (gallery-dl). Neither works in the container: there is
 no Firefox profile in there, and on macOS the profile is encrypted against the
-local keychain regardless. Export on the host, use the file in here.
+local keychain regardless. Export on the host, use the managed file.
 
-Both configs point at `~/cookies/cookies.txt` inside the container, which is
-this directory.
+The container mounts the managed directory at `/cookies`. Both old configs
+still point at `~/cookies/cookies.txt` through a transitional home link (DEC-15).
 
 ## Doing it by hand
 
 Any Firefox extension that emits Netscape format works — "cookies.txt" or
-"Get cookies.txt LOCALLY". Export while logged in, save as `cookies.txt` here.
+"Get cookies.txt LOCALLY". Export while logged in, save as `cookies.txt` under
+the configured `paths.cookies` directory, with mode 0600.
 
 The recipe is just this, which is worth knowing if you ever need to vary it:
 
 ```sh
-yt-dlp --cookies-from-browser firefox --cookies cookies/cookies.txt \
+yt-dlp --cookies-from-browser firefox --cookies ~/.local/share/downloadinux/cookies/cookies.txt \
        --simulate --quiet 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
 ```
 

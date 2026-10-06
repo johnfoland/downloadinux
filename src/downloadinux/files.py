@@ -45,7 +45,9 @@ def write_atomic(path: Path, text: str, mode: int, *, replace: bool = True) -> N
         else:
             os.link(temporary, path)
             os.unlink(temporary)
-    except BaseException:
+    except BaseException as error:
+        if isinstance(error, OSError) and error.filename is None:
+            error.filename = str(path)
         try:
             os.unlink(temporary)
         except FileNotFoundError:

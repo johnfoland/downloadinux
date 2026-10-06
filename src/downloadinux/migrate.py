@@ -132,7 +132,9 @@ def import_env(
         env = parse_env(env_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise DownloadinuxError(f"{env_path}: no such file") from None
-    except (OSError, UnicodeDecodeError) as error:
+    except OSError as error:
+        raise DownloadinuxError(f"{env_path}: {error.strerror}") from None
+    except UnicodeDecodeError as error:
         raise DownloadinuxError(f"{env_path}: cannot read: {error}") from None
 
     imported, not_imported = convert(env, str(env_path))

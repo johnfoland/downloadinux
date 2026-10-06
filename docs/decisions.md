@@ -232,3 +232,25 @@ filesystem, where downloads silently vanish on the next recreate.
 
 *Where:* [target design](target-design.md), *Container contract*. Added
 cutting P0001-C02.
+
+## DEC-16: VPN helpers with the VPN off, and the login on `set-token` (2026-10)
+
+With `vpn.enabled` false the container runs no `nordvpnd` (DEC-11), so
+`dlx vpn` refuses, exit 1, naming the setting, rather than passing the
+command to a `nordvpn` client that can only fail with a socket error.
+`dlx servers` still runs: it is an HTTPS request to Nord's API, useful for
+choosing `vpn.server` before turning the VPN on.
+
+`config set-token` stores the token first and logs the daemon in only when
+the VPN is enabled and the container is running, passing the token through
+the `docker compose exec` process's environment (`-e NORDVPN_TOKEN`), never
+an argument. A refused login exits 1 even though the token was stored: the
+user asked for a working login, and the old recipe's exit 0 after "Login
+failed" hid exactly the revoked-token case `doctor` warns about. A failed
+autoconnect afterwards stays a warning, since the login itself worked.
+Logging out an already-logged-in daemon automatically was rejected: it drops
+the tunnel, and with the killswitch on blocks all traffic, as a side effect
+of storing a credential.
+
+*Where:* [target design](target-design.md), *Host application* ("Commands in
+the container, pinned for P0001-C03"). Added cutting P0001-C03.

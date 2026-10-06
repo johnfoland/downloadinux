@@ -122,7 +122,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(init, 1)
     init.set_defaults(handler=_init)
 
+    compose = commands.add_parser("compose", help="run Compose for the configured project")
+    _add_global_options(compose, 1)
+    compose.add_argument("args", nargs=argparse.REMAINDER, help="Compose arguments after --")
+    compose.set_defaults(handler=_compose)
+
+    for command, help_text in (
+        ("build", "build the container image"),
+        ("up", "start the configured container in the background"),
+        ("down", "stop and remove the configured container"),
+        ("restart", "recreate the container with current settings"),
+        ("update", "rebuild without cache and start the container"),
+    ):
+        lifecycle = commands.add_parser(command, help=help_text)
+        _add_global_options(lifecycle, 1)
+        lifecycle.set_defaults(handler=_lifecycle)
+
     return parser
+
+
+def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
+    remainder = args.args[1:] if args.args[:1] == ["--"] else args.args
+    return operations.run_compose(remainder, options.config, options.overrides)
+
+
+def _lifecycle(args: argparse.Namespace, options: GlobalOptions) -> int:
+    operations.lifecycle(args.command, options.config, options.overrides)
+    return 0
 
 
 def _init(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -229,3 +255,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DownloadinuxError as error:
         print(f"{PROG}: error: {error}", file=sys.stderr)
         return error.exit_status
+    except OSError as error:
+        # Host application: OS failures are operation errors, including
+        # reads, atomic writes, and subprocess creation (review-checklist §1).
+        failure = DownloadinuxError(
+            f"{error.filename or '<stdin/stdout>'}: {error.strerror}"
+        )
+        print(f"{PROG}: error: {failure}", file=sys.stderr)
+        return failure.exit_status
