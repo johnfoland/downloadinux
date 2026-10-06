@@ -89,9 +89,8 @@ environment of a single `docker compose exec`, never a command line. A
 stopped container logs in at the next `just up`; with the VPN disabled the
 token is just kept for later. If the daemon refuses the token, `just token`
 exits 1 with the token still stored. A daemon that is already logged in
-refuses every login, even with the same token: run `just vpn logout` first,
-then `just token` again. NordVPN's `logout` also revokes the token the daemon was using; if
-that is the one you are storing again, use `just vpn logout --persist-token`.
+refuses every login, even with the same token: run
+`just vpn logout --persist-token` first, then `just token` again.
 The login persists in a Docker volume, so rebuilds don't log you out
 (only `just nuke` does).
 

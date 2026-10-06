@@ -237,7 +237,8 @@ class LoginResult:
 LOGIN_SCRIPT = 'nordvpn login --token "$NORDVPN_TOKEN"'
 REFUSED = (
     "the token is stored, but the NordVPN daemon refused the login; a daemon "
-    "already logged in needs dlx vpn logout first, then set the token again"
+    "already logged in needs dlx vpn logout --persist-token first, then set "
+    "the token again"
 )
 
 

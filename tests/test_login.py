@@ -115,8 +115,12 @@ def test_a_refused_login_exits_one_with_the_token_stored(docker, capsys, home):
     assert status == 1
     assert out.splitlines()[0].startswith("Stored the NordVPN token in ")
     assert "Logged in." not in out
-    assert err.startswith("downloadinux: error: the token is stored, but the NordVPN daemon refused")
-    assert "dlx vpn logout" in err
+    # DEC-19: the hint keeps the daemon's token valid.
+    assert err == (
+        "downloadinux: error: the token is stored, but the NordVPN daemon "
+        "refused the login; a daemon already logged in needs dlx vpn logout "
+        "--persist-token first, then set the token again\n"
+    )
     assert stored(home) == FAKE_TOKEN
     # No connect after a refused login.
     assert [compose_args(argv) for argv, _ in docker.calls] == [RUNNING, LOGIN]

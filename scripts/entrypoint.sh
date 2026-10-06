@@ -128,7 +128,7 @@ start_nordvpn() {
       fi
     fi
   else
-    warn "NORDVPN_TOKEN not set. Run 'vpn login <token>' inside the container."
+    warn "NORDVPN_TOKEN not set. Store one on the host with: just token <token>"
   fi
 
   if [[ "${NORDVPN_AUTOCONNECT:-false}" == "true" ]]; then
@@ -156,7 +156,7 @@ if [[ "${DL_VPN:-off}" == on ]]; then
   start_nordvpn
 fi
 
-# Note the -u: this entrypoint stays root for nordvpnd, so an unqualified
-# `exec` would give you a root shell with none of the config.
-log "Ready. Shell in with: just shell (dlx compose -- exec -u dl downloadinux zsh)"
+# Both run exec -u dl: this entrypoint stays root for nordvpnd, so an
+# unqualified `exec` would give you a root shell with none of the config.
+log "Ready. Shell in with: just shell (or dlx shell)"
 exec gosu dl "$@"
