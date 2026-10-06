@@ -291,9 +291,13 @@ check:
     step "4/7  pytest (uv run --locked)"
     uv run --locked pytest -q
     # -q is mandatory: without it compose prints the resolved file, which
-    # includes NORDVPN_TOKEN from .env.
-    step "5/7  docker compose config -q"
-    docker compose config -q
+    # includes the token when VPN is enabled. Use absent settings so the
+    # gate never reads the host's settings or credentials.
+    step "5/7  Compose config -q (VPN off and on)"
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    uv run --locked downloadinux --config "$tmp/absent.toml" compose -- config -q
+    uv run --locked downloadinux --config "$tmp/absent.toml" --set vpn.enabled=true compose -- config -q
     step "6/7  Docker daemon reachable"
     if ! docker info >/dev/null 2>&1; then
       echo "Docker daemon not reachable — start Docker and re-run" >&2

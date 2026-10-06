@@ -1,0 +1,74 @@
+"""Computed Docker invocation (target design, Host application, C02 list).
+
+Tokens travel only in the VPN-enabled process environment. All operations
+use the same injectable runner; tests never need Docker.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+
+from downloadinux import checkout
+from downloadinux.credentials import Credentials, TokenState
+from downloadinux.settings import Settings
+
+Runner = Callable[[Sequence[str], Mapping[str, str]], int]
+
+# Target design, Container contract and VPN mode: exact interpolation tables.
+BASE_VARIABLES = {
+    "DOWNLOADINUX_DOWNLOADS": "paths.downloads",
+    "DOWNLOADINUX_STATE": "paths.state",
+    "DOWNLOADINUX_COOKIES": "paths.cookies",
+    "DOWNLOADINUX_UID": "container.uid",
+    "DOWNLOADINUX_GID": "container.gid",
+    "DOWNLOADINUX_TZ": "container.timezone",
+}
+VPN_VARIABLES = {
+    "DOWNLOADINUX_NORDVPN_SERVER": "vpn.server",
+    "DOWNLOADINUX_NORDVPN_TECHNOLOGY": "vpn.technology",
+}
+
+
+def run_process(argv: Sequence[str], environ: Mapping[str, str]) -> int:
+    return subprocess.run(list(argv), env=dict(environ), check=False).returncode
+
+
+@dataclass(frozen=True)
+class Invocation:
+    argv: tuple[str, ...]
+    environ: dict[str, str] = field(repr=False)
+
+    def run(self, args: Sequence[str], runner: Runner | None = None) -> int:
+        return (runner or run_process)([*self.argv, *args], self.environ)
+
+
+def invocation(
+    settings: Settings,
+    credentials: Credentials,
+    environ: Mapping[str, str] | None = None,
+) -> Invocation:
+    """Explicit project, checkout, files, and isolated DOWNLOADINUX_* values."""
+    argv = [
+        "docker", "compose", "--project-name", settings["container.project"],
+        "--project-directory", str(checkout.checkout_root()),
+        "--file", str(checkout.asset_path("compose/base.yaml")),
+    ]
+    env = {
+        key: value for key, value in (os.environ if environ is None else environ).items()
+        if not key.startswith("DOWNLOADINUX_")
+        or key in {"DOWNLOADINUX_CONFIG", "DOWNLOADINUX_IMAGE"}
+    }
+    env.update({key: str(settings[setting]) for key, setting in BASE_VARIABLES.items()})
+    env["DOWNLOADINUX_PRESETS"] = str(checkout.asset_path("presets"))
+    if settings["vpn.enabled"]:
+        argv += ["--file", str(checkout.asset_path("compose/vpn.yaml"))]
+        env.update({key: str(settings[setting]) for key, setting in VPN_VARIABLES.items()})
+        env["DOWNLOADINUX_NORDVPN_TOKEN"] = (
+            credentials.token if credentials.token_state is TokenState.SET else ""
+        )
+        env["DOWNLOADINUX_NORDVPN_KILLSWITCH"] = "on" if settings["vpn.killswitch"] else "off"
+        env["DOWNLOADINUX_NORDVPN_AUTOCONNECT"] = "true" if settings["vpn.autoconnect"] else "false"
+    return Invocation(tuple(argv), env)

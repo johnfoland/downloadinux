@@ -122,7 +122,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(init, 1)
     init.set_defaults(handler=_init)
 
+    compose = commands.add_parser("compose", help="run Compose for the configured project")
+    _add_global_options(compose, 1)
+    compose.add_argument("args", nargs=argparse.REMAINDER, help="Compose arguments after --")
+    compose.set_defaults(handler=_compose)
+
     return parser
+
+
+def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
+    remainder = args.args[1:] if args.args[:1] == ["--"] else args.args
+    return operations.run_compose(remainder, options.config, options.overrides)
 
 
 def _init(args: argparse.Namespace, options: GlobalOptions) -> int:
