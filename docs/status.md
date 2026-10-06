@@ -1,25 +1,30 @@
 # Status
 
-Last updated 2026-10-05 by `relay-next`.
-Last review: 2026-10-05 (F20261005-01, accepted).
+Last updated 2026-10-06 by `relay-next`.
+Last review: 2026-10-06 (P0001-C01, accepted with follow-ups).
 
 ## Where this stands
 
 - **P0001** (Stage 1, portable configuration and shared operations) is
-  active: DEC-7 to DEC-13 settled, delivery items D1–D5.
+  active: DEC-7 to DEC-15, delivery items D1–D5.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **P0001-C01** (D1: package, settings model, `config` commands): cut
-  2026-10-05, ready for an executor. Remaining after it: D2–D5.
+- **P0001-C01** (D1: package, settings model, `config` commands): accepted
+  with follow-ups 2026-10-06, pull request #12. D1 is done.
+- **P0001-C02** (D2, first part: Compose files and layer, image and
+  entrypoint, lifecycle commands, recipe rewiring, smoke test; the C01
+  error-handling follow-up): cut 2026-10-06, ready for an executor.
+  Remaining after it: the rest of D2 (`shell`, `vpn`, `servers`, login on
+  set-token, their wrappers, the side-by-side check), then D3–D5.
 
 ## In flight
 
-- **Chunk:** P0001-C01
-- **State:** awaiting review
-- **Branch:** `chunk/p0001-c01`
-- **Pull request:** `#12` (ready)
-- **Units committed:** a, b, c, d
+- **Chunk:** P0001-C02
+- **State:** ready for an executor
+- **Branch:** —
+- **Pull request:** —
+- **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
@@ -38,4 +43,7 @@ kept here.
 
 ## Decisions by chunk
 
-None yet. One line per chunk: the decision-log IDs it added.
+One line per chunk: the decision-log IDs it added.
+
+- P0001-C01: DEC-14.
+- P0001-C02 (cut): DEC-15.

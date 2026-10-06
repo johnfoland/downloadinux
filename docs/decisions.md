@@ -212,3 +212,23 @@ never have been imported.
 
 *Where:* [target design](target-design.md), *Migration*. Added during
 P0001-C01-d.
+
+## DEC-15: Old in-container paths stay linked from D2 until D3 (2026-10)
+
+When P0001's D2 moves the container to the four-mount contract (DEC-9), the
+downloader configs still name `~/Downloads`, `~/cookies`, and
+`~/.config/{yt-dlp,gallery-dl}`, and they keep doing so until D3 turns them
+into presets. In between, the base Compose file binds the checkout's
+`config/yt-dlp` and `config/gallery-dl` read-only under `/legacy/`, and the
+entrypoint links the four old home paths to `/downloads`, `/cookies`, and
+those binds, so `just dl`, `batch`, `watch`, and `useragent` keep working and
+output keeps landing on the host. D3 removes the binds and the links.
+
+Cutting D2 and D3 as one chunk was rejected as too large to review. Baking
+the configs into the image for the interval was rejected because
+`just useragent` edits would then need a rebuild. Leaving the old paths
+unlinked was rejected because yt-dlp would write into the container's own
+filesystem, where downloads silently vanish on the next recreate.
+
+*Where:* [target design](target-design.md), *Container contract*. Added
+cutting P0001-C02.

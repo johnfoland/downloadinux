@@ -31,4 +31,16 @@ the product of that procedure has come out wrong.
 
 ## The catalogue
 
-None yet.
+### §1. The brief names an external reference nobody checked exists
+
+A brief that pins a third-party name (an action's floating tag, a package
+version, a download URL, a CLI flag) by assumption hands the executor a
+choice the brief claims to have made: the reference may not exist, and the
+executor has to pick a substitute. Before committing a brief, check every
+external reference it names (`gh api repos/<owner>/<repo>/tags`, the package
+index, `--help`), or say "the current release" and let the executor record
+which one it pinned.
+
+*Found:* P0001-C01: the brief asked for `astral-sh/setup-uv` "at its current
+major tag"; the action publishes no floating major tag, and the executor
+pinned `v10.2.0`.

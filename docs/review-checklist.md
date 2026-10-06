@@ -22,4 +22,17 @@ stopped mattering is cheaper to skim than to re-derive after it bites again.
 
 ## The catalogue
 
-None yet.
+### §1. An operating-system failure escapes the CLI's error contract
+
+The CLI's `main` catches only the project's own error types, so an `OSError`
+raised below an operation (a directory that cannot be created, a file that
+cannot be read or written, an executable that is not installed, a hard link
+the filesystem refuses) reaches the user as a Python traceback rather than
+`downloadinux: error: <path>: <reason>` with exit 1. Tests that only use
+writable temporary directories never see it. Look at every filesystem and
+subprocess call an operation makes and ask what happens when it fails; a test
+should drive at least one such failure per command through `cli.main` and
+assert the message and exit status.
+
+*Found:* P0001-C01 review: `dlx init --config <read-only dir>/x/config.toml`
+printed a `PermissionError` traceback from `files.write_atomic`.
