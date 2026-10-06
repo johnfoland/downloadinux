@@ -74,3 +74,19 @@ when the container is stopped, "nothing runs then"; the running check does
 run, and under C02's invocation contract every VPN-on Compose call carries
 `DOWNLOADINUX_NORDVPN_TOKEN`. The executor implemented the contract and
 reported the conflict.
+
+### §4. A *Done when* grep that the brief's own content fails
+
+A grep in a unit's *Done when* ("finds nothing outside …") is written from
+the paths being retired, but the brief itself keeps some matches: a line
+another unit owns and has not changed yet, an assertion the brief pins that
+names the retired path on purpose, a file another delivery item owns. The
+executor then reports a check it cannot pass, or worse, edits out-of-scope
+files to pass it. Before committing a brief, run each *Done when* grep
+against the tree as it will stand after that unit (the files the chunk
+leaves alone are already there to grep) and give every expected hit an
+explicit exclusion, or say "finds only …" and list them.
+
+*Found:* P0001-C04: unit b's grep matched the `dl` recipe line the brief
+gave to unit c; unit d's matched the smoke test's pinned absence loop
+(excluded from c's grep but not d's) and `.env.example`, which D5 owns.

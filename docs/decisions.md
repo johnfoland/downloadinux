@@ -347,3 +347,32 @@ so a later `dlx init` is not refused over a file holding one key.
 
 *Where:* [target design](target-design.md), *Host application* ("Downloads,
 pinned for P0001-C04"). Added cutting P0001-C04.
+
+## DEC-22: `doctor`'s check list, and what it does when something is broken (2026-10)
+
+DEC-12's checks are pinned as a fixed, ordered list of IDs (target design,
+*Health checks*, "Pinned for P0001-C05"), with these choices where the rule
+left room:
+
+- An invalid settings or credentials file is a configuration error, exit 2,
+  like every other command, not a check: the error already names the file
+  and key, and every later check depends on the settings. A missing `docker`
+  executable, by contrast, is a failed `docker.daemon` check, not an error:
+  the rest of the report still helps.
+- A `writable` probe is `skip` when the same mount is not a mount point,
+  since a write would land in the container's own filesystem and pass for
+  the wrong reason. A stopped container is a `fail` (`container.running`),
+  so `doctor` exits 1 then, as the old recipe did.
+- The token's `unset` state is `skip` with the VPN off, but a `malformed`
+  token always fails, as *Configuration and paths* already says.
+- `downloads.user_agent` is a check, though DEC-12's list does not name it:
+  the old recipe had it, and Instagram's 720p cap is the failure it catches.
+- A fix names a `dlx` command where one exists, else a `just` recipe, so the
+  TUI can show the same text.
+- Each container check is its own `exec` with an argument list. One probe
+  script reporting every fact in a single `exec` was rejected for Stage 1: it
+  would be a second language to test, and the speed it buys matters only
+  when the TUI polls, which is Stage 4's to decide.
+
+*Where:* [target design](target-design.md), *Health checks* and *Migration*
+("Pinned for P0001-C05"). Added cutting P0001-C05.

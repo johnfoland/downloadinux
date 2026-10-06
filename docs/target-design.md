@@ -491,9 +491,12 @@ Pinned for P0001-C04:
 
 - `presets/video/yt-dlp.conf` is today's `config/yt-dlp/dlmp4.conf` and
   `presets/gallery/config.json` is `config/gallery-dl/config.json`, moved
-  with `git mv` so their history follows; `config/` is then gone. Stripped
+  with `git mv`; `config/` is then gone. (The strip removes over half of the
+  gallery file's bytes, so git shows it as a rename, and `git log --follow`
+  follows it, only with `-M40%`.) Stripped
   from the video preset: `--paths`, `--cookies`, and `--user-agent`, with
-  the comments that describe only them. Stripped from the gallery preset:
+  the comments that describe only them, including a section header whose
+  section held nothing else. Stripped from the gallery preset:
   `extractor.user-agent`, `extractor.archive`, and `extractor.instagram`'s
   `user-agent`, `base-directory`, and `cookies`. Every other line stays as
   it is and in order (the gallery file keeps its tabs and empty stub
@@ -559,7 +562,7 @@ The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
 
 ## Health checks
 
-Settled for Stage 1 (DEC-12); implementation pending.
+Settled for Stage 1 (DEC-12); implementation pending (P0001-C05, D4).
 
 `doctor` returns an ordered list of checks:
 
@@ -586,6 +589,82 @@ daemon's login, connection, killswitch state, and exit IP. When the VPN is
 disabled, VPN checks are `skip`. Container checks are `skip` when the
 container is not running. No check prints a secret or a cookie value, and none
 claims a login is valid.
+
+Pinned for P0001-C05 (DEC-22):
+
+- `doctor [--json]` loads the settings and credentials like every command:
+  an invalid file or a bad `--set` is a configuration error, exit 2, and an
+  unreadable one an operation failure, exit 1, both with no check list.
+  Otherwise it runs every check below, in the table's order, except that the
+  `mount.*` checks go mount by mount in *Container contract*'s order
+  (`downloads`, `config`, `state`, `cookies`), each mount's `mounted` check
+  before its `writable` or `readonly` one. It exits 1 when any check is
+  `fail`, else 0. `--json` prints the object
+  above (`fix` present only when the table gives one) as one JSON document on
+  standard output.
+- The human view prints `downloadinux`, then one line per check: two spaces,
+  a mark (`✓` ok, `!` warn, `✗` fail, `-` skip), a space, the summary; then,
+  when there is a `fix`, a line of six spaces, `fix: `, and the fix. Marks
+  are coloured (green, yellow, red, dim) only when standard output is a
+  terminal and `NO_COLOR` is unset or empty.
+- A fix names a `dlx` command where one does the job, else a `just` recipe
+  (`just cookies` until Stage 2), else the change in words.
+- Host checks read files on the host. The Netscape jar is read as lines: a
+  line starting `#HttpOnly_` is a cookie line with that prefix removed (yt-dlp
+  writes session cookies that way), any other line starting `#` and any
+  blank line is not, and a cookie line is one with exactly seven
+  tab-separated fields (domain, include-subdomains, path, secure, expiry,
+  name, value). The file is decoded as UTF-8 with undecodable bytes replaced,
+  so only an operating-system failure makes it unreadable. A cookie belongs
+  to a site when its domain, less a leading `.`, is the site's domain or ends
+  with `.` and the site's domain. Only domains and names are ever compared
+  or reported.
+- `docker.daemon` runs `docker info --format {{.ServerVersion}}` captured,
+  with the CLI's own environment (no `DOWNLOADINUX_*` variables, so never the
+  token). `container.running` is the running check of *Host application*
+  ("Commands in the container"). Every container check runs `exec -T -u dl
+  downloadinux <argv>` captured, one per check, through the invocation of
+  *Host application*. A `docker` executable that cannot be started fails
+  `docker.daemon` (summary `docker: <reason>`) instead of ending the command,
+  and every check that would run Docker is then `skip`.
+- Skips, first match wins: a VPN check (the four `vpn.*` checks) with
+  `vpn.enabled` false is `skip`, `VPN disabled in config`; `container.running` is `skip`, `Docker daemon not
+  reachable`, when `docker.daemon` is not `ok`; a container or VPN check is
+  `skip`, `container not running`, when `container.running` is not `ok`; a
+  `mount.<m>.writable` check is `skip`, `<path> is not a mount point`, when
+  that mount's `mounted` check failed; `cookies.instagram` and
+  `cookies.youtube` are `skip`, `no cookie jar`, when `cookies.jar` is not
+  `ok`.
+
+| `id` | Runs | `ok` when, with summary | Otherwise: status, summary, fix |
+| --- | --- | --- | --- |
+| `config.file` | the settings file exists | `<path>` | warn, `<path> missing; built-in defaults apply`, `dlx init` |
+| `credentials.file` | the credentials file's mode | no group or other bits: `<path> (mode 0600)` (the actual mode, four octal digits) | missing: skip, `no credentials file`; else fail, `<path> is mode <mode>; it holds the NordVPN token`, `chmod 600 <path>` |
+| `credentials.token` | the token's state | `set`: `NordVPN token well-formed` | `malformed`: fail, `NordVPN token is not 64 lowercase hex characters`, `dlx config set-token`; `unset`: warn, `no NordVPN token`, `dlx config set-token`, but skip, `VPN disabled in config`, when the VPN is disabled |
+| `paths.downloads` | the host directory exists | `<path>` | fail, `<path> does not exist (an unmounted drive?)`, `create it, or set paths.downloads` |
+| `cookies.jar` | `<paths.cookies>/cookies.txt` | at least one cookie line: `<path>: <n> cookies` | missing, or no cookie lines: warn, `no cookies yet; public downloads still work`, `just cookies`; unreadable: fail, `<path>: <reason>`, no fix |
+| `cookies.instagram` | site `instagram.com`, name `sessionid` | `instagram: session cookie present` | warn, `instagram: no session cookie`, `log in to Instagram in Firefox, then: just cookies` |
+| `cookies.youtube` | site `youtube.com`, name `__Secure-3PSID` or `SAPISID` | `youtube: session cookie present` | warn, `youtube: no session cookie (fine unless you need age-gated or members-only video)`, no fix |
+| `downloads.user_agent` | the first `Chrome/<digits>` in the setting, and the host Chrome major (`config user-agent`'s lookup) | `Chrome <n>` (also when the host Chrome cannot be read) | none: warn, `user-agent is not Chrome's; Instagram caps video at 720p`, `dlx config user-agent`; host major differs: warn, `user-agent says Chrome <n>, host Chrome is <m>`, `dlx config user-agent` |
+| `docker.daemon` | as above | exit 0: `Docker <server version>` | fail, `Docker daemon not reachable`, `start Docker` |
+| `container.running` | as above | `container running (project <container.project>)` | fail, `container not running`, `dlx up` |
+| `mount.downloads.mounted`, `mount.config.mounted`, `mount.state.mounted`, `mount.cookies.mounted` | `mountpoint -q <path>` | exit 0: `<path> is a mount point` | fail, `<path> is not a mount point`, `dlx restart` |
+| `mount.downloads.writable`, `mount.state.writable`, `mount.cookies.writable` | `sh -c 'f=$(mktemp -p "$1" .downloadinux-doctor.XXXXXX 2>/dev/null) && rm -f "$f"' sh <path>` | exit 0: `dl (uid <container.uid>) can write <path>` | fail, `dl (uid <container.uid>) cannot write <path>`, `make <host path> writable by uid <container.uid>` |
+| `mount.config.readonly` | `test -w /config` | exit non-zero: `/config is read-only` | fail, `/config is writable`, `dlx restart` |
+| `tools.yt-dlp`, `tools.gallery-dl` | `<tool> --version` | exit 0, non-empty output: `<tool> <first line>` | fail, `<tool> did not run`, `dlx update` |
+| `vpn.login` | `nordvpn account` (output discarded: it holds the account's email) | exit 0: `NordVPN daemon logged in` | fail, `NordVPN daemon not logged in (token missing, invalid, or revoked)`, `dlx config set-token` |
+| `vpn.connected` | `nordvpn status` | a line `Status: Connected`: `connected: <country>, <server>` (from the `Country:` and `Server:` lines, each omitted when absent) | fail, `VPN not connected`, `dlx vpn on` |
+| `vpn.killswitch` | `nordvpn settings` | the `Kill Switch:` line's `enabled` or `disabled` matches `vpn.killswitch`: `killswitch <state>, as configured` | differs: warn, `killswitch <state>, but vpn.killswitch is <true/false>`, `dlx restart`; no such line: warn, `killswitch state unknown`, no fix |
+| `vpn.exit_ip` | `curl -s --max-time 8 https://ipinfo.io/json` | exit 0, a JSON object with a string `ip`: `exit IP <ip> (<city>, <country>)` (the parenthesis omitted when either is absent) | killswitch `enabled` and not connected: fail, `no internet: the killswitch is blocking traffic while the VPN is disconnected`, `dlx vpn on`; else fail, `no internet from the container`, no fix |
+
+`nordvpn` output is split into lines on `\n` and `\r` (its spinner writes
+carriage returns) and each line stripped; `Status:`, `Country:`, `Server:`,
+and `Kill Switch:` match case-insensitively at the start of a line, and the
+value is the rest of the line, stripped (`Connected` exactly, ignoring case,
+so `Disconnected` never matches). `vpn.exit_ip`'s killswitch arm uses the
+states `vpn.killswitch` and `vpn.connected` read. Mount paths are the
+container locations of *Container contract*; `<host path>` is the mount's
+host source.
 
 ## Migration
 
@@ -700,6 +779,18 @@ Pinned for P0001-C04, D3's wrappers:
   disagree" arm goes with the configs: there is one value now), and its
   mount line tests `/downloads` instead of `/home/dl/Downloads`. The rest
   waits for D4.
+
+Pinned for P0001-C05, D4's wrapper:
+
+- `doctor` runs `uv run downloadinux doctor`, passing its arguments (so
+  `just doctor --json` works), and exits with its status; `setup` and
+  `update` keep calling `just doctor`. `scripts/config-value.sh` stays for
+  `setup` and `cookies`.
+- The gate's smoke test brings up the check project's container (VPN off,
+  its temporary mounts) with the CLI's `up`, runs `doctor --json`, and
+  asserts exit 0, `ok` true, every `mount.*` and `tools.*` check `ok`,
+  `docker.daemon` and `container.running` `ok`, and every `vpn.*` check
+  `skip`. Its existing cleanup (`compose -- down -v`) removes the container.
 
 ## Named cookie sources
 
