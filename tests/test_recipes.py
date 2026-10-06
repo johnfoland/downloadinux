@@ -82,3 +82,14 @@ def test_doctor_reads_the_user_agent_setting_and_no_config_file():
     assert "config-value.sh downloads.user_agent" in body
     assert "config/" not in body
     assert "disagree" not in body
+
+
+def test_dl_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04".
+    assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
+
+
+def test_doctor_tests_the_downloads_mount():
+    body = "\n".join(recipe("doctor"))
+    assert "{{dex}} test -d /downloads" in body
+    assert "{{chome}}" not in body

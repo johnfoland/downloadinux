@@ -125,20 +125,9 @@ useragent:
 shell:
     @uv run downloadinux shell
 
-# Download: just dl video <url>...  |  just dl gallery <url>...
+# Download with a preset: just dl video <url>...  |  just dl gallery <url>...
 dl kind +urls:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    kind="$1"; shift
-    case "$kind" in
-      video|v)
-        exec {{dex}} yt-dlp --config-location {{chome}}/.config/yt-dlp/dlmp4.conf "$@" ;;
-      gallery|gal|g)
-        exec {{dex}} gallery-dl "$@" ;;
-      *)
-        echo "  usage: just dl video <url>...   |   just dl gallery <url>..." >&2
-        exit 1 ;;
-    esac
+    @uv run downloadinux dl "$@"
 
 # Queue in detached tmux: just batch video [file] | just batch gallery [file]
 batch kind file="":
@@ -307,8 +296,8 @@ doctor:
     fi
     ok "container running"
 
-    {{dex}} test -d {{chome}}/Downloads \
-      && ok "~/Downloads mounted" || no "Downloads volume missing"
+    {{dex}} test -d /downloads \
+      && ok "/downloads mounted" || no "/downloads volume missing"
     printf '  · %s\n' "$({{dex}} yt-dlp --version 2>/dev/null | tr -d '\r' | sed 's/^/yt-dlp /')" \
                      "$({{dex}} gallery-dl --version 2>/dev/null | tr -d '\r' | sed 's/^/gallery-dl /')"
     # The token can be well-formed and still be revoked. Only the daemon knows.

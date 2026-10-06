@@ -23,15 +23,6 @@ services:
       - type: bind
         source: ${DOWNLOADINUX_COOKIES}
         target: /cookies
-      # Transitional configs, removed when D3 ships presets (DEC-15).
-      - type: bind
-        source: ./config/yt-dlp
-        target: /legacy/yt-dlp
-        read_only: true
-      - type: bind
-        source: ./config/gallery-dl
-        target: /legacy/gallery-dl
-        read_only: true
       - type: volume
         source: nordvpn-data
         target: /var/lib/nordvpn

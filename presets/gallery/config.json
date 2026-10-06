@@ -1,0 +1,20 @@
+{
+	"extractor": {
+		"sleep": "1-3",
+		"sleep-request": "1-3",
+
+		"instagram": {
+			"directory": ["{username}", "{post_shortcode}"],
+			"filename": "{num:>02}_{date:%Y}-{date:%m}-{date:%d}_{post_shortcode}_{username}.{extension}"
+		}
+	},
+	"downloader": {
+
+	},
+	"output": {
+
+	},
+	"postprocessor": {
+
+	}
+}

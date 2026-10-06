@@ -8,8 +8,9 @@ For the planned portable application and Python + Textual TUI, see the
 [architecture review and implementation plan](docs/README.md). Those documents
 describe future work; this README covers the current implementation.
 
-Your existing configs and shell functions were ported over as-is. The one
-thing that had to change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
+Your existing download configs live on as the `video` and `gallery`
+presets, and your shell functions were ported over. The one thing that had to
+change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
 walks you through.
 
 ```sh
@@ -134,9 +135,8 @@ just cookies widfsx0p.default-release
 
 The result lands at `paths.cookies`/`cookies.txt` (by default
 `~/.local/share/downloadinux/cookies/cookies.txt`), mode 0600 in a 0700
-directory. The container reads it at `/cookies/cookies.txt`; a transitional
-home link keeps the old downloader configs working. The checkout's old jar
-is no longer read by the container.
+directory. The container reads it at `/cookies/cookies.txt`, the path every
+download is given. The checkout's old jar is no longer read by the container.
 
 `just cookies` also runs `just useragent` (`dlx config user-agent`), which
 sets `downloads.user_agent` in `config.toml` to the user-agent of your host
@@ -188,7 +188,7 @@ downloadinux
   ✓   instagram: logged in
   ! youtube: anonymous (fine unless you need age-gated video)
   ✓ container running
-  ✓ ~/Downloads mounted
+  ✓ /downloads mounted
   · yt-dlp 2026.07.04
   · gallery-dl 1.32.9
   · VPN: Status: Disconnected
@@ -224,8 +224,14 @@ just servers New_York                            # rank a city's servers by load
 just shell                                       # zsh inside the box
 ```
 
-`dl` and `batch` both take `video` or `gallery` as their first word — `video`
-routes to yt-dlp, `gallery` to gallery-dl. `v` and `g` work as shorthands.
+`dl` and `batch` both take a preset as their first word: `video` runs yt-dlp
+with the `video` preset (your old `dlmp4` config), `gallery` runs gallery-dl
+with the `gallery` preset (`dlgal`'s). `v`, `gal`, and `g` work as shorthands;
+anything else is a usage error. `just dl` runs `dlx dl`, which gives the
+downloader its output root, the managed cookie jar, and `downloads.user_agent`
+as arguments and exits with the downloader's status. Video lands in
+`dlmp4/<site>/<uploader>/` under your downloads folder; Instagram galleries in
+`dlgal/`, other galleries in `gallery-dl/`.
 
 With `vpn.enabled = false` the container runs no NordVPN daemon, so `just vpn`
 refuses (exit 1, naming `vpn.enabled`) instead of failing inside the
@@ -315,28 +321,30 @@ without pinning to an Ubuntu codename. No desktop, no GUI packages.
 
 ## The shared volume
 
-The configured host downloads root is mounted at `/downloads`. Transitional
-links from `/home/dl/Downloads` and `/home/dl/cookies` keep the existing
-download configs working until the preset migration:
+The configured host downloads root is mounted at `/downloads`, and every
+download writes under it, at the same host paths as before the presets:
 
-- `config/yt-dlp/dlmp4.conf` → `~/Downloads/dlmp4`
-- `config/gallery-dl/config.json` → `~/Downloads/dlgal`, archive DB included
+- `video` → `dlmp4/`
+- `gallery` → `dlgal/` for Instagram, `gallery-dl/` for other sites, and the
+  archive DB at `dlgal/gallery-dl-archive.sqlite3`
 
 Set `paths.downloads` in `config.toml` to use an external drive; that
 directory must exist before starting. The CLI never creates it.
 
 The image uses user `dl`, with UID/GID applied at container start. `/config`
-holds shipped presets read-only (a placeholder until D3), `/state` holds
-mutable state, and `/cookies` holds the managed cookie jar. VPN-off mode has
+holds the shipped presets read-only, `/state` holds mutable state, and
+`/cookies` holds the managed cookie jar. VPN-off mode has
 no VPN capabilities or daemon. `just check` builds a separate check image
 and smoke-tests these mounts and identities with temporary directories.
 
 ## Mounted config and installed shell files
 
-The downloader configs are mounted read-only under `/legacy/`, with home
-links for compatibility. Host edits appear immediately:
+The checkout's `presets/` is mounted read-only at `/config`, so host edits to
+a preset apply to the next download:
 
-- `config/yt-dlp/` and `config/gallery-dl/` — the downloader configs
+- `presets/video/yt-dlp.conf` and `presets/gallery/config.json` — media
+  behavior only; the CLI adds the output root, cookie jar, user-agent, and
+  gallery archive as arguments ([`presets/README.md`](presets/README.md))
 
 The `zsh/` files are copied into the image; rebuild after editing them.
 
@@ -346,7 +354,7 @@ The `zsh/` files are copied into the image; rebuild after editing them.
 
 | You changed | What to run | Why |
 |---|---|---|
-| `config/**` | **nothing** | read-only bind mounts; host edits appear immediately |
+| `presets/**` | **nothing** | read-only bind mount; host edits appear immediately |
 | `config.toml`, `credentials.toml` | `just restart` | recreate with current settings, token, and UID/GID (`just token` also logs a running VPN container in) |
 | `Dockerfile`, `zsh/**`, container `scripts/**` | `just build && just up` | copied into the image |
 | `compose/base.yaml`, `compose/vpn.yaml` | `just restart` | unless you touched `build:`, then rebuild |
@@ -446,6 +454,8 @@ dlx build / up / down        Build, start in the background, or stop the configu
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
+dlx dl <preset> <url>...     Download with a preset: video (v) or gallery (gal, g); exits
+                               with the downloader's status
 dlx shell                    zsh inside the container as dl; exits with its status
 dlx vpn [args...]            The container's vpn helper (on [server], off, status, ip, or
                                any nordvpn subcommand; status when none). Refuses,
@@ -460,9 +470,9 @@ beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
 Every recipe reaches the configured container through the CLI. Lifecycle,
-token, `useragent`, `shell`, `vpn`, `servers`, and `status` recipes are
-wrappers; the download, batch, and health recipes retain their existing
-implementation behind the computed Compose invocation.
+token, `useragent`, `dl`, `shell`, `vpn`, `servers`, and `status` recipes are
+wrappers; the batch and health recipes retain their existing implementation
+behind the computed Compose invocation.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -509,12 +519,11 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── justfile
 ├── Dockerfile
 ├── compose/base.yaml, vpn.yaml   # four mounts; optional VPN overlay
-├── presets/                     # read-only /config; presets arrive in D3
+├── presets/                      # read-only /config: media behavior only
+│   ├── video/yt-dlp.conf         # the video preset (was dlmp4's config)
+│   └── gallery/config.json       # the gallery preset (was dlgal's config)
 ├── .env.example
 ├── .tool-versions                # pins just 1.40.0 for asdf
-├── config/
-│   ├── yt-dlp/dlmp4.conf         # ported from ~/.config/yt-dlp/
-│   └── gallery-dl/config.json    # ported from ~/.config/gallery-dl/
 ├── zsh/
 │   ├── zshrc
 │   ├── aliases.zsh               # dlmp4, dlgal, + container extras
@@ -527,6 +536,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   ├── presets.py                # the presets' argument lists for `dlx dl`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order

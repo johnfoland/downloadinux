@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, servers, settings, useragent
+from downloadinux import compose, credentials, files, presets, servers, settings, useragent
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -65,6 +65,27 @@ def vpn(
             "set vpn.enabled = true and run dlx restart to use it"
         )
     program = ["vpn", *(args or ["status"])]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+def download(
+    preset: str,
+    urls: Sequence[str],
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`dl`: the preset's argument list (*Presets*) with `urls` appended, run
+    as `dl` uncaptured, since the downloaders draw progress on the terminal;
+    the downloader's exit status. No VPN or running check: Compose reports a
+    stopped service itself (Host application, "Downloads, pinned for
+    P0001-C04")."""
+    effective = settings.load(config, overrides, host)
+    program = [
+        *presets.argv(presets.resolve(preset).name, effective["downloads.user_agent"]),
+        *urls,
+    ]
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 

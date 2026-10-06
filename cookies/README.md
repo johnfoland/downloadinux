@@ -27,8 +27,8 @@ The host configs used `--cookies-from-browser firefox` (yt-dlp) and
 no Firefox profile in there, and on macOS the profile is encrypted against the
 local keychain regardless. Export on the host, use the managed file.
 
-The container mounts the managed directory at `/cookies`. Both old configs
-still point at `~/cookies/cookies.txt` through a transitional home link (DEC-15).
+The container mounts the managed directory at `/cookies`, and every download
+is given `/cookies/cookies.txt` as an argument.
 
 ## Doing it by hand
 

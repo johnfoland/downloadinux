@@ -17,11 +17,6 @@ if [[ "$uid" != "$old_uid" ]]; then
     exit 1
   fi
 fi
-# A restart may already have the transitional links. Remove only those
-# links before usermod visits the home; it must never reach a bind (DEC-15).
-for link in /home/dl/Downloads /home/dl/cookies /home/dl/.config/yt-dlp /home/dl/.config/gallery-dl; do
-  [[ ! -L "$link" ]] || unlink "$link"
-done
 if [[ "$gid" != "$old_gid" ]]; then
   if getent group "$gid" >/dev/null; then
     usermod -g "$gid" dl
@@ -62,12 +57,6 @@ if [[ ! -e /cookies/cookies.txt ]]; then
     warn "Cannot create /cookies/cookies.txt as dl; check the host mount permissions."
   fi
 fi
-
-# Old downloader and zsh paths until D3 moves configs to presets (DEC-15).
-ln -sfn /downloads /home/dl/Downloads
-ln -sfn /cookies /home/dl/cookies
-ln -sfn /legacy/yt-dlp /home/dl/.config/yt-dlp
-ln -sfn /legacy/gallery-dl /home/dl/.config/gallery-dl
 
 # --- NordVPN ----------------------------------------------------------------
 start_nordvpn() {

@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import migrate, operations, servers
+from downloadinux import migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -150,6 +150,18 @@ def build_parser() -> argparse.ArgumentParser:
         _add_global_options(lifecycle, 1)
         lifecycle.set_defaults(handler=_lifecycle)
 
+    dl = commands.add_parser(
+        "dl",
+        help="download with a preset",
+        description="Run a preset's downloader in the container with the "
+        "output root, cookie jar, and user-agent from the settings. PRESET is "
+        "video (v: yt-dlp) or gallery (gal, g: gallery-dl).",
+    )
+    _add_global_options(dl, 1)
+    dl.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
+    dl.add_argument("urls", nargs="+", metavar="URL")
+    dl.set_defaults(handler=_dl)
+
     shell = commands.add_parser("shell", help="interactive zsh in the container as dl")
     _add_global_options(shell, 1)
     shell.set_defaults(handler=_shell)
@@ -193,6 +205,10 @@ def _passthrough(args: list[str]) -> list[str]:
 
 def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
     return operations.run_compose(_passthrough(args.args), options.config, options.overrides)
+
+
+def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.download(args.preset, args.urls, options.config, options.overrides)
 
 
 def _shell(args: argparse.Namespace, options: GlobalOptions) -> int:
