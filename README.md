@@ -270,32 +270,50 @@ city that doesn't exist and it prints the valid ones.
 ## Batch queues
 
 `dlmp4_batch` throttles a couple of minutes between URLs and can run for hours,
-so `just batch` launches it in a detached tmux session inside the container —
-it survives your terminal closing, your laptop sleeping, and `just shell`
-exiting.
+so `just batch` (`dlx batch`) launches the same loop in a detached tmux session
+inside the container — it survives your terminal closing, your laptop
+sleeping, and `just shell` exiting.
 
 ```sh
-just batch video               # defaults to ~/Downloads/dlmp4_queue
+just batch video               # defaults to <paths.downloads>/dlmp4_queue
 just watch video               # attach; Ctrl-b d to detach without killing it
 
-just batch gallery             # defaults to ~/Downloads/dlgal_queue
+just batch gallery             # defaults to <paths.downloads>/dlgal_queue
 just watch gallery
 ```
 
-Both default to queue files under `paths.downloads` (`~/Downloads` by default). Pass a path
-to use a different one:
+Pass a path to use a different queue file:
 
 ```sh
 just batch video ~/Downloads/some-other-queue.txt
 ```
 
 The queue file must live under `paths.downloads` — that's the output directory
-the container can see. `just batch` translates the host path to the container's
-view for you and refuses paths outside the volume rather than failing
-confusingly later.
+the container can see. `dlx batch` translates the host path to the container's
+view for you (`/downloads/…`) and refuses a missing file or one outside the
+volume rather than failing confusingly later. Paths are compared as written,
+without resolving symlinks. `dlx batch` takes a relative path against your
+working directory; `just batch` runs in the checkout, so give it an absolute
+or `~` path.
+
+The loop runs under `zsh -f`, which reads none of the shell's startup files:
+the session sources only `zsh/batch.zsh` and is handed the preset's argument
+list, the one `dlx dl` uses (plus `-q` for gallery-dl, as `dlgal_batch` always
+had). If a session of that name is already running, `dlx batch` exits 1 and
+tells you to attach with `dlx watch`. `dlx watch` takes `video` (the default),
+`gallery`, their shorthands, or any other tmux session name.
 
 Same behavior as your Mac: successful URLs are deleted from the queue file as
 they complete, and timestamped success/fail logs are written alongside.
+
+## Inside the container
+
+`just shell` starts zsh in `/downloads`. `dlmp4`, `dlgal`, `dlmp4_batch`, and
+`dlgal_batch` keep their names and run the same argument lists as `dlx dl` and
+`dlx batch`, taking the user-agent from the container's `DL_USER_AGENT`. That
+value is fixed when the container is created, so after `just useragent` the
+helpers follow at the next `just up` or `just restart`; `dlx dl` and
+`dlx batch` read the setting on every run and need neither (DEC-20).
 
 ---
 
@@ -347,6 +365,8 @@ a preset apply to the next download:
   gallery archive as arguments ([`presets/README.md`](presets/README.md))
 
 The `zsh/` files are copied into the image; rebuild after editing them.
+`zsh/batch.zsh` holds the batch loop alone, for `dlx batch`; the interactive
+shell sources it with the others.
 
 `~/.zshrc` in the image is a one-line stub that sources `zsh/zshrc`.
 
@@ -456,6 +476,11 @@ dlx update                  Build --no-cache, then up -d; stops if the build fai
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
 dlx dl <preset> <url>...     Download with a preset: video (v) or gallery (gal, g); exits
                                with the downloader's status
+dlx batch <preset> [queue]   Run a queue file under paths.downloads in a detached tmux
+                               session (default <paths.downloads>/dlmp4_queue or
+                               dlgal_queue); exit 1 if it is missing or outside
+dlx watch [preset|session]   Attach to a batch session (default video); exits with
+                               tmux's status
 dlx shell                    zsh inside the container as dl; exits with its status
 dlx vpn [args...]            The container's vpn helper (on [server], off, status, ip, or
                                any nordvpn subcommand; status when none). Refuses,
@@ -470,9 +495,9 @@ beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
 Every recipe reaches the configured container through the CLI. Lifecycle,
-token, `useragent`, `dl`, `shell`, `vpn`, `servers`, and `status` recipes are
-wrappers; the batch and health recipes retain their existing implementation
-behind the computed Compose invocation.
+token, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`, `servers`, and
+`status` recipes are wrappers; the health recipe retains its existing
+implementation behind the computed Compose invocation.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -493,8 +518,8 @@ just useragent       Pin downloads.user_agent to your host Chrome version
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries
 just batch video [file]     Run a queue in detached tmux
-                              (defaults to ~/Downloads/dlmp4_queue)
-just batch gallery [file]   Same, for galleries (~/Downloads/dlgal_queue)
+                              (defaults to <paths.downloads>/dlmp4_queue)
+just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
 just watch video|gallery    Attach to a running batch session
 just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
@@ -526,8 +551,9 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── .tool-versions                # pins just 1.40.0 for asdf
 ├── zsh/
 │   ├── zshrc
-│   ├── aliases.zsh               # dlmp4, dlgal, + container extras
-│   └── functions.zsh             # *_batch, exifmod — ported verbatim
+│   ├── aliases.zsh               # container extras (myip, vpns, dlupdate, ...)
+│   ├── batch.zsh                 # the batch loop, sourced alone by `dlx batch`
+│   └── functions.zsh             # dlmp4, dlgal, *_batch on the presets; exifmod
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
@@ -536,7 +562,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
-│   ├── presets.py                # the presets' argument lists for `dlx dl`
+│   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order

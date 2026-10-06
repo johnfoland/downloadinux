@@ -6,6 +6,7 @@ CLI (and later the TUI) only parses and presents.
 
 from __future__ import annotations
 
+import os
 import stat
 import tomllib
 from collections.abc import Sequence
@@ -86,6 +87,78 @@ def download(
         *presets.argv(presets.resolve(preset).name, effective["downloads.user_agent"]),
         *urls,
     ]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+# `zsh -f` reads none of dl's startup files: only the loop's own file
+# (Host application, "Downloads, pinned for P0001-C04"; DEC-13).
+BATCH_SCRIPT = (
+    'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"; '
+    'echo; echo "[done — press a key]"; read -k1'
+)
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    queue: str  # the container's path
+    session: str
+    preset: str
+
+
+def batch(
+    preset: str,
+    queue: str | None = None,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> BatchResult:
+    """`batch`: start the zsh batch loop on a queue under `paths.downloads`
+    in a detached tmux session, with the preset's batch argument list as
+    separate tmux arguments, so every word arrives intact (Host application,
+    "Downloads, pinned for P0001-C04"). Paths are made absolute without
+    resolving links, so a symlinked drive compares as written."""
+    effective = settings.load(config, overrides, host)
+    chosen = presets.resolve(preset)
+    downloads = os.path.abspath(effective["paths.downloads"])
+    if queue is None:
+        path = os.path.join(downloads, chosen.queue)
+    else:
+        path = os.path.abspath(os.path.expanduser(queue))
+    if not os.path.isfile(path):
+        raise DownloadinuxError(f"no such queue file: {path}")
+    if path == downloads or os.path.commonpath([downloads, path]) != downloads:
+        raise DownloadinuxError(
+            f"{path} is outside paths.downloads ({downloads}); the container cannot see it"
+        )
+    container = "/downloads/" + os.path.relpath(path, downloads)
+    program = [
+        "tmux", "new-session", "-d", "-s", chosen.session, "-c", "/downloads",
+        "zsh", "-f", "-c", BATCH_SCRIPT, "zsh",
+        container, chosen.log_prefix, chosen.title, chosen.colour,
+        *presets.argv(chosen.name, effective["downloads.user_agent"], batch=True),
+    ]
+    status = _invocation(effective, host).run(compose.exec_args(program), runner)
+    if status != 0:
+        raise DownloadinuxError(
+            f"could not start tmux session {chosen.session}; if one is already "
+            f"running, attach with dlx watch {chosen.name}"
+        )
+    return BatchResult(container, chosen.session, chosen.name)
+
+
+def watch(
+    target: str = presets.VIDEO,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`watch`: attach to a preset's batch session, or to any other word
+    taken as a tmux session name; tmux's exit status."""
+    effective = settings.load(config, overrides, host)
+    session = presets.resolve(target).session if target in presets.ALIASES else target
+    program = ["tmux", "attach", "-t", session]
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 

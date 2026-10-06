@@ -162,6 +162,30 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("urls", nargs="+", metavar="URL")
     dl.set_defaults(handler=_dl)
 
+    batch = commands.add_parser(
+        "batch",
+        help="run a queue file in a detached tmux session",
+        description="Start the batch loop on a queue file under "
+        "paths.downloads in a detached tmux session in the container. The "
+        "queue defaults to dlmp4_queue (video) or dlgal_queue (gallery) in "
+        "paths.downloads.",
+    )
+    _add_global_options(batch, 1)
+    batch.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
+    batch.add_argument("queue", nargs="?", metavar="QUEUE")
+    batch.set_defaults(handler=_batch)
+
+    watch = commands.add_parser(
+        "watch",
+        help="attach to a batch session (Ctrl-b d detaches)",
+        description="Attach to a preset's batch session; any other word is "
+        "taken as a tmux session name.",
+    )
+    _add_global_options(watch, 1)
+    watch.add_argument("target", nargs="?", default=presets.VIDEO, metavar="PRESET",
+                       help="video (default), gallery, or a tmux session name")
+    watch.set_defaults(handler=_watch)
+
     shell = commands.add_parser("shell", help="interactive zsh in the container as dl")
     _add_global_options(shell, 1)
     shell.set_defaults(handler=_shell)
@@ -209,6 +233,20 @@ def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
 
 def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
     return operations.download(args.preset, args.urls, options.config, options.overrides)
+
+
+def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = operations.batch(args.preset, args.queue, options.config, options.overrides)
+    print(f"Queue: {result.queue}")
+    print(
+        f"Running detached in tmux session {result.session}. "
+        f"Watch it with: dlx watch {result.preset}"
+    )
+    return 0
+
+
+def _watch(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.watch(args.target, options.config, options.overrides)
 
 
 def _shell(args: argparse.Namespace, options: GlobalOptions) -> int:

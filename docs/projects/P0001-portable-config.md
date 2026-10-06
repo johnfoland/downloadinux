@@ -181,6 +181,11 @@ report).
 
 ### D3 — Presets and the download operation
 
+**Implemented:** P0001-C04 (pull request #19, awaiting review): presets,
+`dl`, `batch`, `watch`, `config user-agent`, their wrappers, the shell
+helpers on the presets, and the end of DEC-15's links; manual checks
+recorded in the chunk report.
+
 **Build:** move `config/yt-dlp/dlmp4.conf` and `config/gallery-dl/config.json`
 to `presets/video/` and `presets/gallery/`, stripped of output roots, cookie
 paths, and user-agents (*Presets*, DEC-10); the download operation building

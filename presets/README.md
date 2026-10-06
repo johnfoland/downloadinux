@@ -11,8 +11,9 @@ nothing writes these files in routine operation (DEC-10).
 | `video` (`v`) | `video/yt-dlp.conf` | yt-dlp | `dlmp4`'s config |
 | `gallery` (`gal`, `g`) | `gallery/config.json` | gallery-dl | `dlgal`'s config |
 
-`dlx dl` adds the rest as arguments on every run, from the settings
-(DEC-20):
+`dlx dl`, `dlx batch`, and the container's `dlmp4`, `dlgal`, `dlmp4_batch`,
+and `dlgal_batch` add the rest as arguments on every run (DEC-20), from the
+settings (the shell helpers take the user-agent from `DL_USER_AGENT`):
 
 - `video`: `--paths /downloads/dlmp4`, `--cookies /cookies/cookies.txt`, and
   `--add-headers User-Agent:<downloads.user_agent>`.
@@ -21,7 +22,7 @@ nothing writes these files in routine operation (DEC-10).
   Instagram only, the user-agent again (its extractor ignores the global
   one), the output root `/downloads/dlgal`, and the cookie jar. Other sites
   download under `gallery-dl/` in the working directory, gallery-dl's own
-  default, which is `/downloads` for `dlx dl`.
+  default, which is `/downloads` for `dlx dl` and `dlx batch`.
 
 Editing a preset here takes effect on the next download; no rebuild or
 restart is needed. The exact argument lists are in `docs/target-design.md`,

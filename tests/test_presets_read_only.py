@@ -110,6 +110,9 @@ OPERATIONS = {
     "user-agent": ["config", "user-agent"],
     "dl video": ["dl", "video", "https://example.com/v"],
     "dl gallery": ["dl", "g", "https://example.com/g"],
+    "batch video": ["batch", "video"],
+    "batch gallery": ["batch", "gallery", "QUEUE"],
+    "watch": ["watch"],
     "build": ["build"],
     "up": ["up"],
     "down": ["down"],
@@ -125,12 +128,15 @@ OPERATIONS = {
 def test_no_operation_writes_under_presets(name, guard, fake_docker, chrome, tmp_path, capsys):
     downloads = tmp_path / "downloads"
     downloads.mkdir()
+    (downloads / "dlmp4_queue").write_text("https://example.com/v\n")
+    (downloads / "my queue").write_text("https://example.com/g\n")
     env = tmp_path / ".env"
     env.write_text(f"HOST_DOWNLOADS={downloads}\nNORDVPN_TOKEN={FAKE_TOKEN}\n")
     argv = ["--config", str(tmp_path / "settings" / "config.toml"),
             "--set", f"paths.downloads={downloads}", *OPERATIONS[name]]
     if name == "import-env":
         argv += ["--env", str(env)]
+    argv = [str(downloads / "my queue") if arg == "QUEUE" else arg for arg in argv]
     status = cli.main(argv)
     capsys.readouterr()
     assert guard == []

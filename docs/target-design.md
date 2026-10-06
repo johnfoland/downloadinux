@@ -59,8 +59,8 @@ Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
 the `config` commands except `user-agent` are implemented (P0001-C01).
 Compose and the lifecycle commands are implemented (P0001-C02), and `shell`,
 `vpn`, `servers`, and the login on `config set-token` (P0001-C03): every D2
-command is implemented. `config user-agent`, `dl`, `batch`, `watch`, and
-`doctor` are pending.
+command is implemented. `config user-agent`, `dl`, `batch`, and `watch` are
+implemented (P0001-C04, D3); `doctor` is pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -366,6 +366,9 @@ Further rules, pinned for P0001-C01:
 
 Settled for Stage 1 (DEC-9). Implemented in P0001-C02: Compose files,
 runtime identity, mount preparation, and transitional links (DEC-15).
+Implemented in P0001-C04 (D3): `DL_USER_AGENT`, the shell helpers on the
+presets, the batch loop's own file, and the end of DEC-15's interval (the
+`/legacy/` binds and the links are gone).
 
 | Container location | Host source | Access | Purpose |
 | --- | --- | --- | --- |
@@ -425,8 +428,8 @@ Compose files and the entrypoint, pinned for P0001-C02:
   a warning, not a stop, so `doctor` can report it.
 - The checkout's `presets/` exists from P0001-C02 (holding a README until D3
   moves the presets in), since a long-syntax bind fails on a missing source.
-- Until D3 the entrypoint also keeps the old in-container paths working
-  (DEC-15): the base file binds the checkout's `config/yt-dlp` and
+- Until D3 (done in P0001-C04, below) the entrypoint also kept the old
+  in-container paths working (DEC-15): the base file binds the checkout's `config/yt-dlp` and
   `config/gallery-dl` read-only at `/legacy/yt-dlp` and `/legacy/gallery-dl`,
   and the entrypoint links `/home/dl/Downloads` → `/downloads`,
   `/home/dl/cookies` → `/cookies`, `/home/dl/.config/yt-dlp` →
@@ -458,7 +461,8 @@ Pinned for P0001-C04, the end of DEC-15's interval:
 
 ## Presets
 
-Settled for Stage 1 (DEC-6, DEC-10); implementation pending.
+Settled for Stage 1 (DEC-6, DEC-10). Implemented in P0001-C04 (D3): the
+preset files, their argument lists, and `config user-agent`.
 
 The checkout's `presets/` holds one directory per preset, `video/` (the
 `dlmp4` yt-dlp config) and `gallery/` (the `dlgal` gallery-dl config). Preset
@@ -590,8 +594,9 @@ the lifecycle/token wrappers, computed Compose access, managed cookie export,
 and setup's import step are implemented (P0001-C02); the `shell`, `vpn`,
 `servers`, and `status` wrappers and `doctor`'s token line without `.env`
 are implemented (P0001-C03), so every D2 command and wrapper is implemented.
-The download and batch operation wrappers and full setup rewrite remain
-pending.
+The `dl`, `batch`, `watch`, and `useragent` wrappers and `doctor`'s
+user-agent and mount lines are implemented (P0001-C04, D3); the full setup
+rewrite remains pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,

@@ -7,12 +7,6 @@
 alias more="batcat"
 alias bat="batcat"
 
-# Download best MP4 quality with yt-dlp
-alias dlmp4="yt-dlp --config-location ~/.config/yt-dlp/dlmp4.conf"
-
-# Download image gallery with gallery-dl
-alias dlgal="gallery-dl"
-
 # Print directories in current $PATH
 alias chemin='echo -e ${PATH//:/\\n}'
 

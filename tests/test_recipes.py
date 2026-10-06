@@ -92,4 +92,24 @@ def test_dl_wraps_the_cli():
 def test_doctor_tests_the_downloads_mount():
     body = "\n".join(recipe("doctor"))
     assert "{{dex}} test -d /downloads" in body
-    assert "{{chome}}" not in body
+
+
+def test_batch_and_watch_wrap_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04": the queue only when given.
+    assert recipe("batch")[-1].strip() == '@uv run downloadinux batch "$1" ${2:+"$2"}'
+    assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'
+
+
+def test_no_recipe_names_the_old_home():
+    # Its variable went with the last recipe that used it.
+    lines = justfile()
+    variables = [
+        line.split(":=")[0].strip() for line in lines
+        if ":=" in line and not line[0].isspace() and not line.startswith("set ")
+    ]
+    assert variables == ["compose", "dex", "probe"]
+    assert not any("/home/dl" in line for line in lines)
+
+
+def test_the_gate_syntax_checks_the_batch_loop():
+    assert any("zsh/batch.zsh" in line for line in recipe("check"))
