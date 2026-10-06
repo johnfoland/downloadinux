@@ -4,7 +4,7 @@
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
 - **Completed:** —
-- **Decisions:** DEC-7 to DEC-15
+- **Decisions:** DEC-7 to DEC-16
 
 ## 1. Problem and outcome
 
@@ -101,6 +101,8 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | target-design, *Configuration and paths* | `--set` rule says "string or path setting" | P0001-C01 review: the executor's reading was right, the wording ambiguous |
 | target-design, *Host application* (OS failures; "Docker invocation, pinned for P0001-C02"), *Container contract* ("Compose files and the entrypoint"), *VPN mode* (overlay table), *Migration* ("Recipes when the Compose files change") | Error contract for OS failures; Compose argv, environment, and `DOWNLOADINUX_*` variables; lifecycle commands; image identity and entrypoint; transitional links; recipe rewiring | Cutting P0001-C02: details D2's executor would otherwise have invented |
 | [decisions.md](../decisions.md), DEC-15 | Added: old in-container paths stay linked from D2 until D3 | Cutting P0001-C02: D2 and D3 are separate chunks, and master must keep downloading in between |
+| target-design, *Host application* ("Commands in the container, pinned for P0001-C03"), *Migration* (D2's remaining wrappers; `doctor` off `.env`) | `exec` shape, running check, `shell`, `vpn`, `servers` (ranking into the package), login on `set-token` | Cutting P0001-C03: details the rest of D2 would otherwise have invented; the `doctor` line is the P0001-C02 review's finding 2 |
+| [decisions.md](../decisions.md), DEC-16 | Added: `vpn` refuses with the VPN off, `servers` does not; a refused login exits 1 | Cutting P0001-C03: genuine choices the command table left open |
 
 ## 5. Delivery plan
 
@@ -139,10 +141,11 @@ outside the checkout. `just check` runs the tests in CI.
 
 ### D2 — Container contract, lifecycle commands, and VPN mode
 
-**Partly implemented:** P0001-C02 (pull request #15): Compose files/layer,
-image/entrypoint, lifecycle commands, recipe access, managed cookie export,
-and gate smoke test. `shell`, `vpn`, `servers`, login on set-token, their
-wrappers, and the two-project manual check remain pending.
+**Partly implemented:** P0001-C02, accepted 2026-10-06 (pull request #15):
+Compose files/layer, image/entrypoint, lifecycle commands, recipe access,
+managed cookie export, and gate smoke test. `shell`, `vpn`, `servers`, login
+on set-token, their wrappers, and the two-project manual check remain
+pending.
 
 **Build:** Compose base file with long-syntax binds to `/downloads`,
 `/config`, `/state`, `/cookies`, no `container_name`, no `.env` reference, and
@@ -243,8 +246,9 @@ implemented behavior.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | — |
-| P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | ready for an executor | — | — |
+| P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | `bd63e62` |
+| P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | — |
+| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | ready for an executor | — | — |
 
 ## 8. Closeout
 

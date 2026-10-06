@@ -36,3 +36,21 @@ assert the message and exit status.
 
 *Found:* P0001-C01 review: `dlx init --config <read-only dir>/x/config.toml`
 printed a `PermissionError` traceback from `files.write_atomic`.
+
+### §2. A test double fails differently from the call it replaces
+
+A test that monkeypatches a library or OS call to raise builds the exception
+by hand, and gives it attributes the real call never sets (a `filename` that
+names the destination where the real `os.link` names the source, an errno
+the real call cannot return). The code under test then handles the fake
+correctly and the real failure wrongly, with every test green. When a test
+fakes a failure, check what the real call raises (run it once against a real
+failing input) and build the fake the same way; better, cause the real
+failure (a read-only directory, an absent executable on an empty `PATH`)
+where the platform allows.
+
+*Found:* P0001-C02 review: `test_hard_link_failure` faked `os.link` raising
+with the destination as `filename`; the real `os.link`, like `mkstemp`,
+names the temporary file, so `dlx init` into a read-only directory reported
+a `.config.toml.….tmp` file that no longer existed instead of the settings
+file.
