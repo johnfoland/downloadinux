@@ -141,11 +141,11 @@ outside the checkout. `just check` runs the tests in CI.
 
 ### D2 — Container contract, lifecycle commands, and VPN mode
 
-**Partly implemented:** P0001-C02, accepted 2026-10-06 (pull request #15):
+**Implemented:** P0001-C02, accepted 2026-10-06 (pull request #15):
 Compose files/layer, image/entrypoint, lifecycle commands, recipe access,
-managed cookie export, and gate smoke test. `shell`, `vpn`, `servers`, login
-on set-token, their wrappers, and the two-project manual check remain
-pending.
+managed cookie export, and gate smoke test; and P0001-C03 (pull request #16,
+awaiting review): `shell`, `vpn`, `servers`, login on set-token, their
+wrappers, and the two-project manual check (recorded in the chunk report).
 
 **Build:** Compose base file with long-syntax binds to `/downloads`,
 `/config`, `/state`, `/cookies`, no `container_name`, no `.env` reference, and
@@ -248,7 +248,7 @@ implemented behavior.
 |---|---|---|---|---|
 | P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | `bd63e62` |
 | P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | — |
-| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | ready for an executor | — | — |
+| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | awaiting review | pull request #16 | — |
 
 ## 8. Closeout
 

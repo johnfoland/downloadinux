@@ -81,10 +81,19 @@ Then hand it to the repo:
 just token 8f3c...your-token
 ```
 
-That validates and stores it in `credentials.toml` (0600). Run `just restart`
-to use it in a running container; immediate login on token changes arrives
-in the next chunk. The login persists in a Docker volume, so rebuilds don't
-log you out (only `just nuke` does).
+That validates and stores it in `credentials.toml` (0600). With the VPN
+enabled and the container running, it then logs the daemon in straight away
+and prints `Logged in.`, connecting too when `vpn.autoconnect` is on (a failed
+connect is only a warning). The token reaches the container through the
+environment of a single `docker compose exec`, never a command line. A
+stopped container logs in at the next `just up`; with the VPN disabled the
+token is just kept for later. If the daemon refuses the token, `just token`
+exits 1 with the token still stored. A daemon that is already logged in
+refuses every login, even with the same token: run `just vpn logout` first,
+then `just token` again. NordVPN's `logout` also revokes the token the daemon was using; if
+that is the one you are storing again, use `just vpn logout --persist-token`.
+The login persists in a Docker volume, so rebuilds don't log you out
+(only `just nuke` does).
 
 > If you lose the token, generate a new one — there's no way to view an old
 > one. Old tokens keep working until they expire, so revoke it in the same
@@ -214,6 +223,13 @@ just shell                                       # zsh inside the box
 `dl` and `batch` both take `video` or `gallery` as their first word — `video`
 routes to yt-dlp, `gallery` to gallery-dl. `v` and `g` work as shorthands.
 
+With `vpn.enabled = false` the container runs no NordVPN daemon, so `just vpn`
+refuses (exit 1, naming `vpn.enabled`) instead of failing inside the
+container; `just status` shows that refusal under the container list.
+`just servers` works either way, for picking a server before you turn the VPN
+on. Log in with `just token`, not `just vpn login <token>`: the helper still
+accepts it, but it puts the token on a command line.
+
 ### Picking a server
 
 `nordvpn connect` takes any of: nothing (Nord picks the fastest), a country
@@ -327,7 +343,7 @@ The `zsh/` files are copied into the image; rebuild after editing them.
 | You changed | What to run | Why |
 |---|---|---|
 | `config/**` | **nothing** | read-only bind mounts; host edits appear immediately |
-| `config.toml`, `credentials.toml` | `just restart` | recreate with current settings, token, and UID/GID |
+| `config.toml`, `credentials.toml` | `just restart` | recreate with current settings, token, and UID/GID (`just token` also logs a running VPN container in) |
 | `Dockerfile`, `zsh/**`, container `scripts/**` | `just build && just up` | copied into the image |
 | `compose/base.yaml`, `compose/vpn.yaml` | `just restart` | unless you touched `build:`, then rebuild |
 
@@ -415,7 +431,8 @@ dlx init                     Write a starter settings file (VPN off); refuses if
 dlx config show [--json]     Effective settings, where each comes from, the files, the
                                token's state (set/unset/malformed, never its value),
                                and the container mounts
-dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, without TOKEN)
+dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, without TOKEN);
+                               with the VPN on and the container running, log it in
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
@@ -452,7 +469,8 @@ just                 Show the menu
 
 just setup           Cold start: everything below, in order, interactively
 just env             Write .env with your real UID/GID
-just token <token>   Validate and save a NordVPN token in credentials.toml
+just token <token>   Save a NordVPN token in credentials.toml; log a running
+                       VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
 just useragent       Pin both configs' UA to your host Chrome version
 

@@ -89,9 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     set_token = config_commands.add_parser(
         "set-token",
-        help="validate and store the NordVPN token",
+        help="validate and store the NordVPN token; log in if the container runs",
         description="Store the NordVPN token in the credentials file. Without "
-        "TOKEN it prompts on a terminal, else reads one line from stdin.",
+        "TOKEN it prompts on a terminal, else reads one line from stdin. With "
+        "the VPN enabled and the container running, it then logs the daemon "
+        "in (and connects when vpn.autoconnect is true).",
     )
     _add_global_options(set_token, 2)
     set_token.add_argument("token", nargs="?", metavar="TOKEN")
@@ -243,7 +245,24 @@ def _read_token() -> str:
 def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
     token = args.token if args.token is not None else _read_token()
     path = operations.set_token(token, options.config, options.overrides)
-    print(f"Stored the NordVPN token in {path}")
+    # Flushed so it precedes Docker's and the login's own messages in a log.
+    print(f"Stored the NordVPN token in {path}", flush=True)
+    result = operations.log_in(token, options.config, options.overrides)
+    if result.login is operations.Login.VPN_OFF:
+        print("vpn.enabled is false: the token is kept for when the VPN is enabled.")
+    elif result.login is operations.Login.NOT_RUNNING:
+        print("The container is not running; it logs in with the token at the next dlx up.")
+    else:
+        print("Logged in.")
+        if result.connect is not None:
+            target = " ".join(result.connect.server) or "the fastest server"
+            if result.connect.connected:
+                print(f"Connected to {target}.")
+            else:
+                print(
+                    f"{PROG}: warning: could not connect to {target}; try dlx vpn on",
+                    file=sys.stderr,
+                )
     return 0
 
 

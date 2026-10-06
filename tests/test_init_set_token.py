@@ -120,7 +120,10 @@ def test_starter_text_is_valid_settings():
 def test_set_token_by_argument(capsys, creds_path):
     status, out, err = run(capsys, "config", "set-token", FAKE_TOKEN)
     assert status == 0, err
-    assert out == f"Stored the NordVPN token in {creds_path}\n"
+    assert out == (
+        f"Stored the NordVPN token in {creds_path}\n"
+        "vpn.enabled is false: the token is kept for when the VPN is enabled.\n"
+    )
     assert mode(creds_path) == 0o600
     assert tomllib.loads(creds_path.read_text()) == {"nordvpn": {"token": FAKE_TOKEN}}
     _, report = show(capsys)

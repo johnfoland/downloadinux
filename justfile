@@ -82,7 +82,7 @@ env:
     chmod 600 .env
     echo "    Wrote .env  (PUID=$(id -u) PGID=$(id -g))"
 
-# Validate and store a NordVPN token in credentials.toml
+# Store a NordVPN token in credentials.toml; log a running VPN container in
 token tok:
     @uv run downloadinux config set-token "$1"
 

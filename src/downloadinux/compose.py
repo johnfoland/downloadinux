@@ -53,10 +53,15 @@ def capture_process(argv: Sequence[str], environ: Mapping[str, str]) -> tuple[in
     return completed.returncode, completed.stdout
 
 
-def exec_args(program: Sequence[str], *, captured: bool = False) -> list[str]:
+def exec_args(
+    program: Sequence[str], *, captured: bool = False, variables: Sequence[str] = ()
+) -> list[str]:
     """Compose `exec` of `program` as `dl`, as a list: `-T` exactly when the
-    CLI captures the output, never for an interactive command (C03 list)."""
-    return ["exec", *(["-T"] if captured else []), "-u", "dl", SERVICE, *program]
+    CLI captures the output, never for an interactive command (C03 list).
+    Each of `variables` goes in as `-e NAME` alone, so Compose takes its value
+    from its own process environment and no argument list carries it."""
+    names = [arg for name in variables for arg in ("-e", name)]
+    return ["exec", *(["-T"] if captured else []), "-u", "dl", *names, SERVICE, *program]
 
 
 @dataclass(frozen=True)
@@ -67,8 +72,16 @@ class Invocation:
     def run(self, args: Sequence[str], runner: Runner | None = None) -> int:
         return (runner or run_process)([*self.argv, *args], self.environ)
 
-    def capture(self, args: Sequence[str], capture: Capture | None = None) -> tuple[int, str]:
-        return (capture or capture_process)([*self.argv, *args], self.environ)
+    def capture(
+        self,
+        args: Sequence[str],
+        capture: Capture | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> tuple[int, str]:
+        """`environ` adds variables to this one process's environment only."""
+        return (capture or capture_process)(
+            [*self.argv, *args], {**self.environ, **(environ or {})}
+        )
 
     def running(self, capture: Capture | None = None) -> bool:
         """`ps --status running --quiet downloadinux` exits 0 with output; a

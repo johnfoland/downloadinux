@@ -57,8 +57,10 @@ this design does not require a network API merely to support local Docker.
 
 Settled for Stage 1 (DEC-7). The package, its entry points, and `init` and
 the `config` commands except `user-agent` are implemented (P0001-C01).
-Compose and the lifecycle commands are implemented (P0001-C02); the
-remaining subcommands and login on token changes are pending.
+Compose and the lifecycle commands are implemented (P0001-C02), and `shell`,
+`vpn`, `servers`, and the login on `config set-token` (P0001-C03): every D2
+command is implemented. `config user-agent`, `dl`, `batch`, `watch`, and
+`doctor` are pending.
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -400,8 +402,9 @@ reports when it cannot read one; Stage 2 replaces that lookup.
 
 ## VPN mode
 
-Settled for Stage 1 (DEC-11). Implemented in P0001-C02: base/overlay
-selection and the entrypoint switch; VPN helper commands are still pending.
+Settled for Stage 1 (DEC-11). Implemented: base/overlay selection and the
+entrypoint switch (P0001-C02), and the VPN helper commands and the login on
+`config set-token` (P0001-C03), so every D2 command is implemented.
 
 `vpn.enabled = false` starts Compose from the base file only: no added
 capabilities, no `/dev/net/tun`, no `systempaths=unconfined`, and no NordVPN
@@ -462,8 +465,11 @@ claims a login is valid.
 
 Settled for Stage 1 (DEC-13). `config import-env` is implemented (P0001-C01);
 the lifecycle/token wrappers, computed Compose access, managed cookie export,
-and setup's import step are implemented (P0001-C02). The download and batch
-operation wrappers and full setup rewrite remain pending.
+and setup's import step are implemented (P0001-C02); the `shell`, `vpn`,
+`servers`, and `status` wrappers and `doctor`'s token line without `.env`
+are implemented (P0001-C03), so every D2 command and wrapper is implemented.
+The download and batch operation wrappers and full setup rewrite remain
+pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
