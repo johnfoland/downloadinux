@@ -48,15 +48,53 @@ def test_read_only_directory(capsys, tmp_path, command):
         locked.chmod(0o700)
 
 
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses permissions")
+def test_read_only_existing_directory_names_the_target(capsys, tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    config = locked / "config.toml"
+    locked.chmod(0o500)
+    try:
+        assert cli.main(["--config", str(config), "init"]) == 1
+    finally:
+        locked.chmod(0o700)
+    err = capsys.readouterr().err
+    assert err == f"downloadinux: error: {config}: Permission denied\n"
+    assert ".tmp" not in err
+
+
 def test_hard_link_failure(capsys, tmp_path, monkeypatch):
     config = tmp_path / "config.toml"
 
     def refuse(source, destination):
-        raise OSError(errno.EOPNOTSUPP, "Operation not supported", str(destination))
+        # As the real os.link reports it: the source (here the temporary
+        # file) as filename, the destination as filename2 (review-checklist §2).
+        raise OSError(errno.EOPNOTSUPP, "Operation not supported", str(source), None, str(destination))
 
     monkeypatch.setattr(os, "link", refuse)
-    assert_error(capsys, ["--config", str(config), "init"], config, "Operation not supported")
+    assert cli.main(["--config", str(config), "init"]) == 1
+    err = capsys.readouterr().err
+    assert err == f"downloadinux: error: {config}: Operation not supported\n"
+    assert ".tmp" not in err
     assert list(tmp_path.glob(".*.tmp")) == []
+
+
+@pytest.mark.parametrize("call", ["replace", "fchmod"])
+def test_rename_and_mode_failures_name_the_target(capsys, tmp_path, monkeypatch, call):
+    credentials = tmp_path / "credentials.toml"
+
+    def refuse(first, *rest):
+        if call == "replace":
+            raise OSError(errno.EXDEV, "Invalid cross-device link", str(first), None, str(rest[0]))
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, call, refuse)
+    assert cli.main(["--config", str(tmp_path / "config.toml"), "config", "set-token", FAKE_TOKEN]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"downloadinux: error: {credentials}: ")
+    assert ".tmp" not in err
+    assert list(tmp_path.glob(".*.tmp")) == []
+    assert not credentials.exists()
 
 
 @pytest.mark.parametrize("file", ["config.toml", "credentials.toml"])

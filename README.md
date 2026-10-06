@@ -170,8 +170,7 @@ just doctor
 
 ```
 downloadinux
-  ✓ .env present
-  ✓ NordVPN token in .env
+  ✓ NordVPN token well-formed
   ✓ /home/you/.local/share/downloadinux/cookies/cookies.txt — 108 cookies
   ✓   instagram: logged in
   ! youtube: anonymous (fine unless you need age-gated video)
@@ -186,9 +185,10 @@ downloadinux
 Every `!` line names the command that fixes it. If the exit IP is your real
 one and you wanted the VPN, `just vpn on`.
 
-`just doctor` is still the legacy diagnostic until D4: its token checks read
-the old `.env`, and its VPN checks expect VPN mode. Its cookie checks and
-container access already follow the configured managed jar and project.
+`just doctor` is still the legacy diagnostic until D4: its VPN checks expect
+VPN mode. It needs no `.env`: its token line reports the stored token's state
+(set, unset, or malformed, never its value), and its cookie checks and
+container access follow the configured managed jar and project.
 
 ---
 

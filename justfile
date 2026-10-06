@@ -304,16 +304,14 @@ doctor:
     hm(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
     printf '\033[1mdownloadinux\033[0m\n'
 
-    [[ -f .env ]] && ok ".env present" || { no ".env missing — run: just env"; exit 1; }
-    # Presence is not validity: "tok" is non-empty and completely useless.
-    tok=$(grep -E '^NORDVPN_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '"'"'"' \r' || true)
-    if [[ -z "$tok" ]]; then
-      hm "no NordVPN token — run: just token <token>"
-    elif ! printf '%s' "$tok" | grep -qE '^[0-9a-f]{64}$'; then
-      no "NORDVPN_TOKEN is not a 64-char hex token (${#tok} chars) — run: just token <token>"
-    else
-      ok "NordVPN token well-formed"
-    fi
+    # Only the token's state, never its value. Presence is not validity:
+    # "tok" is non-empty and completely useless, so config show checks the form.
+    case "$(bash scripts/config-value.sh token)" in
+      set)       ok "NordVPN token well-formed" ;;
+      unset)     hm "no NordVPN token — run: just token <token>" ;;
+      malformed) no "NORDVPN_TOKEN is not a 64-char hex token — run: just token <token>" ;;
+      *)         no "could not read the settings — run: uv run downloadinux config show" ;;
+    esac
 
     # Size and mtime prove nothing here: yt-dlp writes its cookie jar back on
     # every run, so the file grows and looks fresh even with zero logins.

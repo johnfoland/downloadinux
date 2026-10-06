@@ -33,10 +33,11 @@ def write_atomic(path: Path, text: str, mode: int, *, replace: bool = True) -> N
     `mode`. With `replace=False` an existing file is never clobbered, even
     one created after the caller checked: `FileExistsError` is raised."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = None
     try:
-        os.fchmod(fd, mode)
+        fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), mode)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
@@ -46,12 +47,16 @@ def write_atomic(path: Path, text: str, mode: int, *, replace: bool = True) -> N
             os.link(temporary, path)
             os.unlink(temporary)
     except BaseException as error:
-        if isinstance(error, OSError) and error.filename is None:
-            error.filename = str(path)
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
+        if isinstance(error, OSError):
+            # mkstemp, os.replace, and os.link name the temporary file, which
+            # is gone by the time the user reads the error: report the target
+            # (Host application, OS failures).
+            error.filename, error.filename2 = str(path), None
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
         raise
 
 
