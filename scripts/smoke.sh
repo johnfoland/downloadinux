@@ -48,7 +48,10 @@ for old in /home/dl/Downloads /home/dl/cookies /home/dl/.config/yt-dlp /home/dl/
     test ! -e "$old"
     test ! -L "$old"
 done
-! pgrep -x nordvpnd
+if pgrep -x nordvpnd; then
+    echo "nordvpnd unexpectedly running with VPN disabled" >&2
+    exit 1
+fi
 ' sh "$(id -u)" "$(id -g)"
 test -d "$smoke_dir/downloads with space/dlmp4"
 
