@@ -6,6 +6,7 @@ credentials or cookie values: only the fixed summaries from the target design.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -347,6 +348,123 @@ def _container_checks(
     return checks
 
 
+def _nordvpn_value(output: str, label: str) -> str | None:
+    prefix = f"{label}:".casefold()
+    for line in re.split(r"[\r\n]", output):
+        line = line.strip()
+        if line.casefold().startswith(prefix):
+            return line[len(prefix):].strip()
+    return None
+
+
+def _vpn_checks(
+    settings: Settings,
+    invocation: compose.Invocation | None,
+    capture: compose.Capture,
+    running: Check,
+) -> list[Check]:
+    ids = ["vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"]
+    if not settings["vpn.enabled"]:
+        return [_check(id, Status.SKIP, "VPN disabled in config") for id in ids]
+    if running.status is not Status.OK or invocation is None:
+        return [_check(id, Status.SKIP, "container not running") for id in ids]
+
+    status, _ = _container_capture(
+        invocation, ["nordvpn", "account"], capture
+    )
+    login = _check(
+        "vpn.login",
+        Status.OK if status == 0 else Status.FAIL,
+        (
+            "NordVPN daemon logged in"
+            if status == 0
+            else "NordVPN daemon not logged in (token missing, invalid, or revoked)"
+        ),
+        None if status == 0 else "dlx config set-token",
+    )
+
+    status, output = _container_capture(
+        invocation, ["nordvpn", "status"], capture
+    )
+    connected = (
+        status == 0
+        and (_nordvpn_value(output, "Status") or "").casefold() == "connected"
+    )
+    if connected:
+        location = [
+            value
+            for value in (
+                _nordvpn_value(output, "Country"),
+                _nordvpn_value(output, "Server"),
+            )
+            if value
+        ]
+        summary = "connected" + (f": {', '.join(location)}" if location else "")
+        connection = _check("vpn.connected", Status.OK, summary)
+    else:
+        connection = _check(
+            "vpn.connected", Status.FAIL, "VPN not connected", "dlx vpn on"
+        )
+
+    status, output = _container_capture(
+        invocation, ["nordvpn", "settings"], capture
+    )
+    observed = _nordvpn_value(output, "Kill Switch") if status == 0 else None
+    observed = observed.casefold() if observed is not None else None
+    if observed not in {"enabled", "disabled"}:
+        observed = None
+        killswitch = _check(
+            "vpn.killswitch", Status.WARN, "killswitch state unknown"
+        )
+    else:
+        expected = "enabled" if settings["vpn.killswitch"] else "disabled"
+        if observed == expected:
+            killswitch = _check(
+                "vpn.killswitch",
+                Status.OK,
+                f"killswitch {observed}, as configured",
+            )
+        else:
+            configured = str(settings["vpn.killswitch"]).lower()
+            killswitch = _check(
+                "vpn.killswitch",
+                Status.WARN,
+                f"killswitch {observed}, but vpn.killswitch is {configured}",
+                "dlx restart",
+            )
+
+    status, output = _container_capture(
+        invocation,
+        ["curl", "-s", "--max-time", "8", "https://ipinfo.io/json"],
+        capture,
+    )
+    data: object = None
+    if status == 0:
+        try:
+            data = json.loads(output)
+        except Exception:
+            # DEC-22 and review-checklist §3: malformed input is a failed
+            # check regardless of the parser's exception taxonomy.
+            pass
+    if isinstance(data, dict) and isinstance(data.get("ip"), str):
+        ip = data["ip"]
+        city, country = data.get("city"), data.get("country")
+        where = f" ({city}, {country})" if isinstance(city, str) and isinstance(country, str) else ""
+        exit_ip = _check("vpn.exit_ip", Status.OK, f"exit IP {ip}{where}")
+    elif observed == "enabled" and not connected:
+        exit_ip = _check(
+            "vpn.exit_ip",
+            Status.FAIL,
+            "no internet: the killswitch is blocking traffic while the VPN is disconnected",
+            "dlx vpn on",
+        )
+    else:
+        exit_ip = _check(
+            "vpn.exit_ip", Status.FAIL, "no internet from the container"
+        )
+    return [login, connection, killswitch, exit_ip]
+
+
 def inspect(
     settings: Settings,
     creds: credentials.Credentials,
@@ -430,4 +548,5 @@ def inspect(
         )
     checks.append(running_check)
     checks += _container_checks(settings, invocation, run_capture, running_check)
+    checks += _vpn_checks(settings, invocation, run_capture, running_check)
     return Result(tuple(checks))

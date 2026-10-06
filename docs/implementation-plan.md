@@ -5,7 +5,8 @@ Status: Stage 1 is partly implemented: D1's package and configuration commands
 and gate smoke test (P0001-C02), and the container commands (`shell`, `vpn`,
 `servers`) and login on `config set-token` (P0001-C03); and D3: the presets,
 `dl`, `batch`, `watch`, and `config user-agent`, ending the transitional
-in-container links (P0001-C04). Later stages remain proposals. Stage 1 is
+in-container links (P0001-C04); and D4: structured health checks and their
+wrapper and smoke coverage (P0001-C05). Later stages remain proposals. Stage 1 is
 designed as project [P0001](projects/P0001-portable-config.md); its rules are in
 the [target design](target-design.md).
 

@@ -36,6 +36,7 @@ CONTAINER_IDS = [
     "tools.yt-dlp",
     "tools.gallery-dl",
 ]
+VPN_IDS = ["vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"]
 
 
 class Docker:
@@ -45,6 +46,16 @@ class Docker:
     def __init__(self):
         self.calls = []
         self.container = {}
+        self.vpn = {
+            ("nordvpn", "account"): (0, "Account: planted@example.invalid\n"),
+            ("nordvpn", "status"): (
+                0, "spinner\rStatus: Connected\rCountry: France\rServer: fr999\n"
+            ),
+            ("nordvpn", "settings"): (0, "Kill Switch: disabled\n"),
+            ("curl", "-s", "--max-time", "8", "https://ipinfo.io/json"): (
+                0, '{"ip":"203.0.113.7","city":"Paris","country":"FR"}'
+            ),
+        }
 
     def capture(self, argv, environ):
         argv, environ = list(argv), dict(environ)
@@ -61,6 +72,8 @@ class Docker:
             program = tuple(args[5:])
             if program in self.container:
                 return self.container[program]
+            if program in self.vpn:
+                return self.vpn[program]
             if program[:2] == ("mountpoint", "-q"):
                 return 0, ""
             if program[:2] == ("sh", "-c"):
@@ -137,7 +150,9 @@ def test_host_checks_are_ordered_and_warns_and_skips_are_ok(
 ):
     status, report, err = run_json(capsys, doctor_paths)
     assert (status, err, report["ok"]) == (0, "", True)
-    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS
+    assert [check["id"] for check in report["checks"]] == (
+        HOST_IDS + CONTAINER_IDS + VPN_IDS
+    )
     checks = by_id(report)
     assert checks["config.file"] == {
         "id": "config.file",
@@ -154,6 +169,10 @@ def test_host_checks_are_ordered_and_warns_and_skips_are_ok(
     assert checks["container.running"]["summary"] == (
         "container running (project downloadinux)"
     )
+    assert [checks[id] for id in VPN_IDS] == [
+        {"id": id, "status": "skip", "summary": "VPN disabled in config"}
+        for id in VPN_IDS
+    ]
 
 
 def test_existing_config_is_ok(docker, doctor_paths, capsys):
@@ -495,6 +514,174 @@ def test_stopped_container_skips_every_container_check_without_exec(
         for id in CONTAINER_IDS
     ]
     assert len(docker.calls) == 2
+
+
+def vpn_report(capsys, paths, *extra):
+    return run_json(capsys, paths, "--set", "vpn.enabled=true", *extra)
+
+
+def test_vpn_off_skips_every_vpn_check_without_nordvpn_or_curl(
+    docker, doctor_paths, capsys
+):
+    _, report, _ = run_json(capsys, doctor_paths)
+    assert [by_id(report)[id]["status"] for id in VPN_IDS] == ["skip"] * 4
+    programs = [compose_args(call)[5:] for call, _ in docker.calls[2:]]
+    assert not any(program and program[0] in {"nordvpn", "curl"} for program in programs)
+
+
+def test_vpn_checks_use_the_pinned_captured_arguments(
+    docker, doctor_paths, capsys
+):
+    status, report, _ = vpn_report(capsys, doctor_paths)
+    assert status == 0
+    checks = by_id(report)
+    assert checks["vpn.login"]["status"] == "ok"
+    assert checks["vpn.connected"]["summary"] == "connected: France, fr999"
+    assert checks["vpn.killswitch"]["summary"] == "killswitch disabled, as configured"
+    assert checks["vpn.exit_ip"]["summary"] == "exit IP 203.0.113.7 (Paris, FR)"
+    assert [compose_args(call) for call, _ in docker.calls[-4:]] == [
+        ["exec", "-T", "-u", "dl", "downloadinux", "nordvpn", "account"],
+        ["exec", "-T", "-u", "dl", "downloadinux", "nordvpn", "status"],
+        ["exec", "-T", "-u", "dl", "downloadinux", "nordvpn", "settings"],
+        ["exec", "-T", "-u", "dl", "downloadinux", "curl", "-s", "--max-time", "8", "https://ipinfo.io/json"],
+    ]
+
+
+def test_failed_vpn_login_is_a_failed_check(docker, doctor_paths, capsys):
+    docker.vpn[("nordvpn", "account")] = (1, "planted@example.invalid\n")
+    status, report, _ = vpn_report(capsys, doctor_paths)
+    assert status == 1
+    assert by_id(report)["vpn.login"] == {
+        "id": "vpn.login", "status": "fail",
+        "summary": "NordVPN daemon not logged in (token missing, invalid, or revoked)",
+        "fix": "dlx config set-token",
+    }
+
+
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        ("spin\rSTATUS: connected\rCOUNTRY: France\rSERVER: fr999\n", "connected: France, fr999"),
+        ("Status: Connected\n", "connected"),
+    ],
+)
+def test_connected_parses_carriage_returns_and_optional_location(
+    docker, doctor_paths, capsys, output, expected
+):
+    docker.vpn[("nordvpn", "status")] = (0, output)
+    check = by_id(vpn_report(capsys, doctor_paths)[1])["vpn.connected"]
+    assert check == {"id": "vpn.connected", "status": "ok", "summary": expected}
+
+
+@pytest.mark.parametrize("output", ["Status: Disconnected\n", "no status here\n"])
+def test_disconnected_never_matches_connected(
+    docker, doctor_paths, capsys, output
+):
+    docker.vpn[("nordvpn", "status")] = (0, output)
+    check = by_id(vpn_report(capsys, doctor_paths)[1])["vpn.connected"]
+    assert check == {
+        "id": "vpn.connected", "status": "fail",
+        "summary": "VPN not connected", "fix": "dlx vpn on",
+    }
+
+
+@pytest.mark.parametrize(
+    "configured,observed,status,summary,fix",
+    [
+        (False, "disabled", "ok", "killswitch disabled, as configured", None),
+        (True, "enabled", "ok", "killswitch enabled, as configured", None),
+        (False, "enabled", "warn", "killswitch enabled, but vpn.killswitch is false", "dlx restart"),
+        (True, "disabled", "warn", "killswitch disabled, but vpn.killswitch is true", "dlx restart"),
+    ],
+)
+def test_killswitch_matching_and_differing(
+    docker, doctor_paths, capsys, configured, observed, status, summary, fix
+):
+    docker.vpn[("nordvpn", "settings")] = (0, f"spinner\rKILL SWITCH: {observed}\n")
+    report = vpn_report(
+        capsys, doctor_paths, "--set", f"vpn.killswitch={str(configured).lower()}"
+    )[1]
+    check = by_id(report)["vpn.killswitch"]
+    expected = {"id": "vpn.killswitch", "status": status, "summary": summary}
+    if fix is not None:
+        expected["fix"] = fix
+    assert check == expected
+
+
+def test_missing_killswitch_line_warns_without_a_fix(docker, doctor_paths, capsys):
+    docker.vpn[("nordvpn", "settings")] = (0, "Technology: NordLynx\n")
+    assert by_id(vpn_report(capsys, doctor_paths)[1])["vpn.killswitch"] == {
+        "id": "vpn.killswitch", "status": "warn",
+        "summary": "killswitch state unknown",
+    }
+
+
+def test_exit_ip_omits_location_when_city_is_absent(docker, doctor_paths, capsys):
+    docker.vpn[("curl", "-s", "--max-time", "8", "https://ipinfo.io/json")] = (
+        0, '{"ip":"203.0.113.7","country":"FR"}'
+    )
+    assert by_id(vpn_report(capsys, doctor_paths)[1])["vpn.exit_ip"] == {
+        "id": "vpn.exit_ip", "status": "ok", "summary": "exit IP 203.0.113.7"
+    }
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        (0, "not json"),
+        (0, '["203.0.113.7"]'),
+        (0, '{"ip": 7}'),
+        (28, '{"ip":"203.0.113.7"}'),
+    ],
+)
+def test_bad_ipinfo_results_fail_without_a_traceback(
+    docker, doctor_paths, capsys, outcome
+):
+    docker.vpn[("curl", "-s", "--max-time", "8", "https://ipinfo.io/json")] = outcome
+    status, report, err = vpn_report(capsys, doctor_paths)
+    assert status == 1 and err == ""
+    assert by_id(report)["vpn.exit_ip"] == {
+        "id": "vpn.exit_ip", "status": "fail",
+        "summary": "no internet from the container",
+    }
+
+
+def test_exit_ip_names_the_killswitch_when_enabled_and_disconnected(
+    docker, doctor_paths, capsys
+):
+    docker.vpn[("nordvpn", "status")] = (0, "Status: Disconnected\n")
+    docker.vpn[("nordvpn", "settings")] = (0, "Kill Switch: enabled\n")
+    docker.vpn[("curl", "-s", "--max-time", "8", "https://ipinfo.io/json")] = (7, "")
+    check = by_id(vpn_report(capsys, doctor_paths)[1])["vpn.exit_ip"]
+    assert check == {
+        "id": "vpn.exit_ip", "status": "fail",
+        "summary": "no internet: the killswitch is blocking traffic while the VPN is disconnected",
+        "fix": "dlx vpn on",
+    }
+
+
+def test_stopped_container_skips_vpn_checks_too(docker, doctor_paths, capsys):
+    docker.running = (0, "")
+    _, report, _ = vpn_report(capsys, doctor_paths)
+    assert [by_id(report)[id] for id in VPN_IDS] == [
+        {"id": id, "status": "skip", "summary": "container not running"}
+        for id in VPN_IDS
+    ]
+    assert len(docker.calls) == 2
+
+
+def test_nordvpn_account_email_never_reaches_either_view(
+    docker, doctor_paths, capsys
+):
+    planted = "planted@example.invalid"
+    status, report, err = vpn_report(capsys, doctor_paths)
+    assert status == 0 and planted not in json.dumps(report) + err
+
+    args = argv(doctor_paths, "--set", "vpn.enabled=true")
+    args.remove("--json")
+    status = cli.main(args)
+    out, err = capsys.readouterr()
+    assert status == 0 and planted not in out + err
 
 
 @pytest.mark.parametrize(

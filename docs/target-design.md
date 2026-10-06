@@ -60,7 +60,7 @@ the `config` commands except `user-agent` are implemented (P0001-C01).
 Compose and the lifecycle commands are implemented (P0001-C02), and `shell`,
 `vpn`, `servers`, and the login on `config set-token` (P0001-C03): every D2
 command is implemented. `config user-agent`, `dl`, `batch`, and `watch` are
-implemented (P0001-C04, D3); `doctor` is pending.
+implemented (P0001-C04, D3); `doctor` is implemented (P0001-C05, D4).
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -562,7 +562,7 @@ The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
 
 ## Health checks
 
-Settled for Stage 1 (DEC-12); implementation pending (P0001-C05, D4).
+Settled for Stage 1 (DEC-12); implemented in P0001-C05 (D4).
 
 `doctor` returns an ordered list of checks:
 
@@ -673,9 +673,10 @@ the lifecycle/token wrappers, computed Compose access, managed cookie export,
 and setup's import step are implemented (P0001-C02); the `shell`, `vpn`,
 `servers`, and `status` wrappers and `doctor`'s token line without `.env`
 are implemented (P0001-C03), so every D2 command and wrapper is implemented.
-The `dl`, `batch`, `watch`, and `useragent` wrappers and `doctor`'s
-user-agent and mount lines are implemented (P0001-C04, D3); the full setup
-rewrite remains pending.
+The `dl`, `batch`, `watch`, and `useragent` wrappers are implemented
+(P0001-C04, D3); the structured `doctor`, its wrapper, and the gate's
+VPN-off health run are implemented (P0001-C05, D4). The full setup rewrite
+remains pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,

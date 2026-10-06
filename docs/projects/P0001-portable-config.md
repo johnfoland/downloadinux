@@ -211,6 +211,8 @@ after `dl`, `config user-agent`, and `cookies`.
 
 ### D4 — Structured health checks
 
+**Implemented:** P0001-C05.
+
 **Build:** `doctor [--json]` with the result model, statuses, exit codes, and
 Stage 1 checks in *Health checks* (DEC-12), including per-mount mount-point
 and write-probe checks run as `dl`, and VPN checks as `skip` when disabled;

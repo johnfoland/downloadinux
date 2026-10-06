@@ -31,7 +31,7 @@ def test_doctor_neither_requires_nor_reads_env():
     body = "\n".join(recipe("doctor"))
     assert ".env" not in body
     assert "NORDVPN_TOKEN=" not in body
-    assert "config-value.sh token" in body
+    assert recipe("doctor")[-1].strip() == '@uv run downloadinux doctor "$@"'
 
 
 def test_env_appears_only_in_setup_and_env():
@@ -77,11 +77,11 @@ def test_useragent_wraps_the_cli():
     assert recipe("cookies")[-1].strip() == "just useragent"
 
 
-def test_doctor_reads_the_user_agent_setting_and_no_config_file():
+def test_doctor_is_only_the_cli_wrapper():
     body = "\n".join(recipe("doctor"))
-    assert "config-value.sh downloads.user_agent" in body
-    assert "config/" not in body
-    assert "disagree" not in body
+    assert "config-value.sh" not in body
+    assert "defaults" not in body
+    assert "grep" not in body
 
 
 def test_dl_wraps_the_cli():
@@ -89,9 +89,12 @@ def test_dl_wraps_the_cli():
     assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
 
 
-def test_doctor_tests_the_downloads_mount():
-    body = "\n".join(recipe("doctor"))
-    assert "{{dex}} test -d /downloads" in body
+def test_smoke_runs_and_asserts_structured_doctor_json():
+    body = checkout.asset_path("scripts/smoke.sh").read_text()
+    assert '"${cli[@]}" doctor --json' in body
+    assert 'name.startswith("mount.")' in body
+    assert 'name.startswith("tools.")' in body
+    assert '"vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"' in body
 
 
 def test_batch_and_watch_wrap_the_cli():
