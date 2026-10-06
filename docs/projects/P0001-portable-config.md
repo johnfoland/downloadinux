@@ -4,7 +4,7 @@
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
 - **Completed:** —
-- **Decisions:** DEC-7 to DEC-16
+- **Decisions:** DEC-7 to DEC-21
 
 ## 1. Problem and outcome
 
@@ -103,6 +103,9 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | [decisions.md](../decisions.md), DEC-15 | Added: old in-container paths stay linked from D2 until D3 | Cutting P0001-C02: D2 and D3 are separate chunks, and master must keep downloading in between |
 | target-design, *Host application* ("Commands in the container, pinned for P0001-C03"), *Migration* (D2's remaining wrappers; `doctor` off `.env`) | `exec` shape, running check, `shell`, `vpn`, `servers` (ranking into the package), login on `set-token` | Cutting P0001-C03: details the rest of D2 would otherwise have invented; the `doctor` line is the P0001-C02 review's finding 2 |
 | [decisions.md](../decisions.md), DEC-16 | Added: `vpn` refuses with the VPN off, `servers` does not; a refused login exits 1 | Cutting P0001-C03: genuine choices the command table left open |
+| [decisions.md](../decisions.md), DEC-17, DEC-18; target-design *Host application* (C03 list) | Added by P0001-C03-b: captures keep standard error on the terminal; a JSON body that is not the server list fails like a non-JSON one. The `servers` text names `downloadinux.servers`, not the deleted script | The executor's gaps, recorded where the C03 rules live |
+| [decisions.md](../decisions.md), DEC-19; target-design *Host application* (C03 list) | Added in the P0001-C03 review: the refused-login hint is `dlx vpn logout --persist-token` | Issue #17: the pinned hint revoked the token being stored |
+| target-design *Host application* ("Downloads, pinned for P0001-C04"), *Container contract* and *Presets* ("pinned for P0001-C04"), *Migration* ("Pinned for P0001-C04"); [decisions.md](../decisions.md), DEC-20, DEC-21 | `dl`, `batch`, `watch`, and `config user-agent` behavior; preset files and exact argument lists; `DL_USER_AGENT`; the end of DEC-15's interval; zsh helpers and the loop file; entrypoint messages (#18); D3's wrappers and `doctor`'s two lines | Cutting P0001-C04: details D3's executor would otherwise have invented |
 
 ## 5. Delivery plan
 
@@ -143,9 +146,10 @@ outside the checkout. `just check` runs the tests in CI.
 
 **Implemented:** P0001-C02, accepted 2026-10-06 (pull request #15):
 Compose files/layer, image/entrypoint, lifecycle commands, recipe access,
-managed cookie export, and gate smoke test; and P0001-C03 (pull request #16,
-awaiting review): `shell`, `vpn`, `servers`, login on set-token, their
-wrappers, and the two-project manual check (recorded in the chunk report).
+managed cookie export, and gate smoke test; and P0001-C03, accepted
+2026-10-06 (pull request #16): `shell`, `vpn`, `servers`, login on
+set-token, their wrappers, and the two-project manual check (recorded in
+the chunk report).
 
 **Build:** Compose base file with long-syntax binds to `/downloads`,
 `/config`, `/state`, `/cookies`, no `container_name`, no `.env` reference, and
@@ -247,8 +251,9 @@ implemented behavior.
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
 | P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | `bd63e62` |
-| P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | — |
-| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | awaiting review | pull request #16 | — |
+| P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | `b983ebe` |
+| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | — |
+| P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | ready for an executor | — | — |
 
 ## 8. Closeout
 

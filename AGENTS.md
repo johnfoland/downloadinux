@@ -33,7 +33,9 @@ run it; `docs/` holds the planning documents for the refactor, and
   `docker build --tag downloadinux:check .`, and a VPN-off container smoke
   test with temporary mounts under project `downloadinux-check` (cleaned up
   on exit). It needs the Docker daemon
-  running and no `.env`. Never run `docker compose config` without `-q`: it
+  running. A `.env` or settings file in place does not affect it: it uses an
+  absent temporary settings file, and the Compose files interpolate only
+  `DOWNLOADINUX_*` names. Never run `docker compose config` without `-q`: it
   prints the resolved file, NordVPN token included.
 
 ## Workflow
