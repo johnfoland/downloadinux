@@ -22,6 +22,7 @@ service = json.load(sys.stdin)["services"]["downloadinux"]
 for key in ("cap_add", "devices", "security_opt"):
     assert not service.get(key), f"VPN-off service has {key}"
 assert not any(k.startswith("NORDVPN_") or k == "DL_VPN" for k in service["environment"]), "VPN environment in base service"
+assert service["environment"].get("DL_USER_AGENT"), "DL_USER_AGENT missing or empty"
 '
 
 # The single-quoted script expands variables inside the container.
@@ -39,10 +40,14 @@ for mount in /downloads /state /cookies; do
     rm "$mount/.downloadinux-smoke"
 done
 test ! -w /config
-test "$(readlink /home/dl/Downloads)" = /downloads
-test "$(readlink /home/dl/cookies)" = /cookies
-test "$(readlink /home/dl/.config/yt-dlp)" = /legacy/yt-dlp
-test "$(readlink /home/dl/.config/gallery-dl)" = /legacy/gallery-dl
+test -r /config/video/yt-dlp.conf
+test -r /config/gallery/config.json
+# DEC-15 is over: no old home paths, not even as a dangling link. Two
+# simple commands, since set -e ignores a failure on the left of &&.
+for old in /home/dl/Downloads /home/dl/cookies /home/dl/.config/yt-dlp /home/dl/.config/gallery-dl /legacy; do
+    test ! -e "$old"
+    test ! -L "$old"
+done
 ! pgrep -x nordvpnd
 ' sh "$(id -u)" "$(id -g)"
 test -d "$smoke_dir/downloads with space/dlmp4"

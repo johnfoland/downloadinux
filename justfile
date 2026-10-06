@@ -2,7 +2,6 @@
 
 set positional-arguments := true
 
-chome   := "/home/dl"
 compose := "uv run downloadinux compose --"
 dex     := compose + " exec -u dl downloadinux"
 probe   := "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
@@ -113,41 +112,9 @@ cookies profile="":
     # resync the UA whenever the cookies are refreshed.
     just useragent
 
-# Pin both configs' user-agent to your host Chrome version
+# Pin downloads.user_agent to your host Chrome version (settings, not the checkout)
 useragent:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Chrome, not Firefox, even though the cookies come from Firefox:
-    # Instagram only serves its 1080p ladder to Chrome user-agents.
-    v=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)
-    if [[ -z "$v" ]]; then
-      echo "    Chrome not found in /Applications — leaving the configs alone."
-      exit 0
-    fi
-    maj="${v%%.*}"
-    # Chrome freezes the macOS version at 10_15_7 (underscores) and zeroes out
-    # everything after the major in its UA.
-    ua="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${maj}.0.0.0 Safari/537.36"
-    python3 - "$ua" <<'PY'
-    import json, pathlib, re, sys
-    ua = sys.argv[1]
-
-    p = pathlib.Path("config/yt-dlp/dlmp4.conf")
-    p.write_text(re.sub(r'^--user-agent .*$', f'--user-agent "{ua}"',
-                        p.read_text(), flags=re.M))
-
-    # Rewrite values in place rather than json.dump, to keep the file's
-    # hand-written formatting and empty stub sections intact. Both the global
-    # key and the per-extractor one: gallery-dl ignores the global setting for
-    # extractors that ship their own UA (Instagram declares Chrome), so the
-    # instagram block needs its own copy to take effect.
-    p = pathlib.Path("config/gallery-dl/config.json")
-    t = re.sub(r'("user-agent":\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(ua),
-               p.read_text())
-    json.loads(t)  # fail loudly rather than write a broken config
-    p.write_text(t)
-    PY
-    echo "    User-agent pinned to Chrome ${maj} (host has ${v})."
+    @uv run downloadinux config user-agent
 
 # ---------------------------------------------------------------------------
 # Daily use
@@ -157,57 +124,17 @@ useragent:
 shell:
     @uv run downloadinux shell
 
-# Download: just dl video <url>...  |  just dl gallery <url>...
+# Download with a preset: just dl video <url>...  |  just dl gallery <url>...
 dl kind +urls:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    kind="$1"; shift
-    case "$kind" in
-      video|v)
-        exec {{dex}} yt-dlp --config-location {{chome}}/.config/yt-dlp/dlmp4.conf "$@" ;;
-      gallery|gal|g)
-        exec {{dex}} gallery-dl "$@" ;;
-      *)
-        echo "  usage: just dl video <url>...   |   just dl gallery <url>..." >&2
-        exit 1 ;;
-    esac
+    @uv run downloadinux dl "$@"
 
 # Queue in detached tmux: just batch video [file] | just batch gallery [file]
 batch kind file="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dls=$(bash scripts/config-value.sh paths.downloads)
-    case "$1" in
-      video|v)     fn=dlmp4_batch; queue="$dls/dlmp4_queue"; session=batch-video ;;
-      gallery|gal|g) fn=dlgal_batch; queue="$dls/dlgal_queue"; session=batch-gallery ;;
-      *)
-        echo "  usage: just batch video [queue-file]   |   just batch gallery [queue-file]" >&2
-        exit 1 ;;
-    esac
-    f="${2:-$queue}"
-    f="${f/#\~/$HOME}"
-    [[ -f "$f" ]] || { echo "    No such queue file: $f"; exit 1; }
-    f="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
-    # Translate a host path into the container's view of the same file.
-    case "$f" in
-      "$dls"/*) cf="{{chome}}/Downloads/${f#$dls/}" ;;
-      *) echo "    $f is outside the shared Downloads volume; the container can't see it."; exit 1 ;;
-    esac
-    echo "    Queue: $cf"
-    {{dex}} tmux new-session -d -s "$session" -c {{chome}}/Downloads \
-      "zsh -ic '$fn \"$cf\"; echo; echo \"[done — press a key]\"; read -k1'"
-    echo "    Running detached. Watch it with:  just watch $1"
+    @uv run downloadinux batch "$1" ${2:+"$2"}
 
 # Attach to a running batch (Ctrl-b d detaches without killing it)
 watch kind="video":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "$1" in
-      video|v)       s=batch-video ;;
-      gallery|gal|g) s=batch-gallery ;;
-      *)             s="$1" ;;  # also accept a raw tmux session name
-    esac
-    {{dex}} tmux attach -t "$s"
+    @uv run downloadinux watch "$1"
 
 # ---------------------------------------------------------------------------
 # VPN
@@ -244,7 +171,7 @@ check:
     shellcheck scripts/*.sh
     # shellcheck has no zsh support, so the zsh files get a syntax check only.
     step "2/7  zsh -n on the zsh sources"
-    for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
+    for f in zsh/zshrc zsh/aliases.zsh zsh/batch.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
     # --locked fails when uv.lock is stale rather than rewriting it.
@@ -321,21 +248,17 @@ doctor:
       hm "no cookies yet — run: just cookies  (public downloads still work)"
     fi
 
-    # yt-dlp, gallery-dl's global setting and its instagram override must all
-    # agree, and should track the Firefox the cookies came from.
-    uas=$(grep -oh 'Mozilla/5.0 ([^"]*' config/yt-dlp/dlmp4.conf config/gallery-dl/config.json | sort -u | wc -l | tr -d ' ')
-    if [[ "$uas" == "1" ]]; then
-      maj=$(grep -oh 'Chrome/[0-9]*' config/yt-dlp/dlmp4.conf | head -1 | cut -d/ -f2)
-      cv=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
-      if [[ -z "$maj" ]]; then
-        hm "user-agent is not Chrome — Instagram will cap video at 720p (run: just useragent)"
-      elif [[ -n "$cv" && "$cv" != "$maj" ]]; then
-        hm "user-agent says Chrome $maj, host Chrome is $cv — run: just useragent"
-      else
-        ok "user-agent consistent across both tools (Chrome $maj)"
-      fi
+    # Both downloaders get downloads.user_agent; it should be Chrome's and
+    # track the host Chrome (cookies/README.md says why).
+    ua=$(bash scripts/config-value.sh downloads.user_agent)
+    maj=$(grep -o 'Chrome/[0-9]*' <<<"$ua" | head -1 | cut -d/ -f2)
+    cv=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
+    if [[ -z "$maj" ]]; then
+      hm "user-agent is not Chrome — Instagram will cap video at 720p (run: just useragent)"
+    elif [[ -n "$cv" && "$cv" != "$maj" ]]; then
+      hm "user-agent says Chrome $maj, host Chrome is $cv — run: just useragent"
     else
-      hm "user-agents disagree between configs ($uas variants) — run: just useragent"
+      ok "user-agent is Chrome $maj"
     fi
 
     if ! {{compose}} ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then
@@ -343,8 +266,8 @@ doctor:
     fi
     ok "container running"
 
-    {{dex}} test -d {{chome}}/Downloads \
-      && ok "~/Downloads mounted" || no "Downloads volume missing"
+    {{dex}} test -d /downloads \
+      && ok "/downloads mounted" || no "/downloads volume missing"
     printf '  · %s\n' "$({{dex}} yt-dlp --version 2>/dev/null | tr -d '\r' | sed 's/^/yt-dlp /')" \
                      "$({{dex}} gallery-dl --version 2>/dev/null | tr -d '\r' | sed 's/^/gallery-dl /')"
     # The token can be well-formed and still be revoked. Only the daemon knows.

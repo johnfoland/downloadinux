@@ -1,6 +1,5 @@
 # downloadinux — shell config
-# Live-mounted from ./zsh/zshrc in the repo. Edit on the host, `exec zsh`
-# in the container to reload. No rebuild needed.
+# Copied into the image from ./zsh/zshrc in the repo; rebuild after editing.
 
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="af-magic"
@@ -25,10 +24,10 @@ setopt APPEND_HISTORY INC_APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_ALL_DUPS
 export PATH="/opt/venv/bin:$PATH"
 export EDITOR="nano"
 
-# --- Custom aliases & functions (also live-mounted) ------------------------
+# --- Custom aliases, functions, and the batch loop --------------------------
 for _f in "$HOME"/.zsh-custom/*.zsh(N); do
   source "$_f"
 done
 unset _f
 
-cd "$HOME/Downloads" 2>/dev/null || true
+cd /downloads 2>/dev/null || true

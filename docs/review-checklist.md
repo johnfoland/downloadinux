@@ -54,3 +54,20 @@ with the destination as `filename`; the real `os.link`, like `mkstemp`,
 names the temporary file, so `dlx init` into a read-only directory reported
 a `.config.toml.….tmp` file that no longer existed instead of the settings
 file.
+
+### §3. An "unreadable input" contract catches only the parser's documented exceptions
+
+A rule says that input which cannot be read or parsed is handled gracefully
+(a warning, a `fail` check, a default), and the code wraps the parser in an
+`except` naming the exception types the library documents. Parsers raise
+others on inputs their authors did not anticipate, and those escape as a
+traceback with every test green, because the tests feed only the malformed
+inputs the documented types cover. Where the contract is "cannot be read →
+graceful", treat any exception from parsing that input as unreadable (the
+input, not the code, is what failed), and test at least one malformed input
+of a shape the documented types do not name.
+
+*Found:* P0001-C04 review: `useragent.chrome_version` caught `OSError`,
+`ValueError`, and `ExpatError`; `plistlib` raises `AttributeError` on a
+`<date>` it cannot parse, so `dlx config user-agent` printed a traceback
+instead of DEC-21's warning (issue #23).

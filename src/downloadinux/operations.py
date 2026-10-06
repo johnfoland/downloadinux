@@ -6,13 +6,16 @@ CLI (and later the TUI) only parses and presents.
 
 from __future__ import annotations
 
+import os
+import stat
+import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, servers, settings
+from downloadinux import compose, credentials, files, presets, servers, settings, useragent
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -63,6 +66,99 @@ def vpn(
             "set vpn.enabled = true and run dlx restart to use it"
         )
     program = ["vpn", *(args or ["status"])]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+def download(
+    preset: str,
+    urls: Sequence[str],
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`dl`: the preset's argument list (*Presets*) with `urls` appended, run
+    as `dl` uncaptured, since the downloaders draw progress on the terminal;
+    the downloader's exit status. No VPN or running check: Compose reports a
+    stopped service itself (Host application, "Downloads, pinned for
+    P0001-C04")."""
+    effective = settings.load(config, overrides, host)
+    program = [
+        *presets.argv(presets.resolve(preset).name, effective["downloads.user_agent"]),
+        *urls,
+    ]
+    return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+# `zsh -f` reads none of dl's startup files: only the loop's own file
+# (Host application, "Downloads, pinned for P0001-C04"; DEC-13).
+BATCH_SCRIPT = (
+    'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"; '
+    'echo; echo "[done — press a key]"; read -k1'
+)
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    queue: str  # the container's path
+    session: str
+    preset: str
+
+
+def batch(
+    preset: str,
+    queue: str | None = None,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> BatchResult:
+    """`batch`: start the zsh batch loop on a queue under `paths.downloads`
+    in a detached tmux session, with the preset's batch argument list as
+    separate tmux arguments, so every word arrives intact (Host application,
+    "Downloads, pinned for P0001-C04"). Paths are made absolute without
+    resolving links, so a symlinked drive compares as written."""
+    effective = settings.load(config, overrides, host)
+    chosen = presets.resolve(preset)
+    downloads = os.path.abspath(effective["paths.downloads"])
+    if queue is None:
+        path = os.path.join(downloads, chosen.queue)
+    else:
+        path = os.path.abspath(os.path.expanduser(queue))
+    if not os.path.isfile(path):
+        raise DownloadinuxError(f"no such queue file: {path}")
+    if path == downloads or os.path.commonpath([downloads, path]) != downloads:
+        raise DownloadinuxError(
+            f"{path} is outside paths.downloads ({downloads}); the container cannot see it"
+        )
+    container = "/downloads/" + os.path.relpath(path, downloads)
+    program = [
+        "tmux", "new-session", "-d", "-s", chosen.session, "-c", "/downloads",
+        "zsh", "-f", "-c", BATCH_SCRIPT, "zsh",
+        container, chosen.log_prefix, chosen.title, chosen.colour,
+        *presets.argv(chosen.name, effective["downloads.user_agent"], batch=True),
+    ]
+    status = _invocation(effective, host).run(compose.exec_args(program), runner)
+    if status != 0:
+        raise DownloadinuxError(
+            f"could not start tmux session {chosen.session}; if one is already "
+            f"running, attach with dlx watch {chosen.name}"
+        )
+    return BatchResult(container, chosen.session, chosen.name)
+
+
+def watch(
+    target: str = presets.VIDEO,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    runner: compose.Runner | None = None,
+) -> int:
+    """`watch`: attach to a preset's batch session, or to any other word
+    taken as a tmux session name; tmux's exit status."""
+    effective = settings.load(config, overrides, host)
+    session = presets.resolve(target).session if target in presets.ALIASES else target
+    program = ["tmux", "attach", "-t", session]
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
@@ -237,7 +333,8 @@ class LoginResult:
 LOGIN_SCRIPT = 'nordvpn login --token "$NORDVPN_TOKEN"'
 REFUSED = (
     "the token is stored, but the NordVPN daemon refused the login; a daemon "
-    "already logged in needs dlx vpn logout first, then set the token again"
+    "already logged in needs dlx vpn logout --persist-token first, then set "
+    "the token again"
 )
 
 
@@ -273,3 +370,54 @@ def log_in(
     connect = compose.exec_args(["nordvpn", "connect", *server], captured=True)
     status, _ = invocation.capture(connect, capture)
     return LoginResult(Login.LOGGED_IN, Connect(server, status == 0))
+
+
+USER_AGENT_KEY = "downloads.user_agent"
+
+
+@dataclass(frozen=True)
+class UserAgentResult:
+    plist: Path
+    settings_file: Path
+    # Both None when Chrome's version could not be read: nothing was written.
+    version: str | None = None
+    major: str | None = None
+    written: bool = False
+
+
+def refresh_user_agent(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+) -> UserAgentResult:
+    """`config user-agent` (Host application, "Downloads, pinned for
+    P0001-C04"; DEC-10, DEC-21): pin `downloads.user_agent` in the settings
+    file to the host Chrome's major version. An unreadable version writes
+    nothing; the CLI warns and exits 0. An existing file is edited in place
+    (comments and permission bits kept) and left alone when it already holds
+    the value; a missing one is written as `init`'s starter file."""
+    effective = settings.load(config, overrides, host)  # rejects a bad file or --set
+    plist = useragent.CHROME_PLIST
+    result = UserAgentResult(plist, effective.file)
+    version = useragent.chrome_version(plist)
+    major = useragent.major(version) if version is not None else None
+    if major is None:
+        return result
+    value = useragent.user_agent(major)
+    path = effective.file
+    if effective.file_exists:
+        text = path.read_text(encoding="utf-8")
+        if tomllib.loads(text).get("downloads", {}).get("user_agent") == value:
+            return UserAgentResult(plist, path, version, major, written=False)
+        files.write_atomic(
+            path,
+            files.setting_text(text, USER_AGENT_KEY, value),
+            stat.S_IMODE(path.stat().st_mode),
+        )
+    else:
+        values = {**settings.parse_overrides(overrides), USER_AGENT_KEY: value}
+        files.write_atomic(
+            path, files.starter_text(values, host), files.default_file_mode(),
+            replace=False,
+        )
+    return UserAgentResult(plist, path, version, major, written=True)

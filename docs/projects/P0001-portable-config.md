@@ -4,7 +4,7 @@
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
 - **Completed:** —
-- **Decisions:** DEC-7 to DEC-21
+- **Decisions:** DEC-7 to DEC-22
 
 ## 1. Problem and outcome
 
@@ -106,6 +106,8 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | [decisions.md](../decisions.md), DEC-17, DEC-18; target-design *Host application* (C03 list) | Added by P0001-C03-b: captures keep standard error on the terminal; a JSON body that is not the server list fails like a non-JSON one. The `servers` text names `downloadinux.servers`, not the deleted script | The executor's gaps, recorded where the C03 rules live |
 | [decisions.md](../decisions.md), DEC-19; target-design *Host application* (C03 list) | Added in the P0001-C03 review: the refused-login hint is `dlx vpn logout --persist-token` | Issue #17: the pinned hint revoked the token being stored |
 | target-design *Host application* ("Downloads, pinned for P0001-C04"), *Container contract* and *Presets* ("pinned for P0001-C04"), *Migration* ("Pinned for P0001-C04"); [decisions.md](../decisions.md), DEC-20, DEC-21 | `dl`, `batch`, `watch`, and `config user-agent` behavior; preset files and exact argument lists; `DL_USER_AGENT`; the end of DEC-15's interval; zsh helpers and the loop file; entrypoint messages (#18); D3's wrappers and `doctor`'s two lines | Cutting P0001-C04: details D3's executor would otherwise have invented |
+| target-design *Presets* ("Pinned for P0001-C04") | The gallery rename shows only at `-M40%`; the video strip includes emptied section headers | P0001-C04 review, findings 2 and 4: the executor's readings were right |
+| target-design *Health checks* and *Migration* ("Pinned for P0001-C05"); [decisions.md](../decisions.md), DEC-22 | `doctor`'s ordered check IDs, conditions, summaries, and fixes; skip rules; the human view; Docker and in-container commands; the `doctor` wrapper and the smoke test's `doctor --json` | Cutting P0001-C05: details D4's executor would otherwise have invented |
 
 ## 5. Delivery plan
 
@@ -181,6 +183,11 @@ report).
 
 ### D3 — Presets and the download operation
 
+**Implemented:** P0001-C04, accepted with follow-ups 2026-10-06 (pull
+request #19): presets, `dl`, `batch`, `watch`, `config user-agent`, their
+wrappers, the shell helpers on the presets, and the end of DEC-15's links;
+manual checks recorded in the chunk report.
+
 **Build:** move `config/yt-dlp/dlmp4.conf` and `config/gallery-dl/config.json`
 to `presets/video/` and `presets/gallery/`, stripped of output roots, cookie
 paths, and user-agents (*Presets*, DEC-10); the download operation building
@@ -252,8 +259,9 @@ implemented behavior.
 |---|---|---|---|---|
 | P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | `bd63e62` |
 | P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | `b983ebe` |
-| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | — |
-| P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | ready for an executor | — | — |
+| P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | `597b9b1` |
+| P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | accepted with follow-ups | 2026-10-06, pull request #19 | — |
+| P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | ready for an executor | — | — |
 
 ## 8. Closeout
 

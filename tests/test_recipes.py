@@ -67,3 +67,49 @@ def test_gate_has_seven_steps_and_no_servers_script():
     assert "all 7 steps passed" in body
     assert "servers.py" not in body
     assert not (checkout.checkout_root() / "scripts" / "servers.py").exists()
+
+
+def test_useragent_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04" (DEC-10).
+    body = recipe("useragent")
+    assert body[-1].strip() == "@uv run downloadinux config user-agent"
+    assert "python3" not in "\n".join(body)
+    assert recipe("cookies")[-1].strip() == "just useragent"
+
+
+def test_doctor_reads_the_user_agent_setting_and_no_config_file():
+    body = "\n".join(recipe("doctor"))
+    assert "config-value.sh downloads.user_agent" in body
+    assert "config/" not in body
+    assert "disagree" not in body
+
+
+def test_dl_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04".
+    assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
+
+
+def test_doctor_tests_the_downloads_mount():
+    body = "\n".join(recipe("doctor"))
+    assert "{{dex}} test -d /downloads" in body
+
+
+def test_batch_and_watch_wrap_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04": the queue only when given.
+    assert recipe("batch")[-1].strip() == '@uv run downloadinux batch "$1" ${2:+"$2"}'
+    assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'
+
+
+def test_no_recipe_names_the_old_home():
+    # Its variable went with the last recipe that used it.
+    lines = justfile()
+    variables = [
+        line.split(":=")[0].strip() for line in lines
+        if ":=" in line and not line[0].isspace() and not line.startswith("set ")
+    ]
+    assert variables == ["compose", "dex", "probe"]
+    assert not any("/home/dl" in line for line in lines)
+
+
+def test_the_gate_syntax_checks_the_batch_loop():
+    assert any("zsh/batch.zsh" in line for line in recipe("check"))

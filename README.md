@@ -8,8 +8,9 @@ For the planned portable application and Python + Textual TUI, see the
 [architecture review and implementation plan](docs/README.md). Those documents
 describe future work; this README covers the current implementation.
 
-Your existing configs and shell functions were ported over as-is. The one
-thing that had to change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
+Your existing download configs live on as the `video` and `gallery`
+presets, and your shell functions were ported over. The one thing that had to
+change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
 walks you through.
 
 ```sh
@@ -89,9 +90,8 @@ environment of a single `docker compose exec`, never a command line. A
 stopped container logs in at the next `just up`; with the VPN disabled the
 token is just kept for later. If the daemon refuses the token, `just token`
 exits 1 with the token still stored. A daemon that is already logged in
-refuses every login, even with the same token: run `just vpn logout` first,
-then `just token` again. NordVPN's `logout` also revokes the token the daemon was using; if
-that is the one you are storing again, use `just vpn logout --persist-token`.
+refuses every login, even with the same token: run
+`just vpn logout --persist-token` first, then `just token` again.
 The login persists in a Docker volume, so rebuilds don't log you out
 (only `just nuke` does).
 
@@ -135,13 +135,17 @@ just cookies widfsx0p.default-release
 
 The result lands at `paths.cookies`/`cookies.txt` (by default
 `~/.local/share/downloadinux/cookies/cookies.txt`), mode 0600 in a 0700
-directory. The container reads it at `/cookies/cookies.txt`; a transitional
-home link keeps the old downloader configs working. The checkout's old jar
-is no longer read by the container.
+directory. The container reads it at `/cookies/cookies.txt`, the path every
+download is given. The checkout's old jar is no longer read by the container.
 
-`just cookies` also runs `just useragent`, which pins both downloaders'
-user-agent to your host **Chrome** version. Run it on its own after a Chrome
-update; `just doctor` warns when the two configs drift apart.
+`just cookies` also runs `just useragent` (`dlx config user-agent`), which
+sets `downloads.user_agent` in `config.toml` to the user-agent of your host
+**Chrome** version (`Chrome/<major>.0.0.0`, as Chrome itself reports), so the
+checkout stays clean. Run it on its own after a Chrome update; `just doctor`
+warns when the setting falls behind the host Chrome. Without Chrome in
+`/Applications` (any Linux host) it warns and changes nothing, so `just
+cookies` still succeeds; with no settings file yet it writes the starter file
+`dlx init` would, holding the new value.
 
 > **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
 > only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
@@ -184,7 +188,7 @@ downloadinux
   ✓   instagram: logged in
   ! youtube: anonymous (fine unless you need age-gated video)
   ✓ container running
-  ✓ ~/Downloads mounted
+  ✓ /downloads mounted
   · yt-dlp 2026.07.04
   · gallery-dl 1.32.9
   · VPN: Status: Disconnected
@@ -220,8 +224,14 @@ just servers New_York                            # rank a city's servers by load
 just shell                                       # zsh inside the box
 ```
 
-`dl` and `batch` both take `video` or `gallery` as their first word — `video`
-routes to yt-dlp, `gallery` to gallery-dl. `v` and `g` work as shorthands.
+`dl` and `batch` both take a preset as their first word: `video` runs yt-dlp
+with the `video` preset (your old `dlmp4` config), `gallery` runs gallery-dl
+with the `gallery` preset (`dlgal`'s). `v`, `gal`, and `g` work as shorthands;
+anything else is a usage error. `just dl` runs `dlx dl`, which gives the
+downloader its output root, the managed cookie jar, and `downloads.user_agent`
+as arguments and exits with the downloader's status. Video lands in
+`dlmp4/<site>/<uploader>/` under your downloads folder; Instagram galleries in
+`dlgal/`, other galleries in `gallery-dl/`.
 
 With `vpn.enabled = false` the container runs no NordVPN daemon, so `just vpn`
 refuses (exit 1, naming `vpn.enabled`) instead of failing inside the
@@ -260,32 +270,50 @@ city that doesn't exist and it prints the valid ones.
 ## Batch queues
 
 `dlmp4_batch` throttles a couple of minutes between URLs and can run for hours,
-so `just batch` launches it in a detached tmux session inside the container —
-it survives your terminal closing, your laptop sleeping, and `just shell`
-exiting.
+so `just batch` (`dlx batch`) launches the same loop in a detached tmux session
+inside the container — it survives your terminal closing, your laptop
+sleeping, and `just shell` exiting.
 
 ```sh
-just batch video               # defaults to ~/Downloads/dlmp4_queue
+just batch video               # defaults to <paths.downloads>/dlmp4_queue
 just watch video               # attach; Ctrl-b d to detach without killing it
 
-just batch gallery             # defaults to ~/Downloads/dlgal_queue
+just batch gallery             # defaults to <paths.downloads>/dlgal_queue
 just watch gallery
 ```
 
-Both default to queue files under `paths.downloads` (`~/Downloads` by default). Pass a path
-to use a different one:
+Pass a path to use a different queue file:
 
 ```sh
 just batch video ~/Downloads/some-other-queue.txt
 ```
 
 The queue file must live under `paths.downloads` — that's the output directory
-the container can see. `just batch` translates the host path to the container's
-view for you and refuses paths outside the volume rather than failing
-confusingly later.
+the container can see. `dlx batch` translates the host path to the container's
+view for you (`/downloads/…`) and refuses a missing file or one outside the
+volume rather than failing confusingly later. Paths are compared as written,
+without resolving symlinks. `dlx batch` takes a relative path against your
+working directory; `just batch` runs in the checkout, so give it an absolute
+or `~` path.
+
+The loop runs under `zsh -f`, which reads none of the shell's startup files:
+the session sources only `zsh/batch.zsh` and is handed the preset's argument
+list, the one `dlx dl` uses (plus `-q` for gallery-dl, as `dlgal_batch` always
+had). If a session of that name is already running, `dlx batch` exits 1 and
+tells you to attach with `dlx watch`. `dlx watch` takes `video` (the default),
+`gallery`, their shorthands, or any other tmux session name.
 
 Same behavior as your Mac: successful URLs are deleted from the queue file as
 they complete, and timestamped success/fail logs are written alongside.
+
+## Inside the container
+
+`just shell` starts zsh in `/downloads`. `dlmp4`, `dlgal`, `dlmp4_batch`, and
+`dlgal_batch` keep their names and run the same argument lists as `dlx dl` and
+`dlx batch`, taking the user-agent from the container's `DL_USER_AGENT`. That
+value is fixed when the container is created, so after `just useragent` the
+helpers follow at the next `just up` or `just restart`; `dlx dl` and
+`dlx batch` read the setting on every run and need neither (DEC-20).
 
 ---
 
@@ -311,30 +339,34 @@ without pinning to an Ubuntu codename. No desktop, no GUI packages.
 
 ## The shared volume
 
-The configured host downloads root is mounted at `/downloads`. Transitional
-links from `/home/dl/Downloads` and `/home/dl/cookies` keep the existing
-download configs working until the preset migration:
+The configured host downloads root is mounted at `/downloads`, and every
+download writes under it, at the same host paths as before the presets:
 
-- `config/yt-dlp/dlmp4.conf` → `~/Downloads/dlmp4`
-- `config/gallery-dl/config.json` → `~/Downloads/dlgal`, archive DB included
+- `video` → `dlmp4/`
+- `gallery` → `dlgal/` for Instagram, `gallery-dl/` for other sites, and the
+  archive DB at `dlgal/gallery-dl-archive.sqlite3`
 
 Set `paths.downloads` in `config.toml` to use an external drive; that
 directory must exist before starting. The CLI never creates it.
 
 The image uses user `dl`, with UID/GID applied at container start. `/config`
-holds shipped presets read-only (a placeholder until D3), `/state` holds
-mutable state, and `/cookies` holds the managed cookie jar. VPN-off mode has
+holds the shipped presets read-only, `/state` holds mutable state, and
+`/cookies` holds the managed cookie jar. VPN-off mode has
 no VPN capabilities or daemon. `just check` builds a separate check image
 and smoke-tests these mounts and identities with temporary directories.
 
 ## Mounted config and installed shell files
 
-The downloader configs are mounted read-only under `/legacy/`, with home
-links for compatibility. Host edits appear immediately:
+The checkout's `presets/` is mounted read-only at `/config`, so host edits to
+a preset apply to the next download:
 
-- `config/yt-dlp/` and `config/gallery-dl/` — the downloader configs
+- `presets/video/yt-dlp.conf` and `presets/gallery/config.json` — media
+  behavior only; the CLI adds the output root, cookie jar, user-agent, and
+  gallery archive as arguments ([`presets/README.md`](presets/README.md))
 
 The `zsh/` files are copied into the image; rebuild after editing them.
+`zsh/batch.zsh` holds the batch loop alone, for `dlx batch`; the interactive
+shell sources it with the others.
 
 `~/.zshrc` in the image is a one-line stub that sources `zsh/zshrc`.
 
@@ -342,7 +374,7 @@ The `zsh/` files are copied into the image; rebuild after editing them.
 
 | You changed | What to run | Why |
 |---|---|---|
-| `config/**` | **nothing** | read-only bind mounts; host edits appear immediately |
+| `presets/**` | **nothing** | read-only bind mount; host edits appear immediately |
 | `config.toml`, `credentials.toml` | `just restart` | recreate with current settings, token, and UID/GID (`just token` also logs a running VPN container in) |
 | `Dockerfile`, `zsh/**`, container `scripts/**` | `just build && just up` | copied into the image |
 | `compose/base.yaml`, `compose/vpn.yaml` | `just restart` | unless you touched `build:`, then rebuild |
@@ -436,10 +468,19 @@ dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, w
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
+dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
+                               (macOS); without a readable Chrome, warn and change nothing
 dlx build / up / down        Build, start in the background, or stop the configured project
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
+dlx dl <preset> <url>...     Download with a preset: video (v) or gallery (gal, g); exits
+                               with the downloader's status
+dlx batch <preset> [queue]   Run a queue file under paths.downloads in a detached tmux
+                               session (default <paths.downloads>/dlmp4_queue or
+                               dlgal_queue); exit 1 if it is missing or outside
+dlx watch [preset|session]   Attach to a batch session (default video); exits with
+                               tmux's status
 dlx shell                    zsh inside the container as dl; exits with its status
 dlx vpn [args...]            The container's vpn helper (on [server], off, status, ip, or
                                any nordvpn subcommand; status when none). Refuses,
@@ -454,9 +495,9 @@ beside it (mode 0600). `--set table.key=value` overrides a setting for one
 invocation, on any command. `dlx` with no command prints help.
 
 Every recipe reaches the configured container through the CLI. Lifecycle,
-token, `shell`, `vpn`, `servers`, and `status` recipes are wrappers; the
-download, batch, and health recipes retain their existing implementation
-behind the computed Compose invocation.
+token, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`, `servers`, and
+`status` recipes are wrappers; the health recipe retains its existing
+implementation behind the computed Compose invocation.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -472,13 +513,13 @@ just env             Write .env with your real UID/GID
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
-just useragent       Pin both configs' UA to your host Chrome version
+just useragent       Pin downloads.user_agent to your host Chrome version
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries
 just batch video [file]     Run a queue in detached tmux
-                              (defaults to ~/Downloads/dlmp4_queue)
-just batch gallery [file]   Same, for galleries (~/Downloads/dlgal_queue)
+                              (defaults to <paths.downloads>/dlmp4_queue)
+just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
 just watch video|gallery    Attach to a running batch session
 just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
@@ -503,16 +544,16 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── justfile
 ├── Dockerfile
 ├── compose/base.yaml, vpn.yaml   # four mounts; optional VPN overlay
-├── presets/                     # read-only /config; presets arrive in D3
+├── presets/                      # read-only /config: media behavior only
+│   ├── video/yt-dlp.conf         # the video preset (was dlmp4's config)
+│   └── gallery/config.json       # the gallery preset (was dlgal's config)
 ├── .env.example
 ├── .tool-versions                # pins just 1.40.0 for asdf
-├── config/
-│   ├── yt-dlp/dlmp4.conf         # ported from ~/.config/yt-dlp/
-│   └── gallery-dl/config.json    # ported from ~/.config/gallery-dl/
 ├── zsh/
 │   ├── zshrc
-│   ├── aliases.zsh               # dlmp4, dlgal, + container extras
-│   └── functions.zsh             # *_batch, exifmod — ported verbatim
+│   ├── aliases.zsh               # container extras (myip, vpns, dlupdate, ...)
+│   ├── batch.zsh                 # the batch loop, sourced alone by `dlx batch`
+│   └── functions.zsh             # dlmp4, dlgal, *_batch on the presets; exifmod
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
@@ -521,6 +562,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order

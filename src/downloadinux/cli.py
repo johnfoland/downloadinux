@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import migrate, operations, servers
+from downloadinux import migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -118,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_env.set_defaults(handler=_config_import_env)
 
+    user_agent = config_commands.add_parser(
+        "user-agent",
+        help="pin downloads.user_agent to the host Chrome's major version",
+        description="Read the host Chrome's version (macOS, /Applications) and "
+        "write the matching Chrome user-agent into the settings file. Without "
+        "a readable Chrome it warns and changes nothing.",
+    )
+    _add_global_options(user_agent, 2)
+    user_agent.set_defaults(handler=_config_user_agent)
+
     init = commands.add_parser(
         "init", help="write a starter settings file (VPN off) if none exists"
     )
@@ -139,6 +149,42 @@ def build_parser() -> argparse.ArgumentParser:
         lifecycle = commands.add_parser(command, help=help_text)
         _add_global_options(lifecycle, 1)
         lifecycle.set_defaults(handler=_lifecycle)
+
+    dl = commands.add_parser(
+        "dl",
+        help="download with a preset",
+        description="Run a preset's downloader in the container with the "
+        "output root, cookie jar, and user-agent from the settings. PRESET is "
+        "video (v: yt-dlp) or gallery (gal, g: gallery-dl).",
+    )
+    _add_global_options(dl, 1)
+    dl.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
+    dl.add_argument("urls", nargs="+", metavar="URL")
+    dl.set_defaults(handler=_dl)
+
+    batch = commands.add_parser(
+        "batch",
+        help="run a queue file in a detached tmux session",
+        description="Start the batch loop on a queue file under "
+        "paths.downloads in a detached tmux session in the container. The "
+        "queue defaults to dlmp4_queue (video) or dlgal_queue (gallery) in "
+        "paths.downloads.",
+    )
+    _add_global_options(batch, 1)
+    batch.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
+    batch.add_argument("queue", nargs="?", metavar="QUEUE")
+    batch.set_defaults(handler=_batch)
+
+    watch = commands.add_parser(
+        "watch",
+        help="attach to a batch session (Ctrl-b d detaches)",
+        description="Attach to a preset's batch session; any other word is "
+        "taken as a tmux session name.",
+    )
+    _add_global_options(watch, 1)
+    watch.add_argument("target", nargs="?", default=presets.VIDEO, metavar="PRESET",
+                       help="video (default), gallery, or a tmux session name")
+    watch.set_defaults(handler=_watch)
 
     shell = commands.add_parser("shell", help="interactive zsh in the container as dl")
     _add_global_options(shell, 1)
@@ -183,6 +229,24 @@ def _passthrough(args: list[str]) -> list[str]:
 
 def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
     return operations.run_compose(_passthrough(args.args), options.config, options.overrides)
+
+
+def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.download(args.preset, args.urls, options.config, options.overrides)
+
+
+def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = operations.batch(args.preset, args.queue, options.config, options.overrides)
+    print(f"Queue: {result.queue}")
+    print(
+        f"Running detached in tmux session {result.session}. "
+        f"Watch it with: dlx watch {result.preset}"
+    )
+    return 0
+
+
+def _watch(args: argparse.Namespace, options: GlobalOptions) -> int:
+    return operations.watch(args.target, options.config, options.overrides)
 
 
 def _shell(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -263,6 +327,21 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
                     f"{PROG}: warning: could not connect to {target}; try dlx vpn on",
                     file=sys.stderr,
                 )
+    return 0
+
+
+def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = operations.refresh_user_agent(options.config, options.overrides)
+    if result.major is None:
+        # DEC-21: `just cookies` runs this after every export, so a host
+        # without Chrome must not fail it.
+        print(
+            f"{PROG}: warning: cannot read Chrome's version from {result.plist}; "
+            "downloads.user_agent is unchanged",
+            file=sys.stderr,
+        )
+        return 0
+    print(f"User-agent pinned to Chrome {result.major} (host has {result.version}).")
     return 0
 
 
