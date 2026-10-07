@@ -4,7 +4,7 @@
 - **Created:** 2026-10-07
 - **Ready:** 2026-10-07
 - **Completed:** —
-- **Decisions:** DEC-24 to DEC-26
+- **Decisions:** DEC-24 to DEC-27
 
 ## 1. Problem and outcome
 
@@ -68,7 +68,7 @@ acceptance criterion.
 
 | Document and section | Change | Why this is the durable home |
 |---|---|---|
-| [decisions.md](../decisions.md), DEC-24 to DEC-26 | Added the portable publication, cookie success, and runtime-home ownership choices | Records the genuine alternatives shared by multiple callers or runs |
+| [decisions.md](../decisions.md), DEC-24 to DEC-27 | Added the portable publication, its unverifiable-cleanup boundary, cookie success, and runtime-home ownership choices | Records the genuine alternatives shared by multiple callers or runs |
 | [target-design.md](../target-design.md), *Host application* ("Portable no-clobber writes, pinned for P0002") | Defines fallback triggers, reservation, race-safe cleanup, and crash residue | Owns host file-write behavior and errors |
 | target design, *Migration* ("Cookie and user-agent follow-ups, pinned for P0002") | Defines staging, validation, probe failure, preservation, and setup refresh behavior | Owns the Stage 1 compatibility recipes users run |
 | target design, *Container contract* ("Runtime home ownership, pinned for P0002") | Defines the owned directory entries and non-recursive boundary | Owns startup identity and filesystem ownership |
@@ -91,9 +91,10 @@ documentation only if the filesystem support is described there.
 `init` and `config import-env` publish the expected file; an existing or
 racing target is never overwritten; unrelated link errors still fail; cleanup
 does not remove a replacement with another inode; successful and failed paths
-leave no temporary or owned reservation; modes and error filenames remain
-correct. The tests use fault injection or a fake filesystem boundary, not a
-required exFAT volume.
+leave no temporary, and leave no owned reservation when the OS permits its
+identity to be verified and its entry to be removed (DEC-27); modes and error
+filenames remain correct. The tests use fault injection or a fake filesystem
+boundary, not a required exFAT volume.
 
 ### D2 — Reliable cookie and setup refresh
 
@@ -139,7 +140,8 @@ chunk in flight.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| P0002-C01 | D1 (all of it; issue #14) | ready for an executor | — | — |
+| P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30 (squash pending) |
+| P0002-C02 | D2 (all of it; issues #20 and #26) | ready for an executor | — | — |
 
 ## 8. Closeout
 

@@ -106,3 +106,18 @@ say why it stops.
 failed `mounted` because the probe would pass for the wrong reason, but left
 `mount.config.readonly` running; on a container with no `/config`, `test -w`
 failed for that reason and `doctor` reported `/config is read-only` as `ok`.
+
+### §6. A cleanup guarantee includes failures that make cleanup unknowable or impossible
+
+A brief says every failed path removes the operation's residue, then also asks
+tests to fail the calls that identify or remove that residue. Those requirements
+cannot both hold: after an identity check fails, cleanup cannot prove that the
+path is still its own; after deletion fails, no implementation can make the
+entry disappear. Before promising cleanup for every failure, enumerate failures
+of the cleanup mechanism itself. Preserve anything whose ownership cannot be
+proved, report cleanup failures, and state exactly which residue may remain.
+
+*Found:* P0002-C01: unit a required every failed path to leave no owned
+reservation while its OS-error coverage also failed `fstat`, `lstat`, and
+`unlink`. DEC-27 and the reviewed brief now qualify cleanup by verifiable
+identity and a working removal call.
