@@ -141,7 +141,7 @@ chunk in flight.
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
 | P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30 (squash pending) |
-| P0002-C02 | D2 (all of it; issues #20 and #26) | ready for an executor | — | — |
+| P0002-C02 | D2 (all of it; issues #20 and #26) | rework requested | 2026-10-08, PR #31 | — |
 
 ## 8. Closeout
 

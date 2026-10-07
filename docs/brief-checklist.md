@@ -121,3 +121,19 @@ proved, report cleanup failures, and state exactly which residue may remain.
 reservation while its OS-error coverage also failed `fstat`, `lstat`, and
 `unlink`. DEC-27 and the reviewed brief now qualify cleanup by verifiable
 identity and a working removal call.
+
+### §7. A staged output path is allocated without checking whether the callee reads it first
+
+An external command uses one path as both optional input and eventual output,
+but a brief says to allocate a temporary file and pass it without pinning
+whether that path must exist when the command starts. A test double that only
+writes the path then validates the happy path while the real command reads and
+rejects the empty file before it can produce anything. Before specifying a
+staged external-command output, exercise both an absent path and an allocated
+empty path against the real tool (or inspect its source), state the required
+entry state in the unit, and require the double to reproduce any pre-write
+read or validation.
+
+*Found:* P0002-C02: the brief required a mode-0600 temporary passed to
+yt-dlp's `--cookies`; yt-dlp loads any readable existing path as a Netscape
+jar, so the empty `mktemp` file was rejected while the stub overwrote it.
