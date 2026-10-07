@@ -1,9 +1,9 @@
 # Project P0001 — Portable configuration and shared operations
 
-- **State:** active
+- **State:** complete
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
-- **Completed:** —
+- **Completed:** 2026-10-07
 - **Decisions:** DEC-7 to DEC-23
 
 ## 1. Problem and outcome
@@ -282,15 +282,27 @@ implemented behavior.
 | P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | `597b9b1` |
 | P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | accepted with follow-ups | 2026-10-06, pull request #19 | `7b068c8` |
 | P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | accepted with follow-ups | 2026-10-07, pull request #24 | `77c0f8a` |
-| P0001-C06 | D5 (all of it: setup, docs, migration proof; follow-ups 1, 3, 4, and 5 from the C05 review) | accepted with follow-ups | 2026-10-07, pull request #25 | — |
+| P0001-C06 | D5 (all of it: setup, docs, migration proof; follow-ups 1, 3, 4, and 5 from the C05 review) | accepted with follow-ups | 2026-10-07, pull request #25 | `1be0e3c` |
 
 ## 8. Closeout
 
-Fill this only when completing or abandoning the project.
-
-- **Outcome:** —
-- **Accepted chunks:** —
-- **Changelog entries:** —
-- **Derived release effect:** —
-- **Unfinished or deliberately excluded:** —
-- **Decisions added or reopened:** —
+- **Outcome:** Stage 1 is implemented. The host CLI and shared operations now
+  provide portable settings, a stable four-mount container contract, preserved
+  media presets, optional VPN operation, structured health checks, and an
+  in-place migration while the existing `just` commands remain wrappers.
+- **Accepted chunks:** P0001-C01, P0001-C02, P0001-C03, P0001-C04,
+  P0001-C05, and P0001-C06 (pull requests #12, #15, #16, #19, #24, and #25).
+- **Changelog entries:** Not applicable; this repository has no release system.
+- **Derived release effect:** `minor` — Stage 1 adds a host application and
+  configuration interface while preserving the established recipe names and
+  download behavior.
+- **Unfinished or deliberately excluded:** The accepted-chunk follow-ups remain
+  in issues #14 (no-hard-link atomic writes), #20 (the cookie export's YouTube
+  probe), #22 (zsh-history parent ownership), and #26 (setup's stale
+  user-agent). Named cookie sources are Stage 2; the worker, archive decision,
+  and tmux removal are Stage 3; the TUI is Stage 4. A self-contained install
+  remains #9. A VPN-on Linux run was deliberately not required; CI supplies
+  the agreed VPN-off Linux evidence. The separate-VPN-service question,
+  alternate providers, the ExifTool helper, and justfile shellchecking (#4)
+  remain outside this project.
+- **Decisions added or reopened:** DEC-7 to DEC-23 added; none reopened.

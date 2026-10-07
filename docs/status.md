@@ -1,18 +1,19 @@
 # Status
 
-Last updated 2026-10-07 by `relay-next`.
+Last updated 2026-10-07 by `relay-project`.
 Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## Where this stands
 
 - **P0001** (Stage 1, portable configuration and shared operations) is
-  active: DEC-7 to DEC-23, delivery items D1–D5.
+  complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
+  P0001-C06.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
 - **D1–D5** done: P0001-C01 to P0001-C06, pull requests #12, #15, #16,
-  #19, #24, and #25. Stage 1 is implemented; remaining is the P0001
-  closeout (`/relay-project`).
+  #19, #24, and #25. Stage 1 is implemented and P0001 is closed; no project
+  is active.
 
 ## In flight
 
