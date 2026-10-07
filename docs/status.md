@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-07 by `relay-next`.
+Last updated 2026-10-07 by `relay-execute`.
 Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## Where this stands
@@ -8,8 +8,8 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 - **P0001** (Stage 1, portable configuration and shared operations) is
   complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
   P0001-C06.
-- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-26,
-  delivery items D1–D3. P0002-C01 is ready for an executor with D1's
+- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-27,
+  delivery items D1–D3. P0002-C01 is awaiting review with D1's
   portable atomic no-clobber writes.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
@@ -20,9 +20,9 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 ## In flight
 
 - **Chunk:** P0002-C01
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0002-c01`
-- **Pull request:** `#30` (draft)
+- **Pull request:** `#30` (ready)
 - **Units committed:** a, b
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
