@@ -22,9 +22,9 @@ run it; `docs/` holds the planning documents for the refactor, and
 - `just setup`: cold start (`.env`, NordVPN token, cookies, build, launch,
   health check). `just` alone lists every recipe.
 - `just build` / `just up`: rebuild the image, start the container.
-- `just doctor`: live health check of a running container (mount, cookies,
-  user-agent, VPN, exit IP). It needs real credentials, so it is not a CI
-  check.
+- `just doctor`: structured configuration, cookie, Docker, mount, tool, and
+  VPN health checks (`--json` is available). Only enabled-VPN checks need real
+  credentials; the VPN-off checks run in the gate's smoke test.
 - `just check`: the gate, seven steps. In order, stopping at the first
   failure: shellcheck over `scripts/*.sh`, `zsh -n` over the zsh sources,
   the Python tests (`uv run --locked pytest -q`), two quiet Compose

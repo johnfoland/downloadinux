@@ -201,3 +201,22 @@ def test_the_default_user_agent_is_the_template_for_151():
     from downloadinux import settings
 
     assert useragent.user_agent("151") == settings.DEFAULT_USER_AGENT == PINNED_151
+
+
+def test_a_malformed_plist_date_warns_and_writes_nothing(plist, config, capsys):
+    # plistlib raises AttributeError for this real malformed value rather than
+    # one of its documented parse exceptions (review-checklist §3; issue #23).
+    plist.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict>'
+        '<key>CFBundleShortVersionString</key><string>151.0.7000.12</string>'
+        '<key>BrokenDate</key><date>garbage</date>'
+        '</dict></plist>\n'
+    )
+
+    status, out, err = user_agent(capsys, config)
+
+    assert (status, out, err) == (0, "", WARNING.format(plist))
+    assert not config.parent.exists()

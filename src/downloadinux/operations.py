@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, presets, servers, settings, useragent
+from downloadinux import compose, credentials, files, health, presets, servers, settings, useragent
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -250,6 +250,19 @@ def show_config(
             for m in mounts(effective)
         ],
     }
+
+
+def doctor(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    capture: compose.Capture | None = None,
+) -> health.Result:
+    """`doctor`: DEC-12's structured result, built after both configuration
+    files load successfully. Individual probe failures remain checks (DEC-22)."""
+    effective = settings.load(config, overrides, host)
+    creds = credentials.load(effective.credentials_file)
+    return health.inspect(effective, creds, host, capture)
 
 
 def init(

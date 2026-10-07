@@ -9,12 +9,13 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import migrate, operations, presets, servers
+from downloadinux import health, migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -220,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     servers_parser.set_defaults(handler=_servers)
 
+    doctor = commands.add_parser(
+        "doctor", help="check configuration, Docker, the container, and VPN"
+    )
+    _add_global_options(doctor, 1)
+    doctor.add_argument("--json", action="store_true", help="print JSON")
+    doctor.set_defaults(handler=_doctor)
+
     return parser
 
 
@@ -263,6 +271,15 @@ def _servers(args: argparse.Namespace, options: GlobalOptions) -> int:
     ):
         print(line)
     return 0
+
+
+def _doctor(args: argparse.Namespace, options: GlobalOptions) -> int:
+    result = operations.doctor(options.config, options.overrides)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        print(render_health(result))
+    return 0 if result.ok else 1
 
 
 def _lifecycle(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -389,6 +406,28 @@ def render_config(report: dict) -> str:
         f"{_missing(m['exists'])}"
         for m in report["mounts"]
     ]
+    return "\n".join(lines)
+
+
+_HEALTH_MARKS = {
+    health.Status.OK: ("✓", "32"),
+    health.Status.WARN: ("!", "33"),
+    health.Status.FAIL: ("✗", "31"),
+    health.Status.SKIP: ("-", "2"),
+}
+
+
+def render_health(result: health.Result) -> str:
+    """DEC-22's human view; only marks receive terminal colour."""
+    colour = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    lines = [PROG]
+    for check in result.checks:
+        mark, code = _HEALTH_MARKS[check.status]
+        if colour:
+            mark = f"\033[{code}m{mark}\033[0m"
+        lines.append(f"  {mark} {check.summary}")
+        if check.fix is not None:
+            lines.append(f"      fix: {check.fix}")
     return "\n".join(lines)
 
 

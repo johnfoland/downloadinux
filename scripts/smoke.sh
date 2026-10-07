@@ -48,9 +48,29 @@ for old in /home/dl/Downloads /home/dl/cookies /home/dl/.config/yt-dlp /home/dl/
     test ! -e "$old"
     test ! -L "$old"
 done
-! pgrep -x nordvpnd
+if pgrep -x nordvpnd; then
+    echo "nordvpnd unexpectedly running with VPN disabled" >&2
+    exit 1
+fi
 ' sh "$(id -u)" "$(id -g)"
 test -d "$smoke_dir/downloads with space/dlmp4"
+
+# D4: the running VPN-off container must satisfy every container contract
+# check, while VPN probes are skipped without credentials.
+"${cli[@]}" up
+"${cli[@]}" doctor --json | python3 -c '
+import json, sys
+report = json.load(sys.stdin)
+checks = {check["id"]: check for check in report["checks"]}
+assert report["ok"] is True
+for name, check in checks.items():
+    if name.startswith("mount.") or name.startswith("tools."):
+        assert check["status"] == "ok", check
+for name in ("docker.daemon", "container.running"):
+    assert checks[name]["status"] == "ok", checks[name]
+for name in ("vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"):
+    assert checks[name] == {"id": name, "status": "skip", "summary": "VPN disabled in config"}
+'
 
 # Also pin the unchanged image identity and the refusal of an occupied UID.
 # shellcheck disable=SC2016

@@ -10,7 +10,6 @@ from __future__ import annotations
 import plistlib
 import re
 from pathlib import Path
-from xml.parsers.expat import ExpatError
 
 # A module constant so tests can point it at a fixture.
 CHROME_PLIST = Path("/Applications/Google Chrome.app/Contents/Info.plist")
@@ -31,10 +30,14 @@ def chrome_version(plist: Path) -> str | None:
     missing, unreadable, not a plist, or has no such string (DEC-21)."""
     try:
         with plist.open("rb") as handle:
-            data = plistlib.load(handle)
-    except (OSError, ValueError, ExpatError):
-        # plistlib.InvalidFileException is a ValueError; a truncated XML
-        # plist raises ExpatError.
+            try:
+                data = plistlib.load(handle)
+            except Exception:
+                # The contract is about the input, not plistlib's exception
+                # taxonomy: malformed values have raised undocumented types
+                # (review-checklist §3; issue #23).
+                return None
+    except OSError:
         return None
     version = data.get(VERSION_KEY) if isinstance(data, dict) else None
     return version if isinstance(version, str) else None

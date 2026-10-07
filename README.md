@@ -183,25 +183,38 @@ just doctor
 
 ```
 downloadinux
+  ✓ /home/you/.config/downloadinux/config.toml
+  ✓ /home/you/.config/downloadinux/credentials.toml (mode 0600)
   ✓ NordVPN token well-formed
-  ✓ /home/you/.local/share/downloadinux/cookies/cookies.txt — 108 cookies
-  ✓   instagram: logged in
-  ! youtube: anonymous (fine unless you need age-gated video)
-  ✓ container running
-  ✓ /downloads mounted
-  · yt-dlp 2026.07.04
-  · gallery-dl 1.32.9
-  · VPN: Status: Disconnected
-  · Exit IP: 78.203.246.137  Paris, FR
+  ✓ /home/you/Downloads
+  ✓ /home/you/.local/share/downloadinux/cookies/cookies.txt: 108 cookies
+  ✓ instagram: session cookie present
+  ! youtube: no session cookie (fine unless you need age-gated or members-only video)
+  ✓ Chrome 151
+  ✓ Docker 27.5.1
+  ✓ container running (project downloadinux)
+  ✓ /downloads is a mount point
+  ✓ dl (uid 501) can write /downloads
+  ✓ /config is a mount point
+  ✓ /config is read-only
+  ✓ /state is a mount point
+  ✓ dl (uid 501) can write /state
+  ✓ /cookies is a mount point
+  ✓ dl (uid 501) can write /cookies
+  ✓ yt-dlp 2026.07.04
+  ✓ gallery-dl 1.32.9
+  ✓ NordVPN daemon logged in
+  ✓ connected: France, fr999
+  ✓ killswitch enabled, as configured
+  ✓ exit IP 78.203.246.137 (Paris, FR)
 ```
 
-Every `!` line names the command that fixes it. If the exit IP is your real
-one and you wanted the VPN, `just vpn on`.
-
-`just doctor` is still the legacy diagnostic until D4: its VPN checks expect
-VPN mode. It needs no `.env`: its token line reports the stored token's state
-(set, unset, or malformed, never its value), and its cookie checks and
-container access follow the configured managed jar and project.
+When a check has a repair, the next line begins `fix:` and names a `dlx`
+command, a `just` recipe, or the host change to make. The command exits 1 if
+any check fails; warnings and skipped checks still exit 0. With
+`vpn.enabled = false`, all four VPN checks are skipped and need no token or
+network access. `just doctor --json` returns the same ordered checks for
+scripts, without printing token or cookie values.
 
 ---
 
@@ -487,6 +500,8 @@ dlx vpn [args...]            The container's vpn helper (on [server], off, statu
                                exit 1, when vpn.enabled is false
 dlx servers [city] [country] Least-loaded NordVPN servers in a city (default New_York,
                                country 228); works with the VPN on or off
+dlx doctor [--json]          Structured settings, cookies, Docker, mount, tool, and VPN
+                               checks; exits 1 when any check fails
 ```
 
 Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
@@ -496,8 +511,7 @@ invocation, on any command. `dlx` with no command prints help.
 
 Every recipe reaches the configured container through the CLI. Lifecycle,
 token, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`, `servers`, and
-`status` recipes are wrappers; the health recipe retains its existing
-implementation behind the computed Compose invocation.
+`doctor` recipes are wrappers; `status` remains the brief Compose/VPN view.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled

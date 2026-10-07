@@ -60,7 +60,7 @@ the `config` commands except `user-agent` are implemented (P0001-C01).
 Compose and the lifecycle commands are implemented (P0001-C02), and `shell`,
 `vpn`, `servers`, and the login on `config set-token` (P0001-C03): every D2
 command is implemented. `config user-agent`, `dl`, `batch`, and `watch` are
-implemented (P0001-C04, D3); `doctor` is pending.
+implemented (P0001-C04, D3); `doctor` is implemented (P0001-C05, D4).
 
 The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
@@ -562,7 +562,7 @@ The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
 
 ## Health checks
 
-Settled for Stage 1 (DEC-12); implementation pending (P0001-C05, D4).
+Settled for Stage 1 (DEC-12); implemented in P0001-C05 (D4).
 
 `doctor` returns an ordered list of checks:
 
@@ -631,8 +631,10 @@ Pinned for P0001-C05 (DEC-22):
   `vpn.enabled` false is `skip`, `VPN disabled in config`; `container.running` is `skip`, `Docker daemon not
   reachable`, when `docker.daemon` is not `ok`; a container or VPN check is
   `skip`, `container not running`, when `container.running` is not `ok`; a
-  `mount.<m>.writable` check is `skip`, `<path> is not a mount point`, when
-  that mount's `mounted` check failed; `cookies.instagram` and
+  `mount.<m>.writable` check, and `mount.config.readonly`, is `skip`,
+  `<path> is not a mount point`, when that mount's `mounted` check failed
+  (an absent `/config` is not writable either, so `test -w` would pass it
+  for the wrong reason; DEC-22, amended 2026-10-07); `cookies.instagram` and
   `cookies.youtube` are `skip`, `no cookie jar`, when `cookies.jar` is not
   `ok`.
 
@@ -657,14 +659,17 @@ Pinned for P0001-C05 (DEC-22):
 | `vpn.killswitch` | `nordvpn settings` | the `Kill Switch:` line's `enabled` or `disabled` matches `vpn.killswitch`: `killswitch <state>, as configured` | differs: warn, `killswitch <state>, but vpn.killswitch is <true/false>`, `dlx restart`; no such line: warn, `killswitch state unknown`, no fix |
 | `vpn.exit_ip` | `curl -s --max-time 8 https://ipinfo.io/json` | exit 0, a JSON object with a string `ip`: `exit IP <ip> (<city>, <country>)` (the parenthesis omitted when either is absent) | killswitch `enabled` and not connected: fail, `no internet: the killswitch is blocking traffic while the VPN is disconnected`, `dlx vpn on`; else fail, `no internet from the container`, no fix |
 
-`nordvpn` output is split into lines on `\n` and `\r` (its spinner writes
-carriage returns) and each line stripped; `Status:`, `Country:`, `Server:`,
+`nordvpn` output is read only from a run that exits 0 (a failed run counts as
+no such line), split into lines on `\n` and `\r` (its spinner writes
+carriage returns), and each line stripped; `Status:`, `Country:`, `Server:`,
 and `Kill Switch:` match case-insensitively at the start of a line, and the
 value is the rest of the line, stripped (`Connected` exactly, ignoring case,
-so `Disconnected` never matches). `vpn.exit_ip`'s killswitch arm uses the
-states `vpn.killswitch` and `vpn.connected` read. Mount paths are the
-container locations of *Container contract*; `<host path>` is the mount's
-host source.
+so `Disconnected` never matches). With neither `Country:` nor `Server:`, the
+summary is `connected` alone. A `Kill Switch:` line whose value is neither
+`enabled` nor `disabled` (ignoring case) counts as no such line.
+`vpn.exit_ip`'s killswitch arm uses the states `vpn.killswitch` and
+`vpn.connected` read. Mount paths are the container locations of
+*Container contract*; `<host path>` is the mount's host source.
 
 ## Migration
 
@@ -673,9 +678,10 @@ the lifecycle/token wrappers, computed Compose access, managed cookie export,
 and setup's import step are implemented (P0001-C02); the `shell`, `vpn`,
 `servers`, and `status` wrappers and `doctor`'s token line without `.env`
 are implemented (P0001-C03), so every D2 command and wrapper is implemented.
-The `dl`, `batch`, `watch`, and `useragent` wrappers and `doctor`'s
-user-agent and mount lines are implemented (P0001-C04, D3); the full setup
-rewrite remains pending.
+The `dl`, `batch`, `watch`, and `useragent` wrappers are implemented
+(P0001-C04, D3); the structured `doctor`, its wrapper, and the gate's
+VPN-off health run are implemented (P0001-C05, D4). The setup rewrite
+(DEC-23, "Pinned for P0001-C06" below) is pending.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,
@@ -791,6 +797,42 @@ Pinned for P0001-C05, D4's wrapper:
   asserts exit 0, `ok` true, every `mount.*` and `tools.*` check `ok`,
   `docker.daemon` and `container.running` `ok`, and every `vpn.*` check
   `skip`. Its existing cleanup (`compose -- down -v`) removes the container.
+
+Pinned for P0001-C06, D5's setup (DEC-23):
+
+- `setup` runs five steps, each headed `==> <n>/5  <title>` as today:
+  `Settings`, `NordVPN token`, `Exporting browser cookies`, `Building the
+  image (first run takes a few minutes)`, `Starting up`. It no longer runs
+  `just env` or writes `.env`.
+- *Settings:* when the settings file exists (`config_file.exists` in
+  `config show --json`), it prints that it is leaving it alone. Otherwise,
+  when `.env` exists in the checkout, it runs `config import-env`. Otherwise
+  it asks `Route downloads through NordVPN? [y/N] `: `y` or `yes`, in any
+  case, runs `init --set vpn.enabled=true`; any other answer, an empty one
+  or end of input included, runs `init`.
+- *NordVPN token:* with `vpn.enabled` false it asks nothing and prints that
+  the VPN is off, and how to turn it on later: set `enabled = true` under
+  `[vpn]` in the settings file (naming its path), then `just token <token>`
+  and `just restart`. With it true, a `set` token is left alone as today;
+  otherwise it prompts as today, and an empty answer or end of input skips,
+  pointing at `just token <token>`.
+- *Exporting browser cookies*, *Building*, and *Starting up* are unchanged:
+  the export is skipped when the jar already holds an Instagram `sessionid`
+  line (Stage 2 replaces this step), a failed export is reported and setup
+  carries on; then `build`, `up`, a ten-second pause, and `just doctor`,
+  whose failure ends setup with its status before `Ready.`.
+- Every prompt reads standard input; end of input is an empty answer, never
+  an abort.
+- `.env.example` stays, headed as the legacy format that only
+  `config import-env` reads; `just env` keeps its name and still writes
+  `.env` from it with the host UID/GID, its menu text saying it is for that
+  import. A new setup needs neither.
+- The gate's smoke test, after its `doctor --json` assertion, writes a
+  settings file with `init` into its temporary directory (its `--set` values
+  written in) and runs `doctor --json` again with only `--config <that
+  file>`, asserting exit 0, `ok` true, and `config.file` `ok`. CI's Linux run
+  of it is Stage 1's evidence that a fresh `init` config passes `doctor` with
+  the VPN off.
 
 ## Named cookie sources
 

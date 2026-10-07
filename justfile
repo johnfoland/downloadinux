@@ -213,90 +213,9 @@ restart:
 logs:
     {{compose}} logs -f
 
-# Health check: container, mount, cookies, VPN, tool versions
-doctor:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    ok(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
-    no(){ printf '  \033[31m✗\033[0m %s\n' "$*"; }
-    hm(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
-    printf '\033[1mdownloadinux\033[0m\n'
-
-    # Only the token's state, never its value. Presence is not validity:
-    # "tok" is non-empty and completely useless, so config show checks the form.
-    case "$(bash scripts/config-value.sh token)" in
-      set)       ok "NordVPN token well-formed" ;;
-      unset)     hm "no NordVPN token — run: just token <token>" ;;
-      malformed) no "NORDVPN_TOKEN is not a 64-char hex token — run: just token <token>" ;;
-      *)         no "could not read the settings — run: uv run downloadinux config show" ;;
-    esac
-
-    # Size and mtime prove nothing here: yt-dlp writes its cookie jar back on
-    # every run, so the file grows and looks fresh even with zero logins.
-    # Look for the actual session cookies instead.
-    jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
-    if [[ -s "$jar" ]]; then
-      n=$(grep -cv '^#' "$jar" || true)
-      ok "$jar — $n cookies"
-      grep -qE 'instagram.*sessionid' "$jar" \
-        && ok "  instagram: logged in" \
-        || hm "  instagram: no session — log in via Firefox, then: just cookies"
-      grep -qE 'youtube.*(__Secure-3PSID|SAPISID)' "$jar" \
-        && ok "  youtube: logged in" \
-        || hm "  youtube: anonymous (fine unless you need age-gated video)"
-    else
-      hm "no cookies yet — run: just cookies  (public downloads still work)"
-    fi
-
-    # Both downloaders get downloads.user_agent; it should be Chrome's and
-    # track the host Chrome (cookies/README.md says why).
-    ua=$(bash scripts/config-value.sh downloads.user_agent)
-    maj=$(grep -o 'Chrome/[0-9]*' <<<"$ua" | head -1 | cut -d/ -f2)
-    cv=$(defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
-    if [[ -z "$maj" ]]; then
-      hm "user-agent is not Chrome — Instagram will cap video at 720p (run: just useragent)"
-    elif [[ -n "$cv" && "$cv" != "$maj" ]]; then
-      hm "user-agent says Chrome $maj, host Chrome is $cv — run: just useragent"
-    else
-      ok "user-agent is Chrome $maj"
-    fi
-
-    if ! {{compose}} ps --status running --quiet downloadinux 2>/dev/null | grep -q .; then
-      no "container not running — run: just up"; exit 1
-    fi
-    ok "container running"
-
-    {{dex}} test -d /downloads \
-      && ok "/downloads mounted" || no "/downloads volume missing"
-    printf '  · %s\n' "$({{dex}} yt-dlp --version 2>/dev/null | tr -d '\r' | sed 's/^/yt-dlp /')" \
-                     "$({{dex}} gallery-dl --version 2>/dev/null | tr -d '\r' | sed 's/^/gallery-dl /')"
-    # The token can be well-formed and still be revoked. Only the daemon knows.
-    if {{dex}} nordvpn account >/dev/null 2>&1; then
-      ok "NordVPN daemon authenticated"
-    else
-      no "NordVPN NOT logged in — token invalid or revoked (rotating a token"
-      hm "  revokes the old one and logs the daemon out). Fix: just token <new>"
-    fi
-
-    vpn=$({{dex}} nordvpn status 2>/dev/null | tr -d '\r' | grep -iE '^(Status|Country|Server)' | paste -sd' ' - )
-    ks=$({{dex}} nordvpn settings 2>/dev/null | tr -d '\r' | grep -i 'kill switch' | grep -oiE 'enabled|disabled')
-    printf '  · VPN: %s  [killswitch %s]\n' "${vpn:-unknown}" "${ks:-unknown}"
-
-    # jq runs inside the container — no host dependency.
-    ip=$({{dex}} sh -c "curl -s --max-time 8 https://ipinfo.io/json | jq -r '.ip + \"  \" + .city + \", \" + .country'" 2>/dev/null | tr -d '\r')
-    if [[ -n "$ip" ]]; then
-      printf '  · Exit IP: %s\n' "$ip"
-    # Anchor on "Status: Connected" — a bare 'connected' also matches
-    # "Disconnected", which silently inverts this test.
-    elif [[ "$(printf '%s' "$ks" | tr 'A-Z' 'a-z')" == "enabled" ]] && ! grep -qiE 'status:[[:space:]]*connected' <<<"$vpn"; then
-      # Not a fault: the killswitch is doing its job. Say so, because an empty
-      # Exit IP line otherwise reads as "the health check is broken".
-      no "no internet — killswitch is blocking all traffic (VPN disconnected)"
-      hm "  this is the killswitch working. Connect with: just vpn on"
-      hm "  downloads will HANG rather than error while blocked"
-    else
-      no "no internet from the container"
-    fi
+# Structured checks: just doctor [--json]
+doctor *args:
+    @uv run downloadinux doctor "$@"
 
 # Container + VPN state, briefly
 status:

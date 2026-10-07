@@ -4,7 +4,7 @@
 - **Created:** 2026-10-05
 - **Ready:** 2026-10-05
 - **Completed:** —
-- **Decisions:** DEC-7 to DEC-22
+- **Decisions:** DEC-7 to DEC-23
 
 ## 1. Problem and outcome
 
@@ -108,6 +108,8 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | target-design *Host application* ("Downloads, pinned for P0001-C04"), *Container contract* and *Presets* ("pinned for P0001-C04"), *Migration* ("Pinned for P0001-C04"); [decisions.md](../decisions.md), DEC-20, DEC-21 | `dl`, `batch`, `watch`, and `config user-agent` behavior; preset files and exact argument lists; `DL_USER_AGENT`; the end of DEC-15's interval; zsh helpers and the loop file; entrypoint messages (#18); D3's wrappers and `doctor`'s two lines | Cutting P0001-C04: details D3's executor would otherwise have invented |
 | target-design *Presets* ("Pinned for P0001-C04") | The gallery rename shows only at `-M40%`; the video strip includes emptied section headers | P0001-C04 review, findings 2 and 4: the executor's readings were right |
 | target-design *Health checks* and *Migration* ("Pinned for P0001-C05"); [decisions.md](../decisions.md), DEC-22 | `doctor`'s ordered check IDs, conditions, summaries, and fixes; skip rules; the human view; Docker and in-container commands; the `doctor` wrapper and the smoke test's `doctor --json` | Cutting P0001-C05: details D4's executor would otherwise have invented |
+| [decisions.md](../decisions.md), DEC-22 (amended); target-design *Health checks* (skip rules; `nordvpn` parsing paragraph) | `mount.config.readonly` skips after a failed `mounted`, like `writable`; `nordvpn` output read only from a run that exits 0; `connected` alone without a location; an unknown `Kill Switch:` value counts as no line | P0001-C05 review, findings 1 and 2: the first was the cut's gap (maintainer-approved amendment), the second the executor's sensible readings of an incomplete paragraph |
+| target-design *Migration* ("Pinned for P0001-C06"); [decisions.md](../decisions.md), DEC-23; this file, D5 *Done when* | `setup`'s steps, the VPN question, the token step with the VPN off, `.env.example` and `just env` as the legacy import format, the smoke test's `init` + `doctor` run; D5's evidence on macOS (in-place migration) and Linux (CI) | Cutting P0001-C06: details D5's executor would otherwise have invented; the evidence change is the maintainer's |
 
 ## 5. Delivery plan
 
@@ -211,6 +213,9 @@ after `dl`, `config user-agent`, and `cookies`.
 
 ### D4 — Structured health checks
 
+**Implemented:** P0001-C05, accepted with follow-ups 2026-10-07 (pull
+request #24); its follow-ups are P0001-C06-a.
+
 **Build:** `doctor [--json]` with the result model, statuses, exit codes, and
 Stage 1 checks in *Health checks* (DEC-12), including per-mount mount-point
 and write-probe checks run as `dl`, and VPN checks as `skip` when disabled;
@@ -242,6 +247,14 @@ keeping proposals distinguishable.
 a fresh `init` config passes `doctor` with VPN off; README describes no
 behavior that no longer exists. Results recorded in the report.
 
+*Amended 2026-10-07 by the maintainer, cutting P0001-C06:* on macOS, the
+maintainer's own installation is the clean checkout: it migrates in place
+with `just setup` from its existing `.env`, then `dlx doctor` passes with VPN
+on. No Linux host is available, so Linux's evidence is CI's run of the gate:
+the smoke test's VPN-off `doctor --json` and a fresh `init` config passing
+`doctor` (target design, *Migration*, "Pinned for P0001-C06"). A VPN-on
+Linux run is not required; the closeout lists it as not done.
+
 ## 6. Project completion
 
 Stage 1's acceptance criteria hold, each with evidence: custom directories
@@ -260,8 +273,9 @@ implemented behavior.
 | P0001-C01 | D1 | accepted with follow-ups | 2026-10-06, pull request #12 | `bd63e62` |
 | P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | `b983ebe` |
 | P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | `597b9b1` |
-| P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | accepted with follow-ups | 2026-10-06, pull request #19 | — |
-| P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | ready for an executor | — | — |
+| P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | accepted with follow-ups | 2026-10-06, pull request #19 | `7b068c8` |
+| P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | accepted with follow-ups | 2026-10-07, pull request #24 | — |
+| P0001-C06 | D5 (all of it: setup, docs, migration proof; follow-ups 1, 3, 4, and 5 from the C05 review) | ready for an executor | — | — |
 
 ## 8. Closeout
 
