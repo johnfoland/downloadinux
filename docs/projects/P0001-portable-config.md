@@ -110,6 +110,7 @@ archive, the NordVPN login volume, and every `just` recipe name.
 | target-design *Health checks* and *Migration* ("Pinned for P0001-C05"); [decisions.md](../decisions.md), DEC-22 | `doctor`'s ordered check IDs, conditions, summaries, and fixes; skip rules; the human view; Docker and in-container commands; the `doctor` wrapper and the smoke test's `doctor --json` | Cutting P0001-C05: details D4's executor would otherwise have invented |
 | [decisions.md](../decisions.md), DEC-22 (amended); target-design *Health checks* (skip rules; `nordvpn` parsing paragraph) | `mount.config.readonly` skips after a failed `mounted`, like `writable`; `nordvpn` output read only from a run that exits 0; `connected` alone without a location; an unknown `Kill Switch:` value counts as no line | P0001-C05 review, findings 1 and 2: the first was the cut's gap (maintainer-approved amendment), the second the executor's sensible readings of an incomplete paragraph |
 | target-design *Migration* ("Pinned for P0001-C06"); [decisions.md](../decisions.md), DEC-23; this file, D5 *Done when* | `setup`'s steps, the VPN question, the token step with the VPN off, `.env.example` and `just env` as the legacy import format, the smoke test's `init` + `doctor` run; D5's evidence on macOS (in-place migration) and Linux (CI) | Cutting P0001-C06: details D5's executor would otherwise have invented; the evidence change is the maintainer's |
+| target-design status and *Agreed decisions* | Mark Stage 1 implemented and index all of its decisions, DEC-7 to DEC-23 | P0001-C06 review: the header still described all implementation details as proposed and stopped the Stage 1 range at DEC-16 |
 
 ## 5. Delivery plan
 
@@ -233,10 +234,11 @@ checks are `ok`.
 
 ### D5 — Setup flow, docs, and migration proof
 
-**Implemented:** P0001-C06 (pull request #25), awaiting review: `just setup`
-over the CLI with DEC-23's VPN question, the Stage 1 docs, the maintainer's
-installation migrated in place on macOS (recorded in the chunk report), and
-the smoke test's fresh-`init` `doctor` run in CI.
+**Implemented:** P0001-C06, accepted with follow-ups 2026-10-07 (pull request
+#25): `just setup` over the CLI with DEC-23's VPN question, the Stage 1 docs,
+the maintainer's installation migrated in place on macOS (recorded in the
+chunk report), and the smoke test's fresh-`init` `doctor` run in CI. The
+migration proof's stale-user-agent warning is issue #26.
 
 **Build:** `just setup` rewritten over the CLI (import an existing `.env` or
 `init`, token, cookies, build, up, doctor); `.env.example` removed or marked
@@ -279,8 +281,8 @@ implemented behavior.
 | P0001-C02 | D2 (container contract, Compose layer, lifecycle commands, recipe rewiring; follow-up from the C01 review) | accepted with follow-ups | 2026-10-06, pull request #15 | `b983ebe` |
 | P0001-C03 | D2 (rest: `shell`, `vpn`, `servers`, login on `set-token`, their wrappers, side-by-side check; follow-ups 1–2 from the C02 review) | accepted with follow-ups | 2026-10-06, pull request #16 | `597b9b1` |
 | P0001-C04 | D3 (presets, `dl`, `batch`, `watch`, `config user-agent`, their wrappers, the end of DEC-15's links; issues #17 and #18 from the C03 review) | accepted with follow-ups | 2026-10-06, pull request #19 | `7b068c8` |
-| P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | accepted with follow-ups | 2026-10-07, pull request #24 | — |
-| P0001-C06 | D5 (all of it: setup, docs, migration proof; follow-ups 1, 3, 4, and 5 from the C05 review) | ready for an executor | — | — |
+| P0001-C05 | D4 (all of it: `doctor [--json]`, its wrapper, the smoke test's `doctor --json`; issues #23 and #21 from the C04 review) | accepted with follow-ups | 2026-10-07, pull request #24 | `77c0f8a` |
+| P0001-C06 | D5 (all of it: setup, docs, migration proof; follow-ups 1, 3, 4, and 5 from the C05 review) | accepted with follow-ups | 2026-10-07, pull request #25 | — |
 
 ## 8. Closeout
 

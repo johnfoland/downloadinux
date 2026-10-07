@@ -1,6 +1,6 @@
 # Target design
 
-Status: agreed direction with implementation details still proposed.
+Status: Stage 1 is implemented; Stages 2–4 remain proposed.
 
 ## Agreed decisions
 
@@ -16,11 +16,11 @@ These are recorded in the [decision log](decisions.md), with their reasons:
 5. Build the TUI in **Python + Textual** (DEC-5).
 6. Preserve useful existing download behavior through explicit presets (DEC-6).
 
-Stage 1 (project P0001) added DEC-7 to DEC-16: the host application and its
+Stage 1 (project P0001) added DEC-7 to DEC-23: the host application and its
 installation, configuration and locations, the container contract, presets,
-VPN mode, structured health checks, migration, the `.env` reader's edge
-cases, the D2-to-D3 transition, and the VPN helpers with the VPN off. The sections below say
-which parts are settled.
+VPN mode, structured health checks, migration, and the implementation details
+the delivery chunks settled. The sections below distinguish the implemented
+Stage 1 contracts from the later proposals.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging

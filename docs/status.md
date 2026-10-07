@@ -1,7 +1,7 @@
 # Status
 
 Last updated 2026-10-07 by `relay-next`.
-Last review: 2026-10-07 (P0001-C05, accepted with follow-ups).
+Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## Where this stands
 
@@ -10,23 +10,17 @@ Last review: 2026-10-07 (P0001-C05, accepted with follow-ups).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **D1** done: P0001-C01, pull request #12. **D2** done: P0001-C02 and
-  P0001-C03, pull requests #15 and #16. **D3** done: P0001-C04, pull
-  request #19. **D4** done: P0001-C05, accepted with follow-ups
-  2026-10-07, pull request #24.
-- **P0001-C06** (D5: `just setup` over the CLI with DEC-23's VPN question,
-  Stage 1 docs, the in-place migration proof; the C05 review's follow-ups):
-  ready for an executor. Its unit d migrates the maintainer's real
-  installation (their choice). Remaining after D5: the P0001 closeout
-  (`/relay-project`).
+- **D1–D5** done: P0001-C01 to P0001-C06, pull requests #12, #15, #16,
+  #19, #24, and #25. Stage 1 is implemented; remaining is the P0001
+  closeout (`/relay-project`).
 
 ## In flight
 
-- **Chunk:** P0001-C06
-- **State:** awaiting review
-- **Branch:** `chunk/p0001-c06`
-- **Pull request:** `#25` (ready)
-- **Units committed:** a, b, c, d
+- **Chunk:** —
+- **State:** none
+- **Branch:** —
+- **Pull request:** —
+- **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
