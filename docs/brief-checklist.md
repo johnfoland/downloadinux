@@ -90,3 +90,19 @@ explicit exclusion, or say "finds only …" and list them.
 *Found:* P0001-C04: unit b's grep matched the `dl` recipe line the brief
 gave to unit c; unit d's matched the smoke test's pinned absence loop
 (excluded from c's grep but not d's) and `.env.example`, which D5 owns.
+
+### §5. A pinned rule's reason reaches further than the rule
+
+A cut pins a rule with its reason ("skip X when Y, since X would pass for the
+wrong reason"), and names only the case in front of it. The reason applies
+just as well to a sibling the rule leaves out, and the executor, building
+the rule rather than the reason, builds the sibling the old way. Before
+committing a pinned rule that carries a "since" or "because", read every
+sibling of the case it names (the other checks, the other mounts, the other
+commands) and ask whether the reason holds there too; extend the rule, or
+say why it stops.
+
+*Found:* P0001-C05: DEC-22 skipped each `mount.<m>.writable` check after a
+failed `mounted` because the probe would pass for the wrong reason, but left
+`mount.config.readonly` running; on a container with no `/config`, `test -w`
+failed for that reason and `doctor` reported `/config is read-only` as `ok`.

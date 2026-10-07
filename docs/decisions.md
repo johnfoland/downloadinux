@@ -361,7 +361,11 @@ left room:
   the rest of the report still helps.
 - A `writable` probe is `skip` when the same mount is not a mount point,
   since a write would land in the container's own filesystem and pass for
-  the wrong reason. A stopped container is a `fail` (`container.running`),
+  the wrong reason. *Amended 2026-10-07, in the P0001-C05 review, with the
+  maintainer's approval:* `mount.config.readonly` is `skip` the same way.
+  As first pinned it still ran, and on a container with no `/config` at all
+  `test -w` failed for that reason, so `doctor` reported `/config is
+  read-only` as `ok`. A stopped container is a `fail` (`container.running`),
   so `doctor` exits 1 then, as the old recipe did.
 - The token's `unset` state is `skip` with the VPN off, but a `malformed`
   token always fails, as *Configuration and paths* already says.
@@ -376,3 +380,25 @@ left room:
 
 *Where:* [target design](target-design.md), *Health checks* and *Migration*
 ("Pinned for P0001-C05"). Added cutting P0001-C05.
+
+## DEC-23: `just setup` asks about the VPN only when there is nothing to import (2026-10)
+
+`setup` keeps an existing settings file, imports an existing `.env` (VPN on,
+DEC-11), and otherwise writes a fresh file with `init`, first asking
+`Route downloads through NordVPN? [y/N]`. The question comes only on that
+last branch, the one place where no earlier choice exists: an imported
+setup already had the VPN, and an existing settings file already says. The
+default stays no, as DEC-11 has it for a fresh config, so pressing Enter or
+running setup without a terminal gives a working VPN-off setup. With the VPN
+off, setup skips the token prompt, since a token would do nothing until the
+VPN is enabled. Not asking at all was rejected: the tool's main use is behind
+the VPN, and a user would otherwise have to find and edit `vpn.enabled`
+before their first download.
+
+`.env` becomes the legacy import format only. Setup no longer writes it, but
+`.env.example` and `just env` stay (recipe names are preserved during Stage 1)
+for an install that still wants to import one.
+
+*Where:* [target design](target-design.md), *Migration* ("Pinned for
+P0001-C06"). Added cutting P0001-C06, with the maintainer's choice of the
+question.
