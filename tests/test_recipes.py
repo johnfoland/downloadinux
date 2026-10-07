@@ -1,6 +1,9 @@
 """The justfile's recipes, read as text: what each one runs and reads."""
 
+import ast
+
 from downloadinux import checkout
+from test_doctor import CONTAINER_IDS
 
 
 def justfile() -> list[str]:
@@ -89,12 +92,36 @@ def test_dl_wraps_the_cli():
     assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
 
 
+def smoke() -> str:
+    return checkout.asset_path("scripts/smoke.sh").read_text()
+
+
 def test_smoke_runs_and_asserts_structured_doctor_json():
-    body = checkout.asset_path("scripts/smoke.sh").read_text()
+    body = smoke()
     assert '"${cli[@]}" doctor --json' in body
-    assert 'name.startswith("mount.")' in body
-    assert 'name.startswith("tools.")' in body
     assert '"vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"' in body
+
+
+def test_smoke_requires_exactly_the_ten_container_ids_each_ok():
+    # P0001-C05 review, finding 4: a missing or renamed ID must fail the gate.
+    body = smoke()
+    start = body.index("assert container_ids == [") + len("assert container_ids == ")
+    listed = ast.literal_eval(body[start:body.index("]", start) + 1])
+    assert listed == CONTAINER_IDS
+    assert 'for name in container_ids:\n    assert checks[name]["status"] == "ok"' in body
+
+
+def test_smoke_runs_doctor_on_a_fresh_init_config():
+    # Target design, Migration, "Pinned for P0001-C06", last bullet.
+    body = smoke()
+    lines = [line.strip() for line in body.splitlines()]
+    assert 'cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}")' in lines
+    assert 'fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")' in lines
+    init = lines.index('"${fresh[@]}" "${sets[@]}" init >/dev/null')
+    doctor = lines.index('if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then')
+    assert lines.index('"${cli[@]}" doctor --json | python3 -c \'') < init < doctor
+    assert 'assert report["ok"] is True, report' in lines
+    assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
 def test_batch_and_watch_wrap_the_cli():
