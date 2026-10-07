@@ -261,6 +261,11 @@ environment variable, then the default above; `just` recipes follow
 `DOWNLOADINUX_CONFIG` too. A missing file is not an error: every setting has
 a default (`just doctor` warns and names `dlx init`).
 
+Settings and credentials creation remains atomic and refuses existing files
+even when the selected config path is on a filesystem without hard-link
+support, such as exFAT or FUSE. This applies to `dlx init` and imports without
+`--force`.
+
 Each setting's value comes from, highest first: a `--set table.key=value` on
 the command line (repeatable, on any command, for that invocation only), the
 settings file, the built-in default. No other environment variable sets a

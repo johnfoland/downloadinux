@@ -3,11 +3,13 @@
 import errno
 import os
 import stat
+import tomllib
 from pathlib import Path
 
 import pytest
 
-from downloadinux import cli, files
+from conftest import FAKE_TOKEN
+from downloadinux import cli, files, operations, useragent
 
 
 @pytest.fixture(params=["EPERM", "EOPNOTSUPP", "ENOTSUP"])
@@ -241,3 +243,114 @@ def test_fallback_os_failures_keep_cli_path_contract(tmp_path, monkeypatch, caps
         assert target.stat().st_size == 0
     else:
         assert not target.exists()
+
+
+def test_init_cli_creates_settings_through_fallback(tmp_path, capsys, unsupported_link):
+    target = tmp_path / "custom config path" / "config.toml"
+    mode = files.default_file_mode()
+    assert cli.main(["init", "--config", str(target), "--set", "container.uid=77"]) == 0
+    out, err = capsys.readouterr()
+    assert out == f"Wrote {target}\n"
+    assert err == ""
+    assert target.read_text() == files.starter_text({"container.uid": 77})
+    assert tomllib.loads(target.read_text())["vpn"]["enabled"] is False
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_import_cli_creates_both_files_through_fallback(tmp_path, capsys, unsupported_link):
+    env = tmp_path / "legacy.env"
+    env.write_text(f"PUID=77\nNORDVPN_TOKEN={FAKE_TOKEN}\n")
+    target = tmp_path / "custom config path" / "config.toml"
+    creds = target.with_name("credentials.toml")
+    mode = files.default_file_mode()
+    assert cli.main(["--config", str(target), "config", "import-env", "--env", str(env)]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert f"Wrote {target}" in out and f"Wrote {creds} (token: set)" in out
+    assert FAKE_TOKEN not in out + err
+    assert target.read_text() == files.starter_text({"container.uid": 77, "vpn.enabled": True})
+    assert tomllib.loads(creds.read_text()) == {"nordvpn": {"token": FAKE_TOKEN}}
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+    assert stat.S_IMODE(creds.stat().st_mode) == 0o600
+    assert set(target.parent.iterdir()) == {target, creds}
+
+
+@pytest.mark.parametrize("command", ["init", "import-settings", "import-credentials"])
+def test_cli_reservation_race_preserves_foreign_file(
+    tmp_path, monkeypatch, capsys, unsupported_link, command,
+):
+    target = tmp_path / "config" / "config.toml"
+    creds = target.with_name("credentials.toml")
+    racing = creds if command == "import-credentials" else target
+    real_open = os.open
+    raced = []
+    foreign = b"# another actor's bytes\n"
+
+    def reserve(path, flags, mode=0o777, **kwargs):
+        if Path(path) == racing:
+            assert flags & os.O_CREAT and flags & os.O_EXCL
+            assert mode == 0
+            racing.write_bytes(foreign)
+            raced.append(racing.stat())
+            # Get the real errno, subclass, filename, and timing from O_EXCL.
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", reserve)
+    argv = ["--config", str(target)]
+    if command == "init":
+        argv += ["init"]
+    else:
+        env = tmp_path / "legacy.env"
+        env.write_text(f"PUID=77\nNORDVPN_TOKEN={FAKE_TOKEN}\n")
+        argv += ["config", "import-env", "--env", str(env)]
+    assert cli.main(argv) == 1
+    out, err = capsys.readouterr()
+    refusal = "not overwriting it" if command == "init" else "use --force to overwrite it"
+    assert err == f"downloadinux: error: {racing} already exists; {refusal}\n"
+    assert "Traceback" not in err
+    assert FAKE_TOKEN not in out + err
+    assert len(raced) == 1
+    assert racing.read_bytes() == foreign
+    assert racing.stat().st_ino == raced[0].st_ino
+    assert racing.stat().st_mode == raced[0].st_mode
+    assert list(target.parent.glob(".*.tmp")) == []
+    if command == "import-credentials":
+        assert tomllib.loads(target.read_text())["container"]["uid"] == 77
+        assert set(target.parent.iterdir()) == {target, creds}
+    else:
+        assert list(target.parent.iterdir()) == [target]
+        assert not creds.exists()
+
+
+def test_import_credentials_link_race_preserves_foreign_file(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "config" / "config.toml"
+    creds = target.with_name("credentials.toml")
+    env = tmp_path / "legacy.env"
+    env.write_text(f"NORDVPN_TOKEN={FAKE_TOKEN}\n")
+    real_link = os.link
+
+    def link(source, destination):
+        if Path(destination) == creds:
+            creds.write_bytes(b"foreign credentials")
+        return real_link(source, destination)
+
+    monkeypatch.setattr(os, "link", link)
+    assert cli.main(["--config", str(target), "config", "import-env", "--env", str(env)]) == 1
+    out, err = capsys.readouterr()
+    assert err == f"downloadinux: error: {creds} already exists; use --force to overwrite it\n"
+    assert FAKE_TOKEN not in out + err
+    assert creds.read_bytes() == b"foreign credentials"
+    assert set(target.parent.iterdir()) == {target, creds}
+
+
+def test_user_agent_creation_uses_fallback(tmp_path, monkeypatch, unsupported_link):
+    target = tmp_path / "config" / "config.toml"
+    monkeypatch.setattr(useragent, "chrome_version", lambda path: "153.0.123.4")
+    result = operations.refresh_user_agent(config=str(target), overrides=["container.uid=77"])
+    assert result.written is True
+    assert target.read_text() == files.starter_text({
+        "container.uid": 77, "downloads.user_agent": useragent.user_agent("153"),
+    })
+    assert stat.S_IMODE(target.stat().st_mode) == files.default_file_mode()
+    assert list(target.parent.iterdir()) == [target]

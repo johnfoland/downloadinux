@@ -2,6 +2,7 @@
 file: the checkout's real `.env` is never read."""
 
 import json
+import os
 import stat
 import tomllib
 from pathlib import Path
@@ -235,7 +236,11 @@ def test_existing_credentials_without_a_token_to_import_is_fine(capsys, source, 
     assert paths["credentials"].read_text() == "# mine\n"
 
 
-def test_force_overwrites_both_but_keeps_the_destination_jar(capsys, full_env, paths):
+def test_force_overwrites_both_but_keeps_the_destination_jar(capsys, full_env, paths, monkeypatch):
+    def no_link(*args, **kwargs):
+        pytest.fail("forced import must not use no-clobber publication")
+
+    monkeypatch.setattr(os, "link", no_link)
     env, _ = full_env
     paths["config"].parent.mkdir(parents=True)
     paths["config"].write_text("# old settings\n")

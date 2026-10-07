@@ -175,9 +175,15 @@ def import_env(
             f"{settings_path} already exists; use --force to overwrite it"
         ) from None
     if token:
-        files.write_atomic(
-            creds_path, files.credentials_text(token), files.CREDENTIALS_MODE
-        )
+        try:
+            files.write_atomic(
+                creds_path, files.credentials_text(token), files.CREDENTIALS_MODE,
+                replace=force,
+            )
+        except FileExistsError:
+            raise DownloadinuxError(
+                f"{creds_path} already exists; use --force to overwrite it"
+            ) from None
 
     cookies_dir = settings.load(config, overrides, host)["paths.cookies"]
     source = env_path.parent / "cookies" / COOKIE_JAR

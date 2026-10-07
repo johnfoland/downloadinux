@@ -112,6 +112,10 @@ Package details, pinned for P0001-C01:
 
 Portable no-clobber writes, pinned for P0002 (DEC-24):
 
+Implemented in P0002-C01 (D1), including settings and credentials import
+creation. DEC-27 clarifies cleanup when the OS cannot prove ownership or
+remove an entry.
+
 - A no-clobber write first tries to publish its synced same-directory
   temporary file by hard link, which atomically fails with `FileExistsError`
   when the target exists. Only `EPERM`, `EOPNOTSUPP`, or `ENOTSUP` from that
