@@ -69,12 +69,12 @@ def test_hard_link_failure(capsys, tmp_path, monkeypatch):
     def refuse(source, destination):
         # As the real os.link reports it: the source (here the temporary
         # file) as filename, the destination as filename2 (review-checklist §2).
-        raise OSError(errno.EOPNOTSUPP, "Operation not supported", str(source), None, str(destination))
+        raise OSError(errno.EIO, "Input/output error", str(source), None, str(destination))
 
     monkeypatch.setattr(os, "link", refuse)
     assert cli.main(["--config", str(config), "init"]) == 1
     err = capsys.readouterr().err
-    assert err == f"downloadinux: error: {config}: Operation not supported\n"
+    assert err == f"downloadinux: error: {config}: Input/output error\n"
     assert ".tmp" not in err
     assert list(tmp_path.glob(".*.tmp")) == []
 

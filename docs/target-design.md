@@ -128,6 +128,12 @@ Portable no-clobber writes, pinned for P0002 (DEC-24):
   the no-clobber boundary. A process killed between reservation and replacement
   may leave the mode-000 reservation; a later no-clobber write refuses it as an
   existing target rather than guessing that it is safe to delete.
+- If `fstat` cannot record the reservation's identity, or cleanup cannot inspect
+  the directory entry, that entry is preserved rather than guessed safe to
+  remove (DEC-27). A failed unlink can also leave residue. Descriptor closure
+  and temporary cleanup are attempted regardless; OS errors from publication
+  or cleanup retain the path-bearing exit-1 contract. A cleanup error takes
+  precedence over the original error.
 
 Docker invocation, pinned for P0001-C02:
 
