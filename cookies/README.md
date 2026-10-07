@@ -4,6 +4,8 @@ The cookie jar moved to the managed directory at `paths.cookies`, by default
 `~/.local/share/downloadinux/cookies/cookies.txt`. The old `cookies.txt` here
 is no longer read. `dlx config import-env` copies it once, leaving the original
 in place. Cookie files hold live session credentials; treat them like passwords.
+Once the import has run, delete the old jar here, or `chmod 600` it if you
+keep it: it may be world-readable.
 
 ## Just use the recipe
 
@@ -98,7 +100,10 @@ expiry: clear it in Firefox, then re-run `just cookies`.
 Instagram and YouTube sessions go stale in days-to-weeks. When downloads start
 403ing or silently returning nothing, re-export first.
 
-`just doctor` checks for the real `sessionid` cookie rather than just the file's
-existence, so it tells you the truth about whether you're actually logged in.
-Note that yt-dlp rewrites this file on every run, so its size and timestamp
-mean nothing on their own.
+`just doctor` checks for the session cookie itself (Instagram's `sessionid`;
+YouTube's `__Secure-3PSID` or `SAPISID`) rather than just the file's
+existence, so it tells you whether a session cookie is *present*. It cannot
+tell whether the site still accepts it: an expired session looks the same in
+the jar, so downloads failing is what tells you to re-export. Note that
+yt-dlp rewrites this file on every run, so its size and timestamp mean
+nothing on their own.
