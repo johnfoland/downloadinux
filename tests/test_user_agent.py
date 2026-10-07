@@ -47,6 +47,12 @@ def stored(config):
     return tomllib.loads(config.read_text())["downloads"]["user_agent"]
 
 
+def test_without_a_fixture_no_test_reads_the_host_chrome(tmp_path):
+    # conftest's isolated_host (P0001-C05 review, finding 3).
+    assert useragent.CHROME_PLIST.is_relative_to(tmp_path)
+    assert not useragent.CHROME_PLIST.exists()
+
+
 def test_pins_the_major_version_exactly(plist, config, capsys):
     chrome(plist, "151.0.7000.12")
     config.parent.mkdir()

@@ -462,6 +462,31 @@ def test_not_a_mount_fails_then_skips_its_write_probe(
     assert [*WRITE_PROBE, "/downloads"] not in programs
 
 
+def test_config_not_a_mount_fails_then_skips_its_readonly_probe(
+    docker, doctor_paths, capsys
+):
+    # DEC-22, amended: an absent /config fails `test -w`, which would report
+    # it read-only for the wrong reason.
+    docker.container[("mountpoint", "-q", "/config")] = (1, "")
+    status, report, _ = run_json(capsys, doctor_paths)
+    checks = by_id(report)
+    assert status == 1
+    assert checks["mount.config.mounted"] == {
+        "id": "mount.config.mounted", "status": "fail",
+        "summary": "/config is not a mount point", "fix": "dlx restart",
+    }
+    assert checks["mount.config.readonly"] == {
+        "id": "mount.config.readonly", "status": "skip",
+        "summary": "/config is not a mount point",
+    }
+    assert [check["id"] for check in report["checks"]] == (
+        HOST_IDS + CONTAINER_IDS + VPN_IDS
+    )
+    programs = [compose_args(call)[5:] for call, _ in docker.calls[2:]]
+    assert ["test", "-w", "/config"] not in programs
+    assert [*WRITE_PROBE, "/state"] in programs
+
+
 def test_unwritable_mount_names_uid_and_host_path_in_the_fix(
     docker, doctor_paths, capsys
 ):

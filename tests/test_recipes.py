@@ -1,6 +1,9 @@
 """The justfile's recipes, read as text: what each one runs and reads."""
 
+import ast
+
 from downloadinux import checkout
+from test_doctor import CONTAINER_IDS
 
 
 def justfile() -> list[str]:
@@ -89,12 +92,36 @@ def test_dl_wraps_the_cli():
     assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
 
 
+def smoke() -> str:
+    return checkout.asset_path("scripts/smoke.sh").read_text()
+
+
 def test_smoke_runs_and_asserts_structured_doctor_json():
-    body = checkout.asset_path("scripts/smoke.sh").read_text()
+    body = smoke()
     assert '"${cli[@]}" doctor --json' in body
-    assert 'name.startswith("mount.")' in body
-    assert 'name.startswith("tools.")' in body
     assert '"vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"' in body
+
+
+def test_smoke_requires_exactly_the_ten_container_ids_each_ok():
+    # P0001-C05 review, finding 4: a missing or renamed ID must fail the gate.
+    body = smoke()
+    start = body.index("assert container_ids == [") + len("assert container_ids == ")
+    listed = ast.literal_eval(body[start:body.index("]", start) + 1])
+    assert listed == CONTAINER_IDS
+    assert 'for name in container_ids:\n    assert checks[name]["status"] == "ok"' in body
+
+
+def test_smoke_runs_doctor_on_a_fresh_init_config():
+    # Target design, Migration, "Pinned for P0001-C06", last bullet.
+    body = smoke()
+    lines = [line.strip() for line in body.splitlines()]
+    assert 'cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}")' in lines
+    assert 'fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")' in lines
+    init = lines.index('"${fresh[@]}" "${sets[@]}" init >/dev/null')
+    doctor = lines.index('if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then')
+    assert lines.index('"${cli[@]}" doctor --json | python3 -c \'') < init < doctor
+    assert 'assert report["ok"] is True, report' in lines
+    assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
 def test_batch_and_watch_wrap_the_cli():
@@ -116,3 +143,33 @@ def test_no_recipe_names_the_old_home():
 
 def test_the_gate_syntax_checks_the_batch_loop():
     assert any("zsh/batch.zsh" in line for line in recipe("check"))
+
+
+def test_setup_runs_its_settings_and_token_steps_and_never_writes_env():
+    # Target design, Migration, "Pinned for P0001-C06" (DEC-23).
+    body = [line.strip() for line in recipe("setup")]
+    script = checkout.asset_path("scripts/setup.sh").read_text()
+    assert "just env" not in "\n".join(body) + script
+    assert body.index("bash scripts/setup.sh") == 4  # after the shebang and set
+    headings = [
+        line.split("==> ")[1].split("\\033")[0]
+        for line in body + script.splitlines() if "==> " in line
+    ]
+    assert sorted(headings) == [
+        "1/5  Settings",
+        "2/5  NordVPN token",
+        "3/5  Exporting browser cookies",
+        "4/5  Building the image (first run takes a few minutes)",
+        "5/5  Starting up",
+    ]
+    assert body[-3:] == [
+        'echo ""',
+        "just doctor",
+        "printf '\\n\\033[1;32mReady.\\033[0m  Get in with:  \\033[1;36mjust shell\\033[0m\\n'",
+    ]
+
+
+def test_env_menu_text_names_the_import():
+    menu = recipe("env")[0]
+    assert menu.startswith("# Write a legacy .env")
+    assert "config import-env" in menu

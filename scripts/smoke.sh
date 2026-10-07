@@ -3,10 +3,10 @@
 set -euo pipefail
 
 smoke_dir=$(mktemp -d)
-cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml"
-  --set "container.project=downloadinux-check" --set vpn.enabled=false
+sets=(--set "container.project=downloadinux-check" --set vpn.enabled=false
   --set "paths.downloads=$smoke_dir/downloads with space"
   --set "paths.state=$smoke_dir/state" --set "paths.cookies=$smoke_dir/cookies")
+cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}")
 export DOWNLOADINUX_IMAGE=downloadinux:check
 cleanup() {
   "${cli[@]}" compose -- down -v >/dev/null 2>&1 || true
@@ -63,14 +63,38 @@ import json, sys
 report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True
-for name, check in checks.items():
-    if name.startswith("mount.") or name.startswith("tools."):
-        assert check["status"] == "ok", check
+container_ids = [name for name in checks if name.startswith(("mount.", "tools."))]
+assert container_ids == [
+    "mount.downloads.mounted", "mount.downloads.writable",
+    "mount.config.mounted", "mount.config.readonly",
+    "mount.state.mounted", "mount.state.writable",
+    "mount.cookies.mounted", "mount.cookies.writable",
+    "tools.yt-dlp", "tools.gallery-dl",
+], container_ids
+for name in container_ids:
+    assert checks[name]["status"] == "ok", checks[name]
 for name in ("docker.daemon", "container.running"):
     assert checks[name]["status"] == "ok", checks[name]
 for name in ("vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"):
     assert checks[name] == {"id": name, "status": "skip", "summary": "VPN disabled in config"}
 '
+
+# Stage 1's evidence that a fresh `init` config passes doctor with the VPN
+# off: the same values written into a settings file, then only --config.
+fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")
+"${fresh[@]}" "${sets[@]}" init >/dev/null
+if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then
+  echo "doctor failed with a fresh init settings file:" >&2
+  cat "$smoke_dir/doctor-init.json" >&2
+  exit 1
+fi
+python3 -c '
+import json, sys
+report = json.load(sys.stdin)
+checks = {check["id"]: check for check in report["checks"]}
+assert report["ok"] is True, report
+assert checks["config.file"]["status"] == "ok", checks["config.file"]
+' <"$smoke_dir/doctor-init.json"
 
 # Also pin the unchanged image identity and the refusal of an occupied UID.
 # shellcheck disable=SC2016

@@ -4,9 +4,12 @@ A headless Debian 13 "Trixie" container that runs your `dlmp4` / `dlgal`
 workflow — yt-dlp, gallery-dl, NordVPN, zsh — against the host `~/Downloads`
 folder.
 
-For the planned portable application and Python + Textual TUI, see the
-[architecture review and implementation plan](docs/README.md). Those documents
-describe future work; this README covers the current implementation.
+It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
+wrap it, with its settings in a file of their own outside the checkout. That
+is Stage 1 of a refactor toward a portable application; the later stages
+(named cookie sources, a persistent download worker, a Python + Textual TUI)
+are proposals in the [planning documents](docs/README.md). This README covers
+what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, and your shell functions were ported over. The one thing that had to
@@ -38,31 +41,46 @@ You already have all of these; listed so future-you knows what to reinstall.
 | `yt-dlp` on the host | only for the cookie export in Step 3 — `brew install yt-dlp` |
 | A Firefox profile | logged in to the sites you want to download from |
 
+Then install the CLI from the checkout, with [uv](https://docs.astral.sh/uv/):
+
 ```sh
 cd ~/Code/downloadinux
-just            # shows the full menu of commands
+uv tool install --editable .   # puts dlx (and its long name, downloadinux) on PATH
+just                           # shows the full menu of commands
 ```
 
-## Step 1 — Create and import your settings
+The `just` recipes don't need the install: they run the CLI from the checkout
+with `uv run`, so `uv` alone is enough for them. `dlx` is for typing commands
+yourself, from any directory. Because the install is editable, `dlx` runs the
+checkout's current code.
 
-```sh
-just env
-uv run downloadinux config import-env
-```
+## Step 1 — Settings
 
-`just env` copies `.env.example` to `.env` and fills in your host UID/GID.
-The import writes `~/.config/downloadinux/config.toml` with VPN enabled and
-copies an existing token into `credentials.toml` beside it (0600). It copies
-the old cookie jar to the managed directory and leaves the originals in place.
-`just setup` runs this import automatically when the settings file is absent.
+`just setup` starts by making sure there is a
+[settings file](#the-settings-file), one of three ways:
 
-For an existing installation, run `dlx config import-env` once before the next
-`just up` (or `uv run downloadinux config import-env` before installing `dlx`).
-The import refuses to overwrite settings without `--force`. Edit the TOML
-settings after migration; the recipes now read them instead of `.env`.
-For a fresh configuration without VPN, use `dlx init` instead of the import.
+- **A settings file exists:** it is left alone.
+- **A `.env` exists in the checkout** (an install from before the settings
+  file): setup imports it with `dlx config import-env`, VPN on. See
+  [Migrating from `.env`](#migrating-from-env).
+- **Neither:** setup asks `Route downloads through NordVPN? [y/N]`. `y` or
+  `yes`, in any case, writes the starter file with the VPN on
+  (`dlx init --set vpn.enabled=true`); any other answer, including just
+  pressing Enter or running setup with no input (`just setup < /dev/null`),
+  writes it with the VPN off (`dlx init`).
+
+`just env` is the legacy import's helper only: it copies `.env.example` to
+`.env` with your host UID/GID filled in, for `dlx config import-env` to read.
+A new setup needs neither.
 
 ## Step 2 — Get your NordVPN token
+
+With the VPN off, `just setup` skips this step and asks for nothing: a token
+does nothing until the VPN is on. It prints how to turn it on later: set
+`enabled = true` under `[vpn]` in the settings file (it names the path), then
+`just token <token>` and `just restart`. With the VPN on, a stored token is
+left alone; otherwise setup prompts for one, and pressing Enter (or no input)
+skips it.
 
 The container logs in with an access token, not your password. Get one:
 
@@ -161,8 +179,12 @@ cookies` still succeeds; with no settings file yet it writes the starter file
 
 **When to redo this:** Instagram sessions go stale in weeks. When downloads
 start 403ing or silently returning nothing, `just cookies` is the first thing
-to try. `just doctor` tells you whether a real session is present — it checks
-for the actual `sessionid` cookie, not just that the file exists.
+to try. `just doctor` reports whether a session cookie is *present* (Instagram's
+`sessionid`; YouTube's `__Secure-3PSID` or `SAPISID`), not just that the file
+exists. It cannot tell whether the site still accepts that session: an
+expired one is still present, so failing downloads are the real signal.
+`just setup` skips the export whenever the jar already holds an Instagram
+`sessionid`, so after a session expires, run `just cookies` yourself.
 
 You can skip this step entirely if you only grab public videos. The entrypoint
 seeds an empty-but-valid cookie file so yt-dlp doesn't hard-error on a missing
@@ -214,7 +236,85 @@ command, a `just` recipe, or the host change to make. The command exits 1 if
 any check fails; warnings and skipped checks still exit 0. With
 `vpn.enabled = false`, all four VPN checks are skipped and need no token or
 network access. `just doctor --json` returns the same ordered checks for
-scripts, without printing token or cookie values.
+scripts, without printing token or cookie values. A cookie check says a
+session cookie is *present* in the jar; no check can tell whether the site
+still accepts it.
+
+---
+
+# Settings
+
+## The settings file
+
+Everything the host side needs to know lives in one TOML file, outside the
+checkout:
+
+| What | Where (by default) |
+|---|---|
+| Settings | `$XDG_CONFIG_HOME/downloadinux/config.toml` (`~/.config/downloadinux/config.toml`) |
+| NordVPN token | `credentials.toml` beside it, mode 0600, written by `just token` |
+| Managed cookie jar | `$XDG_DATA_HOME/downloadinux/cookies/` (`~/.local/share/…`), directory 0700 |
+| State | `$XDG_STATE_HOME/downloadinux/` (`~/.local/state/…`) |
+
+The file is chosen by `--config PATH`, then the `DOWNLOADINUX_CONFIG`
+environment variable, then the default above; `just` recipes follow
+`DOWNLOADINUX_CONFIG` too. A missing file is not an error: every setting has
+a default (`just doctor` warns and names `dlx init`).
+
+Each setting's value comes from, highest first: a `--set table.key=value` on
+the command line (repeatable, on any command, for that invocation only), the
+settings file, the built-in default. No other environment variable sets a
+setting.
+
+```sh
+dlx init                                # starter file, VPN off; refuses if one exists
+dlx init --set vpn.enabled=true         # the same with the VPN on (--set values are written in)
+dlx config show                         # every setting, its value, and where it came from
+dlx config show --json                  # the same for scripts
+dlx --set vpn.server=us8649 restart     # one invocation with an override
+```
+
+`init` writes every setting with its default and leaves the computed ones
+(the state and cookie paths, the container's UID, GID, and time zone)
+commented out. `config show` also lists both files (marking a missing one),
+the token's state (`set`, `unset`, or `malformed`, never its value), and the
+four container mounts. The tables are `[paths]`, `[container]`,
+`[downloads]`, and `[vpn]`; the full schema, defaults, and validation rules
+are in the [target design](docs/target-design.md#configuration-and-paths).
+After editing the file, `just restart` applies it to the container.
+
+## Migrating from `.env`
+
+Before the settings file, an install kept its settings in the checkout's
+`.env` and its cookies in `cookies/cookies.txt`. `just setup` imports them
+when no settings file exists; by hand:
+
+```sh
+dlx config import-env        # or uv run downloadinux config import-env
+just restart
+```
+
+The import writes `config.toml` with `vpn.enabled = true` and the old values:
+`HOST_DOWNLOADS` becomes `paths.downloads`, `PUID`, `PGID`, and `TZ` the
+`[container]` UID, GID, and time zone, and `NORDVPN_SERVER`,
+`NORDVPN_TECHNOLOGY`, `NORDVPN_AUTOCONNECT`, and `NORDVPN_KILLSWITCH` the
+`[vpn]` settings. A well-formed `NORDVPN_TOKEN` goes into `credentials.toml`
+(0600); a malformed one is reported by length and skipped. `USERNAME` is
+dropped (the container user is always `dl`), and any other key is listed as
+not imported. It then copies `cookies/cookies.txt` into the managed cookie
+directory (0600 in 0700) unless a jar is already there. It prints what it
+imported, never the token.
+
+It refuses, before writing anything, when the settings file exists, or the
+credentials file when it would write a token. `--force` overwrites them
+(an existing managed jar is still kept); `--env PATH` imports another file.
+`just restart` then recreates the container from the new settings.
+
+Afterwards nothing reads `.env` or `cookies/cookies.txt`; they stay where
+they were so the import can be redone, and you can delete both once the new
+setup works. Until then, remember what they hold: `.env` has the token, and
+the old jar has live session cookies and may be world-readable: check with
+`ls -l cookies/cookies.txt`, then `chmod 600` it or delete it.
 
 ---
 
@@ -458,18 +558,12 @@ exit IP.
 
 # Command reference
 
-## The host CLI (in progress)
+## The host CLI
 
-The refactor's host application is a Python package in `src/downloadinux/`.
-Install it once from the checkout, with [uv](https://docs.astral.sh/uv/):
-
-```sh
-uv tool install --editable .
-```
-
-That puts `downloadinux` and its short name `dlx` on your `PATH`, working from
-any directory. It manages settings, the container lifecycle, and the commands
-that run inside the container:
+The host application is a Python package in `src/downloadinux/`, installed as
+`downloadinux` and its short name `dlx` ([Step 0](#step-0--prerequisites)).
+It manages settings, the container lifecycle, and the commands that run
+inside the container:
 
 ```
 dlx init                     Write a starter settings file (VPN off); refuses if one exists
@@ -504,14 +598,19 @@ dlx doctor [--json]          Structured settings, cookies, Docker, mount, tool, 
                                checks; exits 1 when any check fails
 ```
 
-Settings live in `~/.config/downloadinux/config.toml` (or `$XDG_CONFIG_HOME`,
-`$DOWNLOADINUX_CONFIG`, or `--config PATH`), the token in `credentials.toml`
-beside it (mode 0600). `--set table.key=value` overrides a setting for one
-invocation, on any command. `dlx` with no command prints help.
+`--config PATH` and `--set table.key=value` work on every command, before or
+after it ([The settings file](#the-settings-file)). `dlx` with no command
+prints help. A command that runs a program (`dl`, `shell`, `watch`, `vpn`,
+`compose --`) exits with that program's status; otherwise the status is 0 on
+success, 1 when an operation fails, and 2 for a usage error or invalid
+settings, with errors on standard error as `downloadinux: error: …`.
 
-Every recipe reaches the configured container through the CLI. Lifecycle,
-token, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`, `servers`, and
-`doctor` recipes are wrappers; `status` remains the brief Compose/VPN view.
+Every recipe reaches the configured container through the CLI. The
+lifecycle, `token`, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`,
+`servers`, `status`, and `doctor` recipes are wrappers (`status` runs
+`dlx compose -- ps`, then `dlx vpn status`, ignoring its failure); `logs` and
+`nuke` pass through `dlx compose --`, and `setup` and `cookies` run the CLI
+in between their own steps.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -522,8 +621,10 @@ resolved config prints the token.
 ```
 just                 Show the menu
 
-just setup           Cold start: everything below, in order, interactively
-just env             Write .env with your real UID/GID
+just setup           Cold start: settings (import .env, or init after a VPN
+                       question), token, cookies, build, launch
+just env             Write a legacy .env with your real UID/GID, for
+                       dlx config import-env
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
@@ -561,7 +662,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── presets/                      # read-only /config: media behavior only
 │   ├── video/yt-dlp.conf         # the video preset (was dlmp4's config)
 │   └── gallery/config.json       # the gallery preset (was dlgal's config)
-├── .env.example
+├── .env.example                  # legacy .env format, read only by `dlx config import-env`
 ├── .tool-versions                # pins just 1.40.0 for asdf
 ├── zsh/
 │   ├── zshrc
@@ -572,6 +673,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── config-value.sh           # recipes read config show --json
+│   ├── setup.sh                  # `just setup`'s settings and token steps
 │   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)

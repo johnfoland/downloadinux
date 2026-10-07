@@ -1,6 +1,6 @@
 # Target design
 
-Status: agreed direction with implementation details still proposed.
+Status: Stage 1 is implemented; Stages 2–4 remain proposed.
 
 ## Agreed decisions
 
@@ -16,11 +16,11 @@ These are recorded in the [decision log](decisions.md), with their reasons:
 5. Build the TUI in **Python + Textual** (DEC-5).
 6. Preserve useful existing download behavior through explicit presets (DEC-6).
 
-Stage 1 (project P0001) added DEC-7 to DEC-16: the host application and its
+Stage 1 (project P0001) added DEC-7 to DEC-23: the host application and its
 installation, configuration and locations, the container contract, presets,
-VPN mode, structured health checks, migration, the `.env` reader's edge
-cases, the D2-to-D3 transition, and the VPN helpers with the VPN off. The sections below say
-which parts are settled.
+VPN mode, structured health checks, migration, and the implementation details
+the delivery chunks settled. The sections below distinguish the implemented
+Stage 1 contracts from the later proposals.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -252,7 +252,7 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 Settled for Stage 1 (DEC-8). Implemented in P0001-C01: the settings and
 credentials files, their locations, `config show`, `init`, and
-`config set-token` (storing only; the login on set is pending).
+`config set-token` (storing; its login on set is implemented in P0001-C03).
 
 Separate installation files, user configuration, credentials, and mutable state.
 Routine operation must not rewrite tracked files in the checkout.
@@ -681,7 +681,8 @@ are implemented (P0001-C03), so every D2 command and wrapper is implemented.
 The `dl`, `batch`, `watch`, and `useragent` wrappers are implemented
 (P0001-C04, D3); the structured `doctor`, its wrapper, and the gate's
 VPN-off health run are implemented (P0001-C05, D4). The setup rewrite
-(DEC-23, "Pinned for P0001-C06" below) is pending.
+(DEC-23, "Pinned for P0001-C06" below) and the gate's fresh-`init` health run
+are implemented (P0001-C06, D5), so Stage 1's migration is implemented.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,

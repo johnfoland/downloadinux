@@ -282,6 +282,20 @@ def _container_checks(
         )
         checks.append(mounted)
 
+        # DEC-22, amended: with no mount at the path, `test -w` fails and a
+        # write lands in the container's own filesystem, so either probe would
+        # pass for the wrong reason. Neither runs.
+        if mounted.status is not Status.OK:
+            probe = "readonly" if mount.access == "ro" else "writable"
+            checks.append(
+                _check(
+                    f"mount.{name}.{probe}",
+                    Status.SKIP,
+                    f"{mount.container} is not a mount point",
+                )
+            )
+            continue
+
         if mount.access == "ro":
             status, _ = _container_capture(
                 invocation, ["test", "-w", mount.container], capture
@@ -300,15 +314,6 @@ def _container_checks(
             )
             continue
 
-        if mounted.status is not Status.OK:
-            checks.append(
-                _check(
-                    f"mount.{name}.writable",
-                    Status.SKIP,
-                    f"{mount.container} is not a mount point",
-                )
-            )
-            continue
         status, _ = _container_capture(
             invocation,
             [
