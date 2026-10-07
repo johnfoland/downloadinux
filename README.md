@@ -43,26 +43,40 @@ cd ~/Code/downloadinux
 just            # shows the full menu of commands
 ```
 
-## Step 1 — Create and import your settings
+## Step 1 — Settings
 
-```sh
-just env
-uv run downloadinux config import-env
-```
+`just setup` starts by making sure there is a settings file
+(`~/.config/downloadinux/config.toml` by default), one of three ways:
 
-`just env` copies `.env.example` to `.env` and fills in your host UID/GID.
-The import writes `~/.config/downloadinux/config.toml` with VPN enabled and
-copies an existing token into `credentials.toml` beside it (0600). It copies
-the old cookie jar to the managed directory and leaves the originals in place.
-`just setup` runs this import automatically when the settings file is absent.
+- **A settings file exists:** it is left alone.
+- **A `.env` exists in the checkout** (an install from before the settings
+  file): setup imports it with `dlx config import-env`, VPN on, as below.
+- **Neither:** setup asks `Route downloads through NordVPN? [y/N]`. `y` or
+  `yes`, in any case, writes the starter file with the VPN on
+  (`dlx init --set vpn.enabled=true`); any other answer, including just
+  pressing Enter or running setup with no input (`just setup < /dev/null`),
+  writes it with the VPN off (`dlx init`).
 
-For an existing installation, run `dlx config import-env` once before the next
-`just up` (or `uv run downloadinux config import-env` before installing `dlx`).
-The import refuses to overwrite settings without `--force`. Edit the TOML
-settings after migration; the recipes now read them instead of `.env`.
-For a fresh configuration without VPN, use `dlx init` instead of the import.
+The import writes `config.toml` with VPN enabled and copies an existing token
+into `credentials.toml` beside it (0600). It copies the old cookie jar to the
+managed directory and leaves the originals in place. It refuses to overwrite
+settings without `--force`. Edit the TOML settings after migration; the
+recipes read them, not `.env`. To import by hand, run `dlx config import-env`
+once before the next `just up` (or `uv run downloadinux config import-env`
+before installing `dlx`).
+
+`just env` is the legacy import's helper only: it copies `.env.example` to
+`.env` with your host UID/GID filled in, for `dlx config import-env` to read.
+A new setup needs neither.
 
 ## Step 2 — Get your NordVPN token
+
+With the VPN off, `just setup` skips this step and asks for nothing: a token
+does nothing until the VPN is on. It prints how to turn it on later: set
+`enabled = true` under `[vpn]` in the settings file (it names the path), then
+`just token <token>` and `just restart`. With the VPN on, a stored token is
+left alone; otherwise setup prompts for one, and pressing Enter (or no input)
+skips it.
 
 The container logs in with an access token, not your password. Get one:
 
@@ -522,8 +536,10 @@ resolved config prints the token.
 ```
 just                 Show the menu
 
-just setup           Cold start: everything below, in order, interactively
-just env             Write .env with your real UID/GID
+just setup           Cold start: settings (import .env, or init after a VPN
+                       question), token, cookies, build, launch
+just env             Write a legacy .env with your real UID/GID, for
+                       dlx config import-env
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
@@ -572,6 +588,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── config-value.sh           # recipes read config show --json
+│   ├── setup.sh                  # `just setup`'s settings and token steps
 │   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)

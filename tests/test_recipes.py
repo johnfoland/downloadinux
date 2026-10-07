@@ -143,3 +143,33 @@ def test_no_recipe_names_the_old_home():
 
 def test_the_gate_syntax_checks_the_batch_loop():
     assert any("zsh/batch.zsh" in line for line in recipe("check"))
+
+
+def test_setup_runs_its_settings_and_token_steps_and_never_writes_env():
+    # Target design, Migration, "Pinned for P0001-C06" (DEC-23).
+    body = [line.strip() for line in recipe("setup")]
+    script = checkout.asset_path("scripts/setup.sh").read_text()
+    assert "just env" not in "\n".join(body) + script
+    assert body.index("bash scripts/setup.sh") == 4  # after the shebang and set
+    headings = [
+        line.split("==> ")[1].split("\\033")[0]
+        for line in body + script.splitlines() if "==> " in line
+    ]
+    assert sorted(headings) == [
+        "1/5  Settings",
+        "2/5  NordVPN token",
+        "3/5  Exporting browser cookies",
+        "4/5  Building the image (first run takes a few minutes)",
+        "5/5  Starting up",
+    ]
+    assert body[-3:] == [
+        'echo ""',
+        "just doctor",
+        "printf '\\n\\033[1;32mReady.\\033[0m  Get in with:  \\033[1;36mjust shell\\033[0m\\n'",
+    ]
+
+
+def test_env_menu_text_names_the_import():
+    menu = recipe("env")[0]
+    assert menu.startswith("# Write a legacy .env")
+    assert "config import-env" in menu

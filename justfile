@@ -14,31 +14,11 @@ default:
 # First run
 # ---------------------------------------------------------------------------
 
-# Cold start: import .env into settings, token, managed cookies, build, launch
+# Cold start: settings (import .env, or init after a VPN question), token, cookies, build, launch
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
-    printf '\033[1;36m==> 1/5  Writing .env\033[0m\n'
-    just env
-    if [[ "$(bash scripts/config-value.sh config_file.exists)" == false ]]; then
-      uv run downloadinux config import-env
-    fi
-
-    printf '\n\033[1;36m==> 2/5  NordVPN token\033[0m\n'
-    if [[ "$(bash scripts/config-value.sh token)" == set ]]; then
-      echo "    Already set in credentials.toml, leaving it alone."
-    else
-      echo "    Get one at: https://my.nordaccount.com"
-      echo "    Services > NordVPN > Manual setup > Set up NordVPN manually >"
-      echo "    Generate new token > 30 days (or no expiry)"
-      echo ""
-      read -r -p "    Paste token (or press Enter to skip): " token
-      if [[ -n "$token" ]]; then
-        just token "$token"
-      else
-        echo "    Skipped. Run 'just token <token>' later."
-      fi
-    fi
+    bash scripts/setup.sh
 
     printf '\n\033[1;36m==> 3/5  Exporting browser cookies\033[0m\n'
     # Presence of the file proves nothing — yt-dlp writes its jar back on every
@@ -61,7 +41,7 @@ setup:
     just doctor
     printf '\n\033[1;32mReady.\033[0m  Get in with:  \033[1;36mjust shell\033[0m\n'
 
-# Write .env from the example, filled in with your real UID/GID
+# Write a legacy .env with your real UID/GID, for `dlx config import-env`
 env:
     #!/usr/bin/env bash
     set -euo pipefail

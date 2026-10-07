@@ -19,8 +19,8 @@ run it; `docs/` holds the planning documents for the refactor, and
 
 ## Commands
 
-- `just setup`: cold start (`.env`, NordVPN token, cookies, build, launch,
-  health check). `just` alone lists every recipe.
+- `just setup`: cold start (settings file, NordVPN token, cookies, build,
+  launch, health check). `just` alone lists every recipe.
 - `just build` / `just up`: rebuild the image, start the container.
 - `just doctor`: structured configuration, cookie, Docker, mount, tool, and
   VPN health checks (`--json` is available). Only enabled-VPN checks need real
