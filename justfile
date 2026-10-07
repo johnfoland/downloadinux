@@ -76,12 +76,26 @@ cookies profile="":
     mkdir -p -m 700 "$directory"
     chmod 700 "$directory"
     jar="$directory/cookies.txt"
+    stage=$(mktemp "$directory/.cookies.XXXXXX")
+    trap 'rm -f -- "$stage"' EXIT
+    chmod 600 "$stage"
     echo "    Reading cookies from $src ..."
     # yt-dlp writes its cookie jar back to --cookies on exit, which turns a
     # live browser profile into the Netscape file both downloaders can read.
-    yt-dlp --cookies-from-browser "$src" --cookies "$jar" \
-           --simulate --quiet --no-warnings '{{probe}}'
+    probe_status=0
+    yt-dlp --cookies-from-browser "$src" --cookies "$stage" \
+           --simulate --quiet --no-warnings '{{probe}}' || probe_status=$?
+    first_line=""
+    if ! IFS= read -r first_line < "$stage" || [[ "$first_line" != "# Netscape HTTP Cookie File" ]]; then
+      echo "    Cookie export did not produce a usable Netscape jar; the managed jar was left unchanged." >&2
+      exit 1
+    fi
+    mv -f -- "$stage" "$jar"
+    trap - EXIT
     chmod 600 "$jar"
+    if [[ $probe_status -ne 0 ]]; then
+      echo "    Warning: the YouTube probe failed (yt-dlp exit $probe_status), but the exported jar was published." >&2
+    fi
     n=$(grep -cv '^#' "$jar" || true)
     echo "    Wrote $jar — $n cookies."
     for site in instagram youtube tiktok; do
