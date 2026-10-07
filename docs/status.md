@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-07 by `relay-project`.
+Last updated 2026-10-07 by `relay-next`.
 Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## Where this stands
@@ -9,7 +9,8 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
   complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
   P0001-C06.
 - **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-26,
-  delivery items D1–D3. No chunk has been cut yet.
+  delivery items D1–D3. P0002-C01 is ready for an executor with D1's
+  portable atomic no-clobber writes.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
@@ -18,8 +19,8 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## In flight
 
-- **Chunk:** —
-- **State:** none
+- **Chunk:** P0002-C01
+- **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
 - **Units committed:** —

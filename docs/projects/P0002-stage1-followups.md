@@ -139,7 +139,7 @@ chunk in flight.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| P0002-C01 | D1 (all of it; issue #14) | ready for an executor | — | — |
 
 ## 8. Closeout
 
