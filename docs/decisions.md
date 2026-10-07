@@ -402,3 +402,58 @@ for an install that still wants to import one.
 *Where:* [target design](target-design.md), *Migration* ("Pinned for
 P0001-C06"). Added cutting P0001-C06, with the maintainer's choice of the
 question.
+
+## DEC-24: No-clobber writes fall back to an exclusive reservation (2026-10)
+
+A no-clobber settings or credentials write keeps the same-directory,
+fully-written temporary file, and prefers the existing hard-link publication.
+When the filesystem specifically refuses hard links with `EPERM`,
+`EOPNOTSUPP`, or `ENOTSUP`, it reserves the target with `O_CREAT | O_EXCL` at
+mode 000 and atomically replaces that reservation with the temporary file. An
+existing target still fails, other link errors do not silently take the
+fallback, and exception cleanup removes the reservation only while its device
+and inode still match the file this operation created.
+
+Writing directly into an `O_EXCL` target was rejected because readers could
+observe partial configuration. Failing outright was rejected because a custom
+config location on exFAT, FUSE, or a similar filesystem is supported. A killed
+process can leave its mode-000 reservation; treating it as an existing file is
+safer than deleting a path whose ownership cannot be proved after restart.
+
+*Where:* [target design](target-design.md), *Host application* ("Portable
+no-clobber writes, pinned for P0002"). Added during project P0002 (issue #14).
+
+## DEC-25: Cookie export success is independent of the probe (2026-10)
+
+The Stage 1 Firefox recipe stages its jar and treats a Netscape cookie-file
+header as evidence that yt-dlp completed the export. A non-zero result from the
+fixed YouTube probe is then a warning, not an export failure: the staged jar is
+published, site counts are printed, and the user-agent is refreshed. Without a
+usable staged jar, the recipe fails and preserves the existing jar. During
+`just setup`, an already-present Instagram session skips the export but still
+refreshes the user-agent; the export path refreshes it through `just cookies`.
+
+Trusting the existing final jar after a probe failure was rejected because it
+cannot show that this run exported anything. Ignoring every non-zero result was
+rejected because a failure before cookie loading must not replace a working jar.
+Deferring both fixes to Stage 2 was rejected because the current setup already
+ends with an avoidable warning or stops before its user-agent refresh.
+
+*Where:* [target design](target-design.md), *Migration* ("Cookie and user-agent
+follow-ups, pinned for P0002"). Added during project P0002 (issues #20 and #26).
+
+## DEC-26: The runtime user owns application home directories (2026-10)
+
+After the configured UID and GID are applied, the entrypoint makes
+`/home/dl/.local`, `/home/dl/.local/share`, the `zsh-history` volume root at
+`/home/dl/.local/share/downloadinux`, and `/home/dl/.config` owned by that
+runtime identity. The ownership changes are non-recursive and do not follow a
+final symlink, so they repair Docker-created parents without traversing user
+data or mount contents.
+
+Moving the history volume higher in the home directory was rejected because it
+changes the persistent-volume contract. Recursive ownership was rejected
+because it can rewrite retained data and makes startup cost grow with it.
+
+*Where:* [target design](target-design.md), *Container contract* ("Runtime home
+ownership, pinned for P0002"). Added during project P0002 (issue #22).

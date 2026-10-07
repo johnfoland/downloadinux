@@ -1,6 +1,7 @@
 # Target design
 
-Status: Stage 1 is implemented; Stages 2–4 remain proposed.
+Status: Stage 1 is implemented; its P0002 follow-up hardening is designed but
+not yet implemented; Stages 2–4 remain proposed.
 
 ## Agreed decisions
 
@@ -21,6 +22,11 @@ installation, configuration and locations, the container contract, presets,
 VPN mode, structured health checks, migration, and the implementation details
 the delivery chunks settled. The sections below distinguish the implemented
 Stage 1 contracts from the later proposals.
+
+Project P0002 adds DEC-24 to DEC-26 for the remaining Stage 1 follow-ups:
+portable no-clobber writes, cookie and user-agent refresh outcomes, and runtime
+ownership of application directories in `dl`'s home. Those rules are settled;
+their implementation remains pending until P0002's chunks are accepted.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -95,12 +101,33 @@ Package details, pinned for P0001-C01:
   a malformed token, a failed health check), 2 for a usage error or invalid
   configuration. Errors go to stderr as `downloadinux: error: …`; a
   configuration error names the file (or `--set`) and the key.
-- Writes to the settings and credentials files are atomic: a temporary file
-  in the same directory, created with the final mode, then renamed into place.
+- Writes to the settings and credentials files go through a temporary file in
+  the same directory, created with the final mode and synced before it is
+  published. Replacing an existing file uses an atomic rename; a no-clobber
+  write never replaces a target that already exists.
 - A failure the operating system reports (a directory that cannot be created,
   a file that cannot be written or read, a missing `docker` executable) is an
   operation failure: exit 1, reported as `downloadinux: error: <path>: <reason>`,
   never a traceback.
+
+Portable no-clobber writes, pinned for P0002 (DEC-24):
+
+- A no-clobber write first tries to publish its synced same-directory
+  temporary file by hard link, which atomically fails with `FileExistsError`
+  when the target exists. Only `EPERM`, `EOPNOTSUPP`, or `ENOTSUP` from that
+  link attempt select the fallback; every other error keeps its normal failure
+  meaning.
+- The fallback reserves the target with `O_CREAT | O_EXCL` at mode 000, records
+  that reservation's device and inode, closes it, and atomically replaces that
+  reservation with the temporary file. An existing target still produces
+  `FileExistsError`. On a handled failure after reservation, cleanup removes
+  the target only when it is still the reservation the operation created; it
+  never removes a path another actor replaced.
+- The fallback therefore supports exFAT and other filesystems without hard
+  links while keeping the completed contents behind one replace and preserving
+  the no-clobber boundary. A process killed between reservation and replacement
+  may leave the mode-000 reservation; a later no-clobber write refuses it as an
+  existing target rather than guessing that it is safe to delete.
 
 Docker invocation, pinned for P0001-C02:
 
@@ -458,6 +485,18 @@ Pinned for P0001-C04, the end of DEC-15's interval:
 - Entrypoint messages (issue #18): without a token, `NORDVPN_TOKEN not set.
   Store one on the host with: just token <token>`; the last line, `Ready.
   Shell in with: just shell (or dlx shell)`.
+
+Runtime home ownership, pinned for P0002 (DEC-26):
+
+- After applying the configured UID and GID, the entrypoint ensures
+  `/home/dl/.local`, `/home/dl/.local/share`,
+  `/home/dl/.local/share/downloadinux`, and `/home/dl/.config` exist and makes
+  each directory entry, but no descendant, owned by that runtime identity.
+  Ownership changes are non-recursive and do not follow a final symlink.
+- This includes the root of the existing `zsh-history` named volume, but does
+  not change the volume target or rewrite history data. It makes the parents
+  Docker creates for that nested mount writable, so `dl` can later create
+  `~/.local/bin` or another application directory without running as root.
 
 ## Presets
 
@@ -834,6 +873,27 @@ Pinned for P0001-C06, D5's setup (DEC-23):
   file>`, asserting exit 0, `ok` true, and `config.file` `ok`. CI's Linux run
   of it is Stage 1's evidence that a fresh `init` config passes `doctor` with
   the VPN off.
+
+Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
+
+- Until Stage 2 replaces the Firefox recipe, `just cookies` exports into a
+  mode-0600 temporary file in `paths.cookies`, never directly over the managed
+  jar. A staged file is usable when its first line is the Netscape cookie-file
+  header; zero cookie rows are allowed. Only a usable staged file is atomically
+  moved to `cookies.txt`, so a failed or malformed export leaves the previous
+  jar untouched.
+- The fixed YouTube request remains only as the mechanism that makes host
+  yt-dlp load and write the browser cookies. Its exit status is not the export
+  result: when yt-dlp exits non-zero after writing a usable staged jar, the
+  recipe prints a warning that the probe failed, publishes the jar, prints the
+  site counts, refreshes the user-agent, and exits 0. When there is no usable
+  staged jar, it exits non-zero after cleanup and does not report a refresh.
+  yt-dlp's own diagnostics remain visible, and no cookie value is printed.
+- `just setup` still skips the export when the managed jar already contains an
+  Instagram `sessionid`, but that branch runs `just useragent` before the build.
+  The export branch relies on `just cookies` to do the same after publication,
+  so each setup path attempts one refresh. DEC-21 still applies on a host
+  without readable Chrome: the refresh warns, writes nothing, and succeeds.
 
 ## Named cookie sources
 
