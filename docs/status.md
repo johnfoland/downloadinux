@@ -1,16 +1,17 @@
 # Status
 
 Last updated 2026-10-07 by `relay-next`.
-Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
+Last review: 2026-10-07 (P0002-C01, accepted).
 
 ## Where this stands
 
 - **P0001** (Stage 1, portable configuration and shared operations) is
   complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
   P0001-C06.
-- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-26,
-  delivery items D1–D3. P0002-C01 is ready for an executor with D1's
-  portable atomic no-clobber writes.
+- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-27,
+  delivery items D1–D3. D1's portable atomic no-clobber writes are accepted
+  in P0002-C01; D2's reliable cookie and setup refresh is ready as P0002-C02;
+  D3 has not started.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
@@ -19,7 +20,7 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 
 ## In flight
 
-- **Chunk:** P0002-C01
+- **Chunk:** P0002-C02
 - **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
@@ -50,3 +51,4 @@ One line per chunk: the decision-log IDs it added.
 - P0001-C04 (cut): DEC-20, DEC-21.
 - P0001-C05 (cut): DEC-22 (amended in its review).
 - P0001-C06 (cut): DEC-23.
+- P0002-C01-a: DEC-27.

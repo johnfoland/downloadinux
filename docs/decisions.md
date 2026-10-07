@@ -457,3 +457,22 @@ because it can rewrite retained data and makes startup cost grow with it.
 
 *Where:* [target design](target-design.md), *Container contract* ("Runtime home
 ownership, pinned for P0002"). Added during project P0002 (issue #22).
+
+## DEC-27: Reservation cleanup requires verifiable identity and working OS calls (2026-10)
+
+If recording the reservation's identity with `fstat` fails, or its directory
+entry cannot be inspected during cleanup, the writer preserves the entry:
+without that evidence it cannot distinguish its reservation from a foreign
+replacement. An unlink failure likewise leaves the entry in place. The file
+descriptor is closed and temporary cleanup is attempted even in these cases;
+any OS failure, including cleanup failures, names the requested target in the
+CLI's exit-1 error. A cleanup failure takes precedence over the original
+publication failure so the remaining residue is not hidden.
+
+The chunk's unconditional promise that every failure removes an owned
+reservation cannot be implemented when identity or deletion calls themselves
+fail. Guessing ownership or ignoring those failures was rejected because it
+would weaken DEC-24's ownership boundary or conceal incomplete cleanup.
+
+*Where:* [target design](target-design.md), *Host application*, "Portable
+no-clobber writes, pinned for P0002". Added during P0002-C01-a.
