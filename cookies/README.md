@@ -15,6 +15,13 @@ just cookies
 
 Reads your host Firefox profile and writes `paths.cookies`/`cookies.txt` in
 Netscape format (0600 in a 0700 directory), then reports cookie counts by site.
+It stages the export beside the managed jar, validates the Netscape header,
+and atomically replaces the jar only when that staged output is usable. A
+missing, empty, or malformed export leaves the previous jar untouched. The
+fixed YouTube probe may still fail after Firefox cookies were exported; in
+that case the recipe warns, publishes the usable jar, prints its counts, and
+continues successfully.
+
 Multiple profiles:
 
 ```sh
@@ -38,7 +45,8 @@ Any Firefox extension that emits Netscape format works — "cookies.txt" or
 "Get cookies.txt LOCALLY". Export while logged in, save as `cookies.txt` under
 the configured `paths.cookies` directory, with mode 0600.
 
-The recipe is just this, which is worth knowing if you ever need to vary it:
+For a manual export you can run the underlying yt-dlp command directly when
+you need to vary it:
 
 ```sh
 yt-dlp --cookies-from-browser firefox --cookies ~/.local/share/downloadinux/cookies/cookies.txt \
@@ -47,7 +55,9 @@ yt-dlp --cookies-from-browser firefox --cookies ~/.local/share/downloadinux/cook
 
 yt-dlp writes its cookie jar back to `--cookies` on exit, which is what turns
 a live browser profile into a portable file. The URL is only there to give it
-something to do.
+something to do. Unlike `just cookies`, this manual command writes the managed
+jar directly: it does not stage and validate the replacement or preserve the
+previous jar when the export is unusable.
 
 ## Cookies come from Firefox, the user-agent says Chrome
 
@@ -91,6 +101,10 @@ after a Chrome update; `just doctor` warns if the setting falls behind the
 host version or stops being Chrome. Without Chrome in `/Applications` (any
 Linux host) it warns and leaves the setting alone, so the export still
 succeeds.
+
+`just setup` attempts the same refresh exactly once before its build: when it
+keeps an existing Instagram session it runs `just useragent` directly, and
+when it exports a jar it relies on `just cookies` to do so.
 
 If Instagram ever does challenge the session, the fix is the same as for
 expiry: clear it in Firefox, then re-run `just cookies`.

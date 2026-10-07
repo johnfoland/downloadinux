@@ -26,6 +26,7 @@ setup:
     jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
     if grep -qE 'instagram.*sessionid' "$jar" 2>/dev/null; then
       echo "    Already have an Instagram session, leaving cookies alone."
+      just useragent
     else
       echo "    Make sure you're logged in to the sites you care about in Firefox."
       just cookies || echo "    Skipped — run 'just cookies' later."

@@ -169,6 +169,19 @@ def test_setup_runs_its_settings_and_token_steps_and_never_writes_env():
     ]
 
 
+def test_setup_cookie_branches_each_own_one_user_agent_refresh():
+    # Target design, Migration, "Cookie and user-agent follow-ups" (DEC-25).
+    body = [line.strip() for line in recipe("setup")]
+    refresh = body.index("just useragent")
+    alternate = body.index("else", refresh)
+    export = body.index("just cookies || echo \"    Skipped — run 'just cookies' later.\"")
+    assert body.count("just useragent") == 1
+    assert refresh < alternate < export
+    assert body[refresh - 1] == (
+        'echo "    Already have an Instagram session, leaving cookies alone."'
+    )
+
+
 def test_env_menu_text_names_the_import():
     menu = recipe("env")[0]
     assert menu.startswith("# Write a legacy .env")
