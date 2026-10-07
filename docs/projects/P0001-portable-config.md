@@ -233,6 +233,11 @@ checks are `ok`.
 
 ### D5 — Setup flow, docs, and migration proof
 
+**Implemented:** P0001-C06 (pull request #25), awaiting review: `just setup`
+over the CLI with DEC-23's VPN question, the Stage 1 docs, the maintainer's
+installation migrated in place on macOS (recorded in the chunk report), and
+the smoke test's fresh-`init` `doctor` run in CI.
+
 **Build:** `just setup` rewritten over the CLI (import an existing `.env` or
 `init`, token, cookies, build, up, doctor); `.env.example` removed or marked
 as the legacy import format; README.md rewritten for the implemented Stage 1

@@ -252,7 +252,7 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 Settled for Stage 1 (DEC-8). Implemented in P0001-C01: the settings and
 credentials files, their locations, `config show`, `init`, and
-`config set-token` (storing only; the login on set is pending).
+`config set-token` (storing; its login on set is implemented in P0001-C03).
 
 Separate installation files, user configuration, credentials, and mutable state.
 Routine operation must not rewrite tracked files in the checkout.
@@ -681,7 +681,8 @@ are implemented (P0001-C03), so every D2 command and wrapper is implemented.
 The `dl`, `batch`, `watch`, and `useragent` wrappers are implemented
 (P0001-C04, D3); the structured `doctor`, its wrapper, and the gate's
 VPN-off health run are implemented (P0001-C05, D4). The setup rewrite
-(DEC-23, "Pinned for P0001-C06" below) is pending.
+(DEC-23, "Pinned for P0001-C06" below) and the gate's fresh-`init` health run
+are implemented (P0001-C06, D5), so Stage 1's migration is implemented.
 
 `config import-env [--env PATH]` (default: `.env` in the checkout) writes the
 settings and credentials files from `HOST_DOWNLOADS`, `PUID`, `PGID`, `TZ`,

@@ -209,3 +209,26 @@ ID 228. An API parse failure prints a message and exits successfully, another
 case where a future UI needs more explicit error state.
 
 There are no tracked automated tests or CI configuration in the reviewed tree.
+
+## Since this review: Stage 1
+
+Everything above is the dated baseline of 2026-09-27 and is left as written.
+Stage 1 (project [P0001](projects/P0001-portable-config.md), chunks
+P0001-C01 to P0001-C06) has since been implemented; this table maps each
+portability constraint above, and the notes after it, to what Stage 1 did.
+[README.md](../README.md) describes the implemented behavior.
+
+| Baseline observation | Stage 1 outcome | Where |
+| --- | --- | --- |
+| Container paths use `/home/<user>/Downloads` | Resolved: four fixed mounts, `/downloads`, `/config`, `/state`, `/cookies`, and a container user that is always `dl`; no recipe names `/home/dl`, and DEC-15's old-path links are gone (DEC-9) | target design *Container contract*; P0001-C02, P0001-C04 |
+| Config and cookies reside in the checkout | Resolved: settings and credentials at XDG locations, the managed cookie jar and state outside the checkout, the presets mounted read-only, and `config user-agent` writing the settings file rather than tracked configs (DEC-8, DEC-10) | target design *Configuration and paths*, *Presets*; P0001-C01, P0001-C02, P0001-C04 |
+| Queue files must live under the download mount | Not resolved: `dlx batch` still requires it, now checking and translating the path itself. Stage 3 (persistent worker and jobs) owns queues | target design *Host application* ("Downloads"); implementation plan *Stage 3* |
+| Firefox-only export and macOS Chrome lookup | Partly: `config user-agent` reads Chrome's plist without `defaults` and only warns on a host without Chrome (DEC-21), but `just cookies` still exports from Firefox through host yt-dlp. Stage 2 (named cookie sources) owns it | target design *Host application* ("Downloads"), *Migration*; implementation plan *Stage 2* |
+| NordVPN is installed and wired into every deployment | Resolved: `vpn.enabled` per config, off for a fresh one; with it off, Compose runs without the VPN overlay and the entrypoint starts no `nordvpnd` (DEC-11). The image still contains NordVPN; a separate VPN service is still open | target design *VPN mode*; implementation plan *Decisions to resolve*; P0001-C02, P0001-C03 |
+| Fixed container name | Resolved: no `container_name`; `container.project` names the Compose project, so independent instances (the gate's `downloadinux-check`, for one) run side by side | target design *Host application* ("Docker invocation"); P0001-C02, P0001-C03 |
+| UID/GID baked into image | Resolved: applied at container start from `container.uid` and `container.gid` (DEC-9); `just restart` applies a change without a rebuild | target design *Container contract*; `scripts/entrypoint.sh`; P0001-C02 |
+| Personal shell configuration participates in execution | Resolved for downloads: `dl` runs the preset's argument list through `exec`, and `batch` runs the loop under `zsh -f`, sourcing only `zsh/batch.zsh`; `just shell` stays an interactive convenience. Batches keep tmux until Stage 3 (DEC-4) | target design *Host application* ("Downloads"), *Presets*; P0001-C04 |
+| Linux ownership: output subdirectories created as root | Resolved: the entrypoint creates them as `dl` and never chowns a mount, warning instead when one is unwritable; the gate's smoke test checks the subdirectories and a write to each mount on CI's Linux runner | `scripts/entrypoint.sh`, `scripts/smoke.sh`; P0001-C02 |
+| The mount health check tests only that a directory exists | Resolved: `doctor` checks each mount with `mountpoint` and a create-and-remove probe as `dl`, skipping the probe when the path is not a mount (DEC-12, DEC-22) | target design *Health checks*; P0001-C05, P0001-C06 |
+| `doctor`'s "logged in" wording overstates a cookie check | Resolved: cookie checks report a session cookie as *present*, and neither README claims a login is valid; Stage 2's inspection adds expiry, still without claiming validity | target design *Health checks*; README.md *Step 3*; P0001-C05, P0001-C06 |
+| No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` and every push to it, with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
