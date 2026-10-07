@@ -8,12 +8,13 @@ Last review: 2026-10-07 (P0001-C06, accepted with follow-ups).
 - **P0001** (Stage 1, portable configuration and shared operations) is
   complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
   P0001-C06.
+- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-26,
+  delivery items D1–D3. No chunk has been cut yet.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **D1–D5** done: P0001-C01 to P0001-C06, pull requests #12, #15, #16,
-  #19, #24, and #25. Stage 1 is implemented and P0001 is closed; no project
-  is active.
+- **P0001 D1–D5** done: P0001-C01 to P0001-C06, pull requests #12, #15,
+  #16, #19, #24, and #25. Stage 1 is implemented and P0001 is closed.
 
 ## In flight
 
