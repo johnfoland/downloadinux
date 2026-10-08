@@ -79,13 +79,18 @@ cookies profile="":
     jar="$directory/cookies.txt"
     stage=$(mktemp "$directory/.cookies.XXXXXX")
     trap 'rm -f -- "$stage"' EXIT
-    chmod 600 "$stage"
+    # yt-dlp reads an existing --cookies path before writing it. Reserve the
+    # name, then remove only our empty entry so it starts with no input jar.
+    rm -- "$stage"
     echo "    Reading cookies from $src ..."
     # yt-dlp writes its cookie jar back to --cookies on exit, which turns a
     # live browser profile into the Netscape file both downloaders can read.
     probe_status=0
     yt-dlp --cookies-from-browser "$src" --cookies "$stage" \
            --simulate --quiet --no-warnings '{{probe}}' || probe_status=$?
+    if [[ -f "$stage" ]]; then
+      chmod 600 "$stage"
+    fi
     first_line=""
     if ! IFS= read -r first_line < "$stage" || [[ "$first_line" != "# Netscape HTTP Cookie File" ]]; then
       echo "    Cookie export did not produce a usable Netscape jar; the managed jar was left unchanged." >&2

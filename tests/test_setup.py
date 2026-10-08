@@ -309,6 +309,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 printf 'called\\n' >>"$YTDLP_LOG"
+if [ -e "$stage" ] && [ ! -s "$stage" ]; then
+  echo "yt-dlp: existing cookie file is not Netscape format" >&2
+  exit 1
+fi
 if [ "$YTDLP_STAGE" = valid ]; then
   printf '# Netscape HTTP Cookie File\\n.instagram.com\\tTRUE\\t/\\tTRUE\\t0\\tsessionid\\ttest-secret\\n' >"$stage"
 else

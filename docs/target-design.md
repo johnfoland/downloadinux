@@ -888,8 +888,12 @@ Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
 
 - Until Stage 2 replaces the Firefox recipe, `just cookies` exports into a
   mode-0600 temporary file in `paths.cookies`, never directly over the managed
-  jar. A staged file is usable when its first line is the Netscape cookie-file
-  header; zero cookie rows are allowed. Only a usable staged file is atomically
+  jar. It reserves a same-directory temporary name, installs cleanup, then
+  removes that empty entry before invoking yt-dlp: an existing `--cookies`
+  path is read as an input jar first. The file yt-dlp creates is set to mode
+  0600 before validation and publication. A staged file is usable when its
+  first line is the Netscape cookie-file header; zero cookie rows are allowed.
+  Only a usable staged file is atomically
   moved to `cookies.txt`, so a failed or malformed export leaves the previous
   jar untouched.
 - The fixed YouTube request remains only as the mechanism that makes host

@@ -35,6 +35,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 printf 'profile=%s\\nstage=%s\\n' "$profile" "$stage" >"$YTDLP_LOG"
+# yt-dlp loads an existing --cookies jar before saving browser cookies.
+if [ -e "$stage" ]; then
+  printf 'stage_exists=yes\\n' >>"$YTDLP_LOG"
+  if [ ! -s "$stage" ]; then
+    echo "yt-dlp: existing cookie file is not Netscape format" >&2
+    exit 1
+  fi
+else
+  printf 'stage_exists=no\\n' >>"$YTDLP_LOG"
+fi
 echo "yt-dlp diagnostic from the probe" >&2
 case "$YTDLP_STAGE" in
   valid)
@@ -53,6 +63,9 @@ case "$YTDLP_STAGE" in
     printf 'not a Netscape jar\\nsuper-secret-value\\n' >"$stage"
     ;;
 esac
+if [ -n "${YTDLP_MODE:-}" ] && [ -f "$stage" ]; then
+  chmod "$YTDLP_MODE" "$stage"
+fi
 exit "$YTDLP_STATUS"
 """
 
@@ -73,6 +86,15 @@ exit 23
 MKTEMP_STUB = """#!/bin/sh
 echo "mktemp: simulated staging failure" >&2
 exit 21
+"""
+
+RM_STUB = """#!/bin/sh
+if [ ! -e "$REMOVE_LOG" ]; then
+  : >"$REMOVE_LOG"
+  echo "rm: simulated reservation removal failure" >&2
+  exit 24
+fi
+exec /bin/rm "$@"
 """
 
 CHMOD_STUB = """#!/bin/sh
@@ -118,6 +140,7 @@ def cookie_host(tmp_path):
             "COOKIE_DIRECTORY": str(directory),
             "YTDLP_LOG": str(tmp_path / "yt-dlp.log"),
             "USERAGENT_LOG": str(tmp_path / "useragent.log"),
+            "REMOVE_LOG": str(tmp_path / "remove.log"),
             "YTDLP_STAGE": "valid",
             "YTDLP_STATUS": "0",
         }
@@ -176,8 +199,20 @@ def test_usable_stage_is_published_even_when_the_probe_fails(cookie_host, probe_
         line.split("=", 1) for line in cookie_host["yt_dlp_log"].read_text().splitlines()
     )
     assert invocation["profile"] == "firefox:work-profile"
+    assert invocation["stage_exists"] == "no"
     assert Path(invocation["stage"]).parent == cookie_host["directory"]
     assert Path(invocation["stage"]) != cookie_host["jar"]
+    assert "super-secret-value" not in result.stdout + result.stderr
+
+
+def test_exported_stage_mode_is_restricted_before_publication(cookie_host):
+    cookie_host["env"]["YTDLP_MODE"] = "644"
+
+    result = run_cookies(cookie_host)
+
+    assert result.returncode == 0, result.stderr
+    assert mode(cookie_host["jar"]) == 0o600
+    assert stages(cookie_host) == []
 
 
 def test_header_only_stage_is_a_valid_zero_cookie_export(cookie_host):
@@ -258,6 +293,7 @@ def test_publication_failure_preserves_the_previous_jar_and_cleans_the_stage(
     [
         ("mktemp", MKTEMP_STUB, 21, "simulated staging failure"),
         ("chmod", CHMOD_STUB, 22, "simulated stage mode failure"),
+        ("rm", RM_STUB, 24, "simulated reservation removal failure"),
     ],
 )
 def test_staging_and_mode_failures_preserve_the_previous_jar(
@@ -275,3 +311,6 @@ def test_staging_and_mode_failures_preserve_the_previous_jar(
     assert "Wrote " not in result.stdout
     assert not cookie_host["useragent_log"].exists()
     assert stages(cookie_host) == []
+    # Mode-setting now runs on yt-dlp's output; allocation/removal failures
+    # must stop before calling yt-dlp at all.
+    assert cookie_host["yt_dlp_log"].exists() is (command == "chmod")
