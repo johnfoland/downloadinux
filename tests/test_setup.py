@@ -1,5 +1,4 @@
-"""`just setup`'s Settings and NordVPN token steps, run for real (P0001-C06-b;
-target design, Migration, "Pinned for P0001-C06"; DEC-23).
+"""`just setup`'s settings, token, and cookie paths (DEC-23 and DEC-25).
 
 `scripts/setup.sh` runs under bash with `uv` on `PATH` replaced by a stub
 that runs this package's CLI (`<python> -m downloadinux …`), so the script,
@@ -7,11 +6,15 @@ that runs this package's CLI (`<python> -m downloadinux …`), so the script,
 run unfaked (review-checklist §2). `docker` and `just` are stubs that log
 their arguments and fail, so nothing reaches the host's Docker or recipes.
 Every `XDG_*` directory and the `.env` are under `tmp_path`.
+
+The full-recipe tests stub the first two steps and external commands, then run
+the actual cookie branch, build, start, and doctor recipe flow.
 """
 
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -25,6 +28,7 @@ SETUP = checkout.asset_path("scripts/setup.sh")
 ANSI = re.compile(r"\033\[[0-9;]*m")
 VPN_QUESTION = "Route downloads through NordVPN? [y/N] "
 TOKEN_PROMPT = "Paste token (or press Enter to skip): "
+JUST = shutil.which("just")
 
 UV_STUB = """#!/bin/sh
 # Drop everything up to and including `downloadinux`; run this package's CLI.
@@ -269,3 +273,164 @@ def test_a_failed_init_stops_setup_with_its_status(host):
     assert "Permission denied" in err
     assert "Traceback" not in err
     assert "2/5" not in out
+
+
+FULL_SETUP_BASH_STUB = """#!/bin/sh
+case "$1" in
+  scripts/setup.sh)
+    printf '\\033[1;36m==> 1/5  Settings\\033[0m\\n'
+    printf '\\033[1;36m==> 2/5  NordVPN token\\033[0m\\n'
+    exit 0
+    ;;
+  scripts/config-value.sh)
+    printf '%s\\n' "$COOKIE_DIRECTORY"
+    exit 0
+    ;;
+esac
+exec /bin/bash "$@"
+"""
+
+FULL_SETUP_UV_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >>"$UV_LOG"
+exit 0
+"""
+
+FULL_SETUP_YTDLP_STUB = """#!/bin/sh
+stage=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cookies)
+      stage=$2
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+printf 'called\\n' >>"$YTDLP_LOG"
+if [ -e "$stage" ] && [ ! -s "$stage" ]; then
+  echo "yt-dlp: existing cookie file is not Netscape format" >&2
+  exit 1
+fi
+if [ "$YTDLP_STAGE" = valid ]; then
+  printf '# Netscape HTTP Cookie File\\n.instagram.com\\tTRUE\\t/\\tTRUE\\t0\\tsessionid\\ttest-secret\\n' >"$stage"
+else
+  printf 'not a Netscape jar\\ntest-secret\\n' >"$stage"
+fi
+"""
+
+FULL_SETUP_SLEEP_STUB = """#!/bin/sh
+exit 0
+"""
+
+
+@pytest.fixture
+def full_setup_host(tmp_path):
+    assert JUST is not None
+    bin_dir = tmp_path / "full-setup-bin"
+    bin_dir.mkdir()
+    stubs = {
+        "bash": FULL_SETUP_BASH_STUB,
+        "uv": FULL_SETUP_UV_STUB,
+        "yt-dlp": FULL_SETUP_YTDLP_STUB,
+        "sleep": FULL_SETUP_SLEEP_STUB,
+    }
+    for name, body in stubs.items():
+        path = bin_dir / name
+        path.write_text(body)
+        path.chmod(0o755)
+    directory = tmp_path / "managed cookies"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "COOKIE_DIRECTORY": str(directory),
+            "UV_LOG": str(tmp_path / "full-setup-uv.log"),
+            "YTDLP_LOG": str(tmp_path / "full-setup-ytdlp.log"),
+            "YTDLP_STAGE": "valid",
+        }
+    )
+    return {
+        "directory": directory,
+        "jar": directory / "cookies.txt",
+        "uv_log": tmp_path / "full-setup-uv.log",
+        "yt_dlp_log": tmp_path / "full-setup-ytdlp.log",
+        "env": env,
+    }
+
+
+def run_full_setup(host):
+    return subprocess.run(
+        [JUST, "--justfile", str(checkout.asset_path("justfile")), "setup"],
+        cwd=checkout.checkout_root(),
+        env=host["env"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def setup_headings(output):
+    return [
+        line for line in ANSI.sub("", output).splitlines() if line.startswith("==> ")
+    ]
+
+
+def assert_full_setup_finishes(result, host):
+    assert result.returncode == 0, result.stderr
+    assert setup_headings(result.stdout) == [
+        "==> 1/5  Settings",
+        "==> 2/5  NordVPN token",
+        "==> 3/5  Exporting browser cookies",
+        "==> 4/5  Building the image (first run takes a few minutes)",
+        "==> 5/5  Starting up",
+    ]
+    calls = host["uv_log"].read_text().splitlines()
+    assert calls[-3:] == [
+        "run downloadinux build",
+        "run downloadinux up",
+        "run downloadinux doctor",
+    ]
+    return calls
+
+
+def test_full_setup_refreshes_once_when_it_keeps_an_instagram_session(
+    full_setup_host,
+):
+    full_setup_host["directory"].mkdir()
+    original = b"# Netscape HTTP Cookie File\n.instagram.com sessionid kept-secret\n"
+    full_setup_host["jar"].write_bytes(original)
+
+    result = run_full_setup(full_setup_host)
+
+    calls = assert_full_setup_finishes(result, full_setup_host)
+    assert full_setup_host["jar"].read_bytes() == original
+    assert not full_setup_host["yt_dlp_log"].exists()
+    assert calls.count("run downloadinux config user-agent") == 1
+    assert calls.index("run downloadinux config user-agent") < calls.index(
+        "run downloadinux build"
+    )
+
+
+def test_full_setup_export_relies_on_cookies_for_its_one_refresh(full_setup_host):
+    result = run_full_setup(full_setup_host)
+
+    calls = assert_full_setup_finishes(result, full_setup_host)
+    assert full_setup_host["yt_dlp_log"].read_text().splitlines() == ["called"]
+    assert calls.count("run downloadinux config user-agent") == 1
+    assert calls.index("run downloadinux config user-agent") < calls.index(
+        "run downloadinux build"
+    )
+
+
+def test_full_setup_carries_on_after_an_unusable_cookie_export(full_setup_host):
+    full_setup_host["env"]["YTDLP_STAGE"] = "wrong-header"
+
+    result = run_full_setup(full_setup_host)
+
+    calls = assert_full_setup_finishes(result, full_setup_host)
+    assert "Skipped — run 'just cookies' later." in result.stdout
+    assert calls.count("run downloadinux config user-agent") == 0
+    assert not full_setup_host["jar"].exists()
+    assert "test-secret" not in result.stdout + result.stderr

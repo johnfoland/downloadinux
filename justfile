@@ -26,6 +26,7 @@ setup:
     jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
     if grep -qE 'instagram.*sessionid' "$jar" 2>/dev/null; then
       echo "    Already have an Instagram session, leaving cookies alone."
+      just useragent
     else
       echo "    Make sure you're logged in to the sites you care about in Firefox."
       just cookies || echo "    Skipped — run 'just cookies' later."
@@ -76,12 +77,31 @@ cookies profile="":
     mkdir -p -m 700 "$directory"
     chmod 700 "$directory"
     jar="$directory/cookies.txt"
+    stage=$(mktemp "$directory/.cookies.XXXXXX")
+    trap 'rm -f -- "$stage"' EXIT
+    # yt-dlp reads an existing --cookies path before writing it. Reserve the
+    # name, then remove only our empty entry so it starts with no input jar.
+    rm -- "$stage"
     echo "    Reading cookies from $src ..."
     # yt-dlp writes its cookie jar back to --cookies on exit, which turns a
     # live browser profile into the Netscape file both downloaders can read.
-    yt-dlp --cookies-from-browser "$src" --cookies "$jar" \
-           --simulate --quiet --no-warnings '{{probe}}'
+    probe_status=0
+    yt-dlp --cookies-from-browser "$src" --cookies "$stage" \
+           --simulate --quiet --no-warnings '{{probe}}' || probe_status=$?
+    if [[ -f "$stage" ]]; then
+      chmod 600 "$stage"
+    fi
+    first_line=""
+    if ! IFS= read -r first_line < "$stage" || [[ "$first_line" != "# Netscape HTTP Cookie File" ]]; then
+      echo "    Cookie export did not produce a usable Netscape jar; the managed jar was left unchanged." >&2
+      exit 1
+    fi
+    mv -f -- "$stage" "$jar"
+    trap - EXIT
     chmod 600 "$jar"
+    if [[ $probe_status -ne 0 ]]; then
+      echo "    Warning: the YouTube probe failed (yt-dlp exit $probe_status), but the exported jar was published." >&2
+    fi
     n=$(grep -cv '^#' "$jar" || true)
     echo "    Wrote $jar — $n cookies."
     for site in instagram youtube tiktok; do

@@ -156,6 +156,14 @@ The result lands at `paths.cookies`/`cookies.txt` (by default
 directory. The container reads it at `/cookies/cookies.txt`, the path every
 download is given. The checkout's old jar is no longer read by the container.
 
+The recipe exports to a mode-0600 temporary file beside the managed jar and
+checks for the Netscape cookie-file header before atomically replacing
+`cookies.txt`. If Firefox export produces no usable jar, the recipe fails and
+leaves the previous one untouched. The fixed YouTube request is only the probe
+that makes yt-dlp perform the export: if that request fails after a usable jar
+was written, the recipe warns, publishes the jar, prints the counts, and
+continues successfully.
+
 `just cookies` also runs `just useragent` (`dlx config user-agent`), which
 sets `downloads.user_agent` in `config.toml` to the user-agent of your host
 **Chrome** version (`Chrome/<major>.0.0.0`, as Chrome itself reports), so the
@@ -184,7 +192,9 @@ to try. `just doctor` reports whether a session cookie is *present* (Instagram's
 exists. It cannot tell whether the site still accepts that session: an
 expired one is still present, so failing downloads are the real signal.
 `just setup` skips the export whenever the jar already holds an Instagram
-`sessionid`, so after a session expires, run `just cookies` yourself.
+`sessionid`, but still refreshes the user-agent before building. When setup
+does export, `just cookies` performs that one refresh itself. After a session
+expires, run `just cookies` yourself.
 
 You can skip this step entirely if you only grab public videos. The entrypoint
 seeds an empty-but-valid cookie file so yt-dlp doesn't hard-error on a missing
