@@ -102,9 +102,10 @@ host version or stops being Chrome. Without Chrome in `/Applications` (any
 Linux host) it warns and leaves the setting alone, so the export still
 succeeds.
 
-`just setup` attempts the same refresh exactly once before its build: when it
-keeps an existing Instagram session it runs `just useragent` directly, and
-when it exports a jar it relies on `just cookies` to do so.
+`just setup` attempts the same refresh exactly once before its build when it
+keeps an existing Instagram session or publishes a usable export. The existing
+session branch runs `just useragent` directly; the export branch relies on
+`just cookies`. An unusable export skips the refresh and setup carries on.
 
 If Instagram ever does challenge the session, the fix is the same as for
 expiry: clear it in Firefox, then re-run `just cookies`.

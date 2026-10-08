@@ -1,7 +1,8 @@
 # Target design
 
-Status: Stage 1 is implemented; its P0002 follow-up hardening is designed but
-not yet implemented; Stages 2–4 remain proposed.
+Status: Stage 1 is implemented. P0002's portable writes and cookie/setup refresh
+hardening are implemented; runtime-home ownership remains pending. Stages 2–4
+remain proposed.
 
 ## Agreed decisions
 
@@ -23,10 +24,11 @@ VPN mode, structured health checks, migration, and the implementation details
 the delivery chunks settled. The sections below distinguish the implemented
 Stage 1 contracts from the later proposals.
 
-Project P0002 adds DEC-24 to DEC-26 for the remaining Stage 1 follow-ups:
+Project P0002 adds DEC-24 to DEC-27 for the remaining Stage 1 follow-ups:
 portable no-clobber writes, cookie and user-agent refresh outcomes, and runtime
-ownership of application directories in `dl`'s home. Those rules are settled;
-their implementation remains pending until P0002's chunks are accepted.
+ownership of application directories in `dl`'s home. P0002-C01 implements the
+portable writes (D1); P0002-C02 implements cookie and setup refresh (D2).
+Runtime-home ownership (D3, DEC-26) is settled but remains pending.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -886,6 +888,9 @@ Pinned for P0001-C06, D5's setup (DEC-23):
 
 Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
 
+Implemented in P0002-C02 (D2), including the absent staging path required by
+yt-dlp's input-before-output cookie lifecycle.
+
 - Until Stage 2 replaces the Firefox recipe, `just cookies` exports into a
   mode-0600 temporary file in `paths.cookies`, never directly over the managed
   jar. It reserves a same-directory temporary name, installs cleanup, then
@@ -893,9 +898,8 @@ Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
   path is read as an input jar first. The file yt-dlp creates is set to mode
   0600 before validation and publication. A staged file is usable when its
   first line is the Netscape cookie-file header; zero cookie rows are allowed.
-  Only a usable staged file is atomically
-  moved to `cookies.txt`, so a failed or malformed export leaves the previous
-  jar untouched.
+  Only a usable staged file is atomically moved to `cookies.txt`, so a failed
+  or malformed export leaves the previous jar untouched.
 - The fixed YouTube request remains only as the mechanism that makes host
   yt-dlp load and write the browser cookies. Its exit status is not the export
   result: when yt-dlp exits non-zero after writing a usable staged jar, the
@@ -906,8 +910,9 @@ Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
 - `just setup` still skips the export when the managed jar already contains an
   Instagram `sessionid`, but that branch runs `just useragent` before the build.
   The export branch relies on `just cookies` to do the same after publication,
-  so each setup path attempts one refresh. DEC-21 still applies on a host
-  without readable Chrome: the refresh warns, writes nothing, and succeeds.
+  so each successful cookie path attempts one refresh. An unusable export skips
+  the refresh and setup carries on, as pinned above. DEC-21 still applies on a
+  host without readable Chrome: the refresh warns, writes nothing, and succeeds.
 
 ## Named cookie sources
 

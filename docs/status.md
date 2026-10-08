@@ -1,7 +1,7 @@
 # Status
 
-Last updated 2026-10-08 by `relay-execute`.
-Last review: 2026-10-08 (P0002-C02, rework requested).
+Last updated 2026-10-08 by `relay-next`.
+Last review: 2026-10-08 (P0002-C02, accepted after rework).
 
 ## Where this stands
 
@@ -10,21 +10,21 @@ Last review: 2026-10-08 (P0002-C02, rework requested).
   P0001-C06.
 - **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-27,
   delivery items D1–D3. D1's portable atomic no-clobber writes are accepted
-  in P0002-C01; D2's P0002-C02 is awaiting another review after fixing the
-  pre-created empty staging jar rejected by yt-dlp; D3 has not started.
+  in P0002-C01; D2's reliable cookie and setup refresh are accepted in
+  P0002-C02 after rework. D3's runtime-home ownership and project completion
+  evidence are ready for an executor in P0002-C03. Remaining: accept D3 and
+  audit project completion with `/relay-project`.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
-- **P0001 D1–D5** done: P0001-C01 to P0001-C06, pull requests #12, #15,
-  #16, #19, #24, and #25. Stage 1 is implemented and P0001 is closed.
 
 ## In flight
 
-- **Chunk:** P0002-C02
-- **State:** awaiting review
-- **Branch:** `chunk/p0002-c02`
-- **Pull request:** `#31` (ready)
-- **Units committed:** a, b
+- **Chunk:** P0002-C03
+- **State:** ready for an executor
+- **Branch:** —
+- **Pull request:** —
+- **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are

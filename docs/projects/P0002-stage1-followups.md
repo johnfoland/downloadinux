@@ -71,6 +71,7 @@ acceptance criterion.
 | [decisions.md](../decisions.md), DEC-24 to DEC-27 | Added the portable publication, its unverifiable-cleanup boundary, cookie success, and runtime-home ownership choices | Records the genuine alternatives shared by multiple callers or runs |
 | [target-design.md](../target-design.md), *Host application* ("Portable no-clobber writes, pinned for P0002") | Defines fallback triggers, reservation, race-safe cleanup, and crash residue | Owns host file-write behavior and errors |
 | target design, *Migration* ("Cookie and user-agent follow-ups, pinned for P0002") | Defines staging, validation, probe failure, preservation, and setup refresh behavior | Owns the Stage 1 compatibility recipes users run |
+| target design, *Status*, *Agreed decisions*, and *Migration* (P0002-C02 review) | Marks D1/D2 implemented, documents yt-dlp's absent staging path, and clarifies that failed export skips refresh | Keeps accepted behavior distinguishable from the pending D3 rule |
 | target design, *Container contract* ("Runtime home ownership, pinned for P0002") | Defines the owned directory entries and non-recursive boundary | Owns startup identity and filesystem ownership |
 
 ## 5. Delivery plan
@@ -140,8 +141,9 @@ chunk in flight.
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30 (squash pending) |
-| P0002-C02 | D2 (all of it; issues #20 and #26) | rework requested | 2026-10-08, PR #31 | — |
+| P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30, `9b3251b` |
+| P0002-C02 | D2 (all of it; issues #20 and #26) | accepted | 2026-10-08, PR #31, after rework | PR #31 (squash pending) |
+| P0002-C03 | D3 (all of it; issue #22), project completion evidence | ready for an executor | — | — |
 
 ## 8. Closeout
 
