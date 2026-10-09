@@ -302,16 +302,26 @@ Beyond each item's focused tests, accepted chunks must evidence:
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| [P0003-C01](../chunks/P0003-C01.md) | D1, parser/summaries and source-store reader/writer foundation | ready for an executor | — | — |
+| [P0003-C01](../chunks/P0003-C01.md) | D1, parser/summaries and source-store reader/writer foundation | accepted | 2026-10-10, accept | PR #39 |
+| [P0003-C02](../chunks/P0003-C02.md) | D1, locked legacy migration and public list/inspect/default operations | ready for an executor | — | — |
 
 P0003-C01 has three units. D1 still needs automatic legacy migration and the
 public `list`/`inspect`/`default` operations after this foundation; D2–D5 remain
 unstarted. The split keeps parser/schema and publication fault/concurrency
 coverage reviewable before commands begin using the store. The cut was checked
 against every brief-checklist entry; §6's cleanup qualification is explicit.
-No implementation has landed yet. `/relay-next` owns chunk sizing and this ledger.
+C01's 2026-10-10 re-review accepts both parser fixes: normalized-domain
+duplicate rejection and BOM/UTF-8 line reporting, with 206 focused tests and
+the full 649-test seven-step gate green. P0003-C02 has two units and gathers
+D1's remaining migration/inspection/default evidence, retaining the Stage 1
+execution boundary. Its cut was checked against every brief-checklist entry,
+including §3's transition wording and §6's residue qualification; no new
+authority rule or decision was needed. D2–D5 remain unstarted. The next planner
+commit fills C01's squash SHA after PR #39 merges. `/relay-next` owns chunk
+sizing and this ledger.
 
 ## 8. Closeout
 
-Not complete or abandoned. No accepted implementation chunks or release effect
-have been recorded; the repository has no release system.
+Not complete or abandoned. C01 is accepted; D1's remaining migration/public
+commands and D2–D5 still require implementation and accepted evidence. No
+release effect has been recorded; the repository has no release system.

@@ -10,8 +10,9 @@ transitional in-container links (P0001-C04); D4: structured health checks and
 their wrapper and smoke coverage (P0001-C05); and D5: `just setup` over the
 CLI, the Stage 1 docs, and the in-place migration proof (P0001-C06). Its rules
 are in the [target design](target-design.md). Stage 2 is settled for project
-[P0003](projects/P0003-named-cookie-sources.md), but not implemented; Stages
-3–4 remain proposals.
+[P0003](projects/P0003-named-cookie-sources.md). P0003-C01 implements its internal
+parser and atomic source-store foundation; public commands, migration, and
+execution remain unimplemented. Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -45,7 +46,9 @@ Acceptance criteria:
 
 Settled contract: target design *Named cookie sources*, DEC-28 to DEC-33.
 P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
-No source operation or snapshot runner is implemented yet.
+P0003-C01 implements the strict parser/summaries, immutable registry reader,
+and atomic host publication foundation. No public source command, automatic
+legacy migration, browser operation, or snapshot runner is implemented yet.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
