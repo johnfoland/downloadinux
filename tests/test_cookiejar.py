@@ -69,6 +69,39 @@ def test_duplicates():
         parse(row(),row(value='other'))
 
 
+@pytest.mark.parametrize('domain,sub', [('Example.com', 'FALSE'), ('.Example.com', 'TRUE')])
+@pytest.mark.parametrize('httponly', ['', '#HttpOnly_'])
+@pytest.mark.parametrize('name', ['CANARY_NAME', ''])
+def test_normalized_domain_duplicates(domain, sub, httponly, name):
+    with pytest.raises(cj.CookieFormatError) as error:
+        parse(httponly + row(domain, sub, name=name),
+              row(domain.lower(), sub, name=name, value='CANARY_OTHER'))
+    assert 'synthetic.txt: line 3: invalid duplicate domain/path/name' in str(error.value)
+    assert 'CANARY' not in str(error.value)
+
+
+@pytest.mark.parametrize('second', [dict(path='/Case'), dict(name='canary_name')])
+def test_normalized_domains_keep_case_sensitive_paths_and_names(second):
+    material = parse(row('Example.com', 'FALSE', path='/case', name='CANARY_NAME'),
+                     row('example.com', 'FALSE', path=second.get('path', '/case'),
+                         name=second.get('name', 'CANARY_NAME')))
+    assert len(material.jar) == 2
+    assert {c.domain for c in material.jar} == {'example.com'}
+    assert semantics(cj.parse(cj.serialize(material, Path('jar')).encode(), Path('jar')).jar) == semantics(material.jar)
+
+
+@pytest.mark.parametrize('bom', [b'', b'\xef\xbb\xbf'])
+@pytest.mark.parametrize('ending', [b'\n', b'\r\n'])
+@pytest.mark.parametrize('line', [1, 2, 3, 4])
+def test_utf8_error_lines(bom, ending, line):
+    prefix = [cj.HEADER.rstrip('\n').encode(), b'# CANARY_COMMENT', b''][:line - 1]
+    data = bom + b''.join(part + ending for part in prefix) + b'\xffCANARY_VALUE' + ending
+    with pytest.raises(cj.CookieFormatError) as error:
+        cj.parse(data, Path('synthetic.txt'))
+    assert f'synthetic.txt: line {line}: invalid UTF-8' in str(error.value)
+    assert 'CANARY' not in str(error.value)
+
+
 def test_empty_and_counts():
     assert cj.summary(parse(),now=100) == dict(total=0,session=0,expired=0,unexpired=0,domains=[])
     material = parse(row(expiry='100'), row(path='/a',expiry='101'), row(path='/b',expiry='99'),row(path='/c',expiry=''),

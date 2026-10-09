@@ -35,7 +35,8 @@ def parse(data: bytes, path: Path) -> Material:
     try:
         text = data.decode('utf-8-sig')
     except UnicodeDecodeError as error:
-        line = data[:error.start].count(b'\n') + 1
+        # utf-8-sig offsets describe the decoder's buffer after BOM removal.
+        line = error.object[:error.start].count(b'\n') + 1
         raise invalid(path, line, 'UTF-8') from None
     lines = text.split('\n')
     if not MAGIC.match(lines[0].removesuffix('\r')):
@@ -67,7 +68,9 @@ def parse(data: bytes, path: Path) -> Material:
         for label, text_value in [('name', name), ('value', value)]:
             if '\r' in text_value or '\x00' in text_value:
                 raise invalid(path, number, label)
-        key = (domain, path_value, name)
+        # Cookie lowercases domains; validate its stored key before insertion
+        # so normalization cannot silently replace credentials (DEC-30).
+        key = (domain.lower(), path_value, name)
         if key in keys:
             raise invalid(path, number, 'duplicate domain/path/name')
         keys.add(key)

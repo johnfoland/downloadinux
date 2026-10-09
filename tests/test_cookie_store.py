@@ -128,6 +128,22 @@ def test_managed_parent_symlink(tmp_path):
         store.read(tmp_path)
 
 
+def test_normalized_domain_collision_in_managed_revision(tmp_path):
+    fixture(tmp_path)
+    snapshot = store.read(tmp_path)
+    path = store.revision_path(tmp_path, 'file', RID)
+    path.write_text(cookiejar.HEADER +
+                    'Example.com\tFALSE\t/\tTRUE\t0\tCANARY_NAME\tCANARY_VALUE\n' +
+                    'example.com\tFALSE\t/\tTRUE\t0\tCANARY_NAME\tCANARY_OTHER\n')
+    for operation in (lambda: store.read(tmp_path),
+                      lambda: store.inspect(tmp_path, snapshot, 'file')):
+        with pytest.raises(DownloadinuxError) as error:
+            operation()
+        assert f'{path}: line 3: invalid duplicate domain/path/name' in str(error.value)
+        assert 'CANARY' not in str(error.value)
+        assert error.value.exit_status == 1
+
+
 def test_registry_os_error(tmp_path):
     (tmp_path/'sources.json').mkdir()
     with pytest.raises(DownloadinuxError,match='sources.json'):
