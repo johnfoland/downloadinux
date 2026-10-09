@@ -1,7 +1,7 @@
 # Status
 
-Last updated 2026-10-09 by `relay-execute`.
-Last review: 2026-10-09 (P0003-C01, rework).
+Last updated 2026-10-10 by `relay-next`.
+Last review: 2026-10-10 (P0003-C01, accepted).
 
 ## Where this stands
 
@@ -19,9 +19,11 @@ Last review: 2026-10-09 (P0003-C01, rework).
   migration. DEC-31 and DEC-33 were amended on 2026-10-09 to the maintainer's
   answers: pin revisions at submission and retire container download shortcuts.
   [P0003-C01](chunks/P0003-C01.md) implements D1's strict parser/summaries,
-  immutable registry reader, and atomic host writer on its chunk branch.
-  Its rework adds normalized-domain duplicate rejection and accurate BOM/UTF-8
-  error lines; the fixes and regression evidence await review in PR #39.
+  immutable registry reader, and atomic host writer, accepted through PR #39
+  after normalized-domain duplicate and BOM/UTF-8 diagnostic rework (649 tests
+  and all seven gate steps green).
+  [P0003-C02](chunks/P0003-C02.md) is ready with two units for locked legacy
+  migration and public `cookies list`/`inspect`/`default` commands.
   Public source commands, automatic legacy migration, and private execution
   jars remain unimplemented; Stage 1 routes are unchanged. D1's migration and
   inspection/default commands remain next; D2–D5 remain unstarted.
@@ -33,11 +35,11 @@ Last review: 2026-10-09 (P0003-C01, rework).
 
 ## In flight
 
-- **Chunk:** P0003-C01
-- **State:** awaiting review
-- **Branch:** `chunk/p0003-c01`
-- **Pull request:** `#39` (ready)
-- **Units committed:** a, b, c
+- **Chunk:** P0003-C02
+- **State:** ready for an executor
+- **Branch:** —
+- **Pull request:** —
+- **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
