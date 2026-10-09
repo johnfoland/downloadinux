@@ -302,14 +302,17 @@ Beyond each item's focused tests, accepted chunks must evidence:
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| [P0003-C01](../chunks/P0003-C01.md) | D1, parser/summaries and source-store reader/writer foundation | ready for an executor | — | — |
+| [P0003-C01](../chunks/P0003-C01.md) | D1, parser/summaries and source-store reader/writer foundation | executing (rework; PR #39) | 2026-10-09, rework | — |
 
 P0003-C01 has three units. D1 still needs automatic legacy migration and the
 public `list`/`inspect`/`default` operations after this foundation; D2–D5 remain
 unstarted. The split keeps parser/schema and publication fault/concurrency
 coverage reviewable before commands begin using the store. The cut was checked
 against every brief-checklist entry; §6's cleanup qualification is explicit.
-No implementation has landed yet. `/relay-next` owns chunk sizing and this ledger.
+No implementation has integrated yet. PR #39 contains the completed units,
+with two blocking parser findings in its 2026-10-09 review; the executor
+reworks normalized-domain duplicate rejection and BOM/UTF-8 line reporting
+before D1 continues. `/relay-next` owns chunk sizing and this ledger.
 
 ## 8. Closeout
 

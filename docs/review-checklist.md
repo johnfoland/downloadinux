@@ -71,3 +71,33 @@ of a shape the documented types do not name.
 `ValueError`, and `ExpatError`; `plistlib` raises `AttributeError` on a
 `<date>` it cannot parse, so `dlx config user-agent` printed a traceback
 instead of DEC-21's warning (issue #23).
+
+### §4. Duplicate validation uses keys from before library normalization
+
+A wrapper rejects duplicate raw input keys, then a library changes those keys
+before inserting records into its own keyed collection. Two inputs that passed
+the wrapper's uniqueness test can silently overwrite each other. Validate
+uniqueness in the representation the consumer stores, and test normalization
+collisions alongside distinctions that must remain case-sensitive. Sweep every
+aggregate insertion boundary and preserve independent normalization fixes.
+
+*Found:* P0003-C01 review: `cookiejar.parse` accepted two rows with the same
+path/name for `Example.com` and `example.com`, then `MozillaCookieJar` lowercased
+the domains and retained only one record. Dot-domain, HttpOnly, and empty-name
+variants reproduced the loss; distinct paths/names remained separate. The only
+aggregate insertion boundary is shared by reads, serialization, and publication.
+
+### §5. Error locations apply a transformed-input offset to the original input
+
+A decoder or parser removes a prefix or transforms its input, and its error
+position refers to that transformed buffer. Error rendering counts lines in
+the original buffer using that offset, pointing the user at the wrong line.
+Use the buffer the error describes or map its position back explicitly. Test
+errors immediately after boundaries, with and without every accepted prefix
+and line-ending form, rather than testing prefixes only on valid inputs.
+
+*Found:* P0003-C01 review: `utf-8-sig` removed the BOM before reporting a
+`UnicodeDecodeError.start`, but `cookiejar.parse` sliced the original bytes.
+Invalid bytes on lines 2–4 reported line 1 with a BOM and the right line
+without it. The sweep of decoder-error handlers found no sibling offset
+calculation requiring another fix.
