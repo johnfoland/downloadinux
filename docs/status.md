@@ -33,8 +33,8 @@ Last review: 2026-10-09 (P0002-C03, accepted).
 - **Chunk:** P0003-C01
 - **State:** executing
 - **Branch:** `chunk/p0003-c01`
-- **Pull request:** pending
-- **Units committed:** —
+- **Pull request:** `#39` (draft)
+- **Units committed:** a
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
