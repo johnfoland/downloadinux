@@ -52,13 +52,15 @@ No source operation or snapshot runner is implemented yet.
 - Support explicit anonymous execution.
 - Perform host-side extraction and validate imports with a real parser.
 - Refresh atomically, retaining the previous source on failure.
-- Give each invocation its own working jar and separate user-agent policy.
+- Pin the source identity and immutable cookie revision when work is submitted;
+  create its private working jar at startup, with separate user-agent policy.
 - Remove the fixed YouTube probe and macOS-only Chrome lookup from the required
   cookie workflow; keep the lookup only in the optional compatibility command.
 - Migrate the managed Stage 1 jar once into `legacy` without altering it; keep
   imports browser-independent and fresh/unattended setups anonymous by default.
-- Preserve host wrappers and container download helpers through the shared
-  snapshot runner; keep tmux and existing batch limits until Stage 3.
+- Preserve host wrappers through the snapshot runner and retire container
+  download shortcuts; keep the non-interactive zsh batch loop, tmux, and existing
+  batch limits until Stage 3.
 - Clean abandoned snapshots through container-held leases, while retaining
   immutable canonical revisions until a later pruning design.
 
@@ -66,7 +68,8 @@ Acceptance criteria:
 
 - Two named sources, and two invocations of one source, can be used
   concurrently without sharing mutable jars.
-- Refreshing a source does not change an already-running job's cookies.
+- Refreshing or replacing a source does not change submitted or running work's
+  pinned cookies; startup fails if that exact revision is unavailable.
 - Imported files work without an installed browser.
 - Invalid imports and unavailable browsers/profiles produce actionable errors.
 - Failed refreshes preserve the existing usable source.
@@ -74,7 +77,7 @@ Acceptance criteria:
   validity or exposing values.
 - Cookie refresh does not dirty the checkout or alter the user-agent.
 - A detached batch keeps one snapshot until its loop finishes; cleanup does
-  not remove active foreground, batch, or shell-helper cookies.
+  not remove active foreground or batch cookies.
 - Migration preserves the previous account choice; explicit anonymous mode
   does not read even a damaged store.
 - Browser adapters are tested with fixtures on macOS and Linux; the gate
@@ -140,7 +143,8 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 
 - Inventory settings to import from `.env` without copying secrets into docs/logs.
 - Register the existing `cookies/cookies.txt` as a named source.
-- Preserve `dlmp4` and `dlgal` naming and output conventions as initial presets.
+- Preserve `dlmp4` and `dlgal` naming and output conventions in the presets;
+  retire their container shell shortcuts in Stage 2 and document host commands.
 - Preserve or explicitly relocate the existing gallery archive.
 - Import existing text queues with a documented duplicate policy.
 - Keep old URL-only batch logs distinguishable from new job history.
@@ -153,7 +157,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | --- | --- |
 | Configuration format and host installation method | Resolved for Stage 1: TOML at XDG locations (DEC-8), editable install from the checkout (DEC-7). A self-contained distribution is still open. |
 | Worker interface and job-store ownership | Determines status streaming, coordination, and restart behavior |
-| Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default at submission, latest revision at startup; one snapshot per invocation or whole batch (DEC-31). Stage 3 defines job persistence. |
+| Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default and immutable revision pinned at submission; private copy at startup, one jar per invocation or whole batch (DEC-31, amended 2026-10-09). Stage 3 defines job persistence. |
 | Imported managed copies versus linked files | Resolved for Stage 2: immutable managed copies; refresh explicitly re-reads the stored origin, with no linked sources (DEC-28, DEC-29). |
 | Browser support for Stage 2 | Resolved: Firefox, Chrome, and Chromium through the locked host yt-dlp adapter; file imports require no browser (DEC-29). Other browsers remain outside this stage. |
 | Cancellation, retry, duplicates, and concurrency | Defines scheduler and user-visible behavior |
