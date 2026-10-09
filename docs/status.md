@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-09 by `relay-project`.
+Last updated 2026-10-09 by `relay-next`.
 Last review: 2026-10-09 (P0002-C03, accepted).
 
 ## Where this stands
@@ -18,8 +18,10 @@ Last review: 2026-10-09 (P0002-C03, accepted).
   revisions/private startup jars, independent user-agent policy, and host-command
   migration. DEC-31 and DEC-33 were amended on 2026-10-09 to the maintainer's
   answers: pin revisions at submission and retire container download shortcuts.
-  The design is not implemented. No chunk is in flight; in a fresh session run `/relay-next`
-  to cut from [D1, source store/parser and legacy migration](projects/P0003-named-cookie-sources.md#d1--source-store-parser-and-idempotent-legacy-migration).
+  The design is not implemented. [P0003-C01](chunks/P0003-C01.md) is ready for
+  an executor: three units for D1's strict parser/summaries, registry reader,
+  and atomic host writer. D1's legacy migration and public inspection/default
+  commands remain after that foundation; D2–D5 remain unstarted.
   The next project ID is P0004. Source lifecycle and canonical revision pruning
   remain deliberately outside Stage 2 (issue #35).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
@@ -28,8 +30,8 @@ Last review: 2026-10-09 (P0002-C03, accepted).
 
 ## In flight
 
-- **Chunk:** —
-- **State:** none
+- **Chunk:** P0003-C01
+- **State:** ready for an executor
 - **Branch:** —
 - **Pull request:** —
 - **Units committed:** —
