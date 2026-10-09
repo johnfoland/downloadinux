@@ -1,9 +1,9 @@
 # Project P0002 — Stage 1 follow-up hardening
 
-- **State:** active
+- **State:** complete
 - **Created:** 2026-10-07
 - **Ready:** 2026-10-07
-- **Completed:** —
+- **Completed:** 2026-10-09
 - **Decisions:** DEC-24 to DEC-27
 
 ## 1. Problem and outcome
@@ -145,15 +145,42 @@ chunk in flight.
 |---|---|---|---|---|
 | P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30, `9b3251b` |
 | P0002-C02 | D2 (all of it; issues #20 and #26) | accepted | 2026-10-08, PR #31, after rework | PR #31, `47b82da` |
-| P0002-C03 | D3 (all of it; issue #22), project completion evidence | accepted | 2026-10-09, PR #32 | PR #32 (squash pending) |
+| P0002-C03 | D3 (all of it; issue #22), project completion evidence | accepted | 2026-10-09, PR #32 | PR #32, `2350732` |
 
 ## 8. Closeout
 
-Fill this only when completing or abandoning the project.
+- **Outcome:** The four Stage 1 follow-ups are resolved: settings and credentials
+  creation supports filesystems without hard links while retaining atomic
+  no-clobber publication; cookie refresh publishes usable exports despite probe
+  failure and preserves the previous jar on an unusable export; successful
+  exports and setup's existing-session path attempt one user-agent refresh; and
+  the runtime identity owns all four application-home entries without changing
+  retained history or final-symlink targets.
+- **Accepted chunks:** P0002-C01, P0002-C02 (after rework), and P0002-C03,
+  integrated through PRs #30, #31, and #32 at `9b3251b`, `47b82da`, and
+  `2350732`, respectively.
+- **Changelog entries:** Not applicable; this repository has no release system.
+  The accepted squash commits above record the three behavior-bearing fixes.
+- **Derived release effect:** `patch` — fixes the existing Stage 1 contracts
+  without adding an interface, changing paths, or requiring a state migration.
+- **Unfinished or deliberately excluded:** No delivery item remains. Stage 2's
+  named cookie sources, parser, snapshots, probe removal, and user-agent policy;
+  Stage 3's worker, job/archive design, and tmux removal; and Stage 4's TUI remain
+  proposals. Issues #4 (justfile shellchecking), #8 (Dependabot), #9
+  (self-contained installation), and #13 (CI action updates) remain outside this
+  project, as do VPN design changes.
+- **Decisions added or reopened:** DEC-24 to DEC-26 added during shaping;
+  DEC-27 added in P0002-C01. None reopened. This closeout adds no decision
+  or product rule.
 
-- **Outcome:** —
-- **Accepted chunks:** —
-- **Changelog entries:** —
-- **Derived release effect:** —
-- **Unfinished or deliberately excluded:** —
-- **Decisions added or reopened:** —
+Completion audited on 2026-10-09:
+
+| Criterion | Evidence |
+|---|---|
+| D1 accepted and integrated | [C01 report and review](../chunks/P0002-C01.md#review), PR #30, `9b3251b`; 129 focused cases and the seven-step gate cover fallback triggers, races, modes, cleanup, and path-bearing OS failures |
+| D2 accepted and integrated | [C02 rework and review](../chunks/P0002-C02.md#review), PR #31, `47b82da`; 55 focused cases and the gate cover absent staging input, usable/malformed exports, permissions, preservation, diagnostics, and refresh ownership |
+| D3 accepted and integrated | [C03 report and review](../chunks/P0002-C03.md#review), PR #32, `2350732`; the gate covers four numeric owners, three writable directories, retained history identity/content/ownership, final-symlink protection, and startup failures |
+| Full gate without a live site, VPN, or real credentials | C03's independent review passed all seven steps with 481 Python tests and credential-free Linux containers; [final PR-head Linux CI](https://github.com/johnfoland/downloadinux/actions/runs/37867655870) and [integrated-head CI](https://github.com/johnfoland/downloadinux/actions/runs/37867890612) at `2350732` both passed |
+| Source issues closed | #14 closed 2026-10-07 through PR #30; #20 and #26 closed 2026-10-08 through PR #31; #22 closed 2026-10-09 through PR #32; all four closed states verified at closeout |
+| Current-user documentation | README.md *The settings file* describes D1; *Step 3* describes D2; *The shared volume* and *What takes effect when* describe D3 and the required image rebuild |
+| Integrated project and idle handoff | All three squash identities appear in §7; `docs/status.md` has `Chunk: —` and `State: none`; the registry marks P0002 complete and clears its active pointer |
