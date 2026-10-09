@@ -3,9 +3,10 @@
 These documents capture the repository review of 2026-09-27 and the refactor
 it set in motion. Stage 1, portable configuration and shared operations
 (project P0001), is implemented: a host CLI, a settings file outside the
-checkout, and the `just` recipes as wrappers over it. Stages 2–4 (named
-cookie sources, a persistent worker in place of tmux, the Python + Textual
-TUI) remain proposals; batch runs still use tmux.
+checkout, and the `just` recipes as wrappers over it. Stage 2, named cookie
+sources, is settled in active project [P0003](projects/P0003-named-cookie-sources.md)
+and awaits implementation. Stages 3–4 (a persistent worker in place of tmux
+and the Python + Textual TUI) remain proposals; batch runs still use tmux.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.

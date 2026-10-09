@@ -476,3 +476,147 @@ would weaken DEC-24's ownership boundary or conceal incomplete cleanup.
 
 *Where:* [target design](target-design.md), *Host application*, "Portable
 no-clobber writes, pinned for P0002". Added during P0002-C01-a.
+
+## DEC-28: Cookie sources use an atomic registry and immutable managed revisions (2026-10)
+
+Named sources live in the effective `paths.cookies`, with one versioned JSON
+registry holding their origins, current revision, refresh timestamp, and nullable
+application default. The name is the stable ID. Canonical Netscape material is
+an immutable managed copy under a random revision ID. A host writer lock and
+one atomic registry publication commit a successful change together; readers
+use retained immutable revisions without relying on advisory locks crossing
+Docker's host boundary. Imported files remain external origins for explicit
+refresh, never linked working credentials. New stores default to anonymous;
+registration alone never switches accounts. Site defaults, renaming/deleting
+sources, and canonical revision pruning are outside Stage 2.
+
+Separate mutable metadata and jar publication was rejected because interruption
+could expose a new jar with an old revision or origin. Linked imports were
+rejected because external edits could change credentials without refresh.
+Revisions derived from cookie contents were rejected in favor of opaque random
+identities, keeping credential-derived data out of ordinary metadata.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Source store
+and publication*. Added during project P0003 (issue #34).
+
+## DEC-29: Browser export uses a host adapter without a live-site probe (2026-10)
+
+Stage 2 supports Firefox, Chrome, and Chromium on macOS and Linux through an
+injectable adapter around a locked host Python yt-dlp dependency. It extracts
+and serializes cookies directly without submitting a URL. Browser profiles,
+Firefox containers, and supported Linux Chromium keyrings are explicit
+selectors; unsupported combinations fail. A reported extraction warning/error
+fails conservatively, preserving the existing source rather than publishing a
+partial export. Clean empty exports are allowed. Netscape imports use managed
+copies, and refresh explicitly re-reads the stored origin. Registration exports
+before publishing; replacement requires `--replace`. Selection is a separate
+operation except for the explicit `just cookies` compatibility account switch.
+
+A subprocess running a simulated download was rejected because it restores the
+probe coupling Stage 2 removes. Implementing browser database/decryption logic
+ourselves was rejected because yt-dlp maintains that platform-specific work.
+Supporting every browser in its adapter immediately was deferred to keep the
+first support and validation matrix bounded. Linux keyring prerequisites must
+be documented rather than assuming an installed browser is sufficient.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Registration,
+refresh, and parsing*. Added during project P0003 (issue #34).
+
+## DEC-30: Cookie parsing and inspection share a strict, secret-free contract (2026-10)
+
+Imports, exports, migration, inspection, and health use the same Netscape parser,
+retaining session and expired records, HttpOnly, secure, and domain semantics.
+A header-only jar is valid. Invalid rows, duplicate domain/path/name keys, bad
+UTF-8, flags, or expiry fail with the path, line, and field, never the offending
+content. Inspection exposes source metadata, domain counts, expiry partitions,
+and recognized session-cookie presence; it emits no cookie values or individual
+cookie names and never asserts that authentication is valid. Time is injectable.
+
+Header/text matching was rejected because it accepts malformed credentials and
+loses expiry semantics. Silently dropping bad rows or choosing among duplicate
+credentials was rejected because consumers could disagree about the account.
+Live authentication tests were rejected as part of inspection: presence and
+expiry can be established locally without revealing cookies or depending on a
+site's current behavior.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Registration,
+refresh, and parsing* and *Compatibility and migration* (health checks). Added
+during project P0003 (issue #34).
+
+## DEC-31: Resolve identity at submission and cookies at execution startup (2026-10)
+
+Explicit named selection wins over the application default; explicit anonymous
+bypasses the source store entirely. Resolve a future job's default to a source
+identity at submission, then use that identity's latest revision when it starts.
+An unknown or unavailable source fails rather than changing account. Stage 2
+implements the same rule for invocations: a multi-URL `dl` gets one jar and a
+whole detached batch gets one jar. A container runner copies the canonical
+revision immediately before execution, holds a lease inherited by
+cookie-consuming children through the process tree/loop, and removes its
+private jar on handled completion. Cleanup runs in
+the Docker Linux environment and only removes directories with an available
+lease; active jars are never removed by age or host PID guesses. A short
+container allocation/cleanup lock closes the lease-creation race.
+
+Submission-time credential pinning was rejected so queued work can benefit from
+an explicit refresh before it starts. Per-URL batch refresh was rejected because
+it changes an active invocation's credentials. Host-return cleanup was rejected
+because detached batches outlive their launching CLI. This does not introduce
+job storage, batch concurrency, scheduling, or tmux removal before Stage 3.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Selection,
+private working jars, and lifetime*, and *Persistent jobs*;
+[implementation plan](implementation-plan.md), *Stage 2* and *Decisions to
+resolve*. Added during project P0003 (issue #34).
+
+## DEC-32: Cookie operations do not set or infer the user-agent (2026-10)
+
+Keep `downloads.user_agent` and the static explicit Chrome default, with a
+non-persistent literal override on `dl` and `batch`. Add an explicit-literal
+form of `config user-agent`; the no-argument DEC-21 lookup remains optional
+compatibility. Refresh, setup, and source selection never run that lookup or
+change the setting. Stage 2 doctor checks that a literal is present and suitable
+for a header, without accessing a browser or enforcing historical quality
+claims. Source metadata contains no user-agent policy.
+
+Automatically matching the source's browser was rejected because Firefox
+cookies and an explicit Chrome literal are an intentional existing workflow.
+Requiring local Chrome discovery was rejected because imports and anonymous
+execution must work on Linux and without a browser. DEC-21's existing optional
+command behavior is preserved; its use in the Stage 1 required recipe chain
+ends with Stage 2 rather than reopening that bounded Stage 1 decision.
+
+*Where:* [target design](target-design.md), *Named cookie sources / User-agent
+policy*, *Compatibility and migration*, and *Presets*;
+[implementation plan](implementation-plan.md), *Stage 2*. Added during project
+P0003 (issue #34).
+
+## DEC-33: Migrate the Stage 1 jar once and preserve compatibility through snapshots (2026-10)
+
+When there is no source registry, a cookie-aware host operation parses the
+managed Stage 1 jar and registers a nonempty one as the file source `legacy`
+and default. A missing or valid empty jar yields an anonymous store; invalid
+material fails without changing it. Migration is locked and idempotent, leaves
+both old jars in place, and never writes them from a downloader afterwards.
+Explicit anonymous mode bypasses it. `config import-env` retains DEC-13's copy
+behavior; migration follows on the first source-store operation.
+
+`just cookies [profile]` becomes an explicit create/replace/export/select of the
+named Firefox source in one successful publication. Setup preserves a named
+default regardless of Instagram cookies; with anonymous default, it offers an
+optional Firefox export, no by default or EOF. Host and container download
+helpers retain their names through the shared private-jar runner; the container
+never performs migration or accesses a browser. The image no longer seeds a
+shared cookie placeholder. Doctor reports source-store problems as structured
+checks using the shared parser, with cookie checks skipped for anonymous mode.
+
+Manual-only migration was rejected because existing downloads would silently
+become anonymous after upgrade. Reusing the old jar as a working jar was rejected
+because it would retain cross-invocation writeback. Mandatory Firefox export was
+rejected because imported and unattended setups must be usable independently.
+DEC-13's migration and DEC-25's Stage 1 bridge remain history; Stage 2 replaces
+the bridge at its planned boundary without reopening those decisions.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Compatibility
+and migration*; [implementation plan](implementation-plan.md), *Stage 2* and
+*Migration checklist*. Added during project P0003 (issue #34).

@@ -13,9 +13,13 @@ Last review: 2026-10-09 (P0002-C03, accepted).
   `9b3251b`, `47b82da`, `2350732`). Its completion audit records the accepted
   tests, current-user documentation, and closure of #14, #20, #22, and #26
   in [the project closeout](projects/P0002-stage1-followups.md#8-closeout).
-- **No project is active and no chunk is in flight.** The next project ID is
-  P0003; Stage 2 (named cookie sources) remains the next proposed refactor
-  stage and needs design through `/relay-project` before chunks are cut.
+- **P0003** (Stage 2, named cookie sources) is active: DEC-28 to DEC-33
+  settle its source store, browser/file operations, parser, startup snapshots,
+  independent user-agent policy, and compatibility migration. The design is
+  not implemented. No chunk is in flight; in a fresh session run `/relay-next`
+  to cut from [D1, source store/parser and legacy migration](projects/P0003-named-cookie-sources.md#d1--source-store-parser-and-idempotent-legacy-migration).
+  The next project ID is P0004. Source lifecycle and canonical revision pruning
+  remain deliberately outside Stage 2 (issue #35).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
