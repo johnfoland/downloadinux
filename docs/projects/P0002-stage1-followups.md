@@ -21,7 +21,8 @@ does not refresh the user-agent when it keeps an existing cookie jar
 This project closes that complete follow-up set. Afterwards custom config paths
 work on filesystems without hard links without losing the no-clobber boundary;
 cookie refresh succeeds or preserves the previous jar independently of the
-probe; every setup path attempts the user-agent refresh once; and `dl` owns the
+probe; successful exports and setup's existing-session path each attempt the
+user-agent refresh once; and `dl` owns the
 application directories in its home. These are one hardening project because
 they are the bounded remainder of P0001 and require three independently
 reviewable delivery outcomes rather than one maintenance chunk.
@@ -71,8 +72,9 @@ acceptance criterion.
 | [decisions.md](../decisions.md), DEC-24 to DEC-27 | Added the portable publication, its unverifiable-cleanup boundary, cookie success, and runtime-home ownership choices | Records the genuine alternatives shared by multiple callers or runs |
 | [target-design.md](../target-design.md), *Host application* ("Portable no-clobber writes, pinned for P0002") | Defines fallback triggers, reservation, race-safe cleanup, and crash residue | Owns host file-write behavior and errors |
 | target design, *Migration* ("Cookie and user-agent follow-ups, pinned for P0002") | Defines staging, validation, probe failure, preservation, and setup refresh behavior | Owns the Stage 1 compatibility recipes users run |
-| target design, *Status*, *Agreed decisions*, and *Migration* (P0002-C02 review) | Marks D1/D2 implemented, documents yt-dlp's absent staging path, and clarifies that failed export skips refresh | Keeps accepted behavior distinguishable from the pending D3 rule |
+| target design, *Status*, *Agreed decisions*, and *Migration* (P0002-C02 review) | Marks D1/D2 implemented, documents yt-dlp's absent staging path, and clarifies that failed export skips refresh | Keeps accepted behavior distinguishable from later proposals |
 | target design, *Container contract* ("Runtime home ownership, pinned for P0002") | Defines the owned directory entries and non-recursive boundary | Owns startup identity and filesystem ownership |
+| target design, *Status*, *Agreed decisions*, and *Container contract* (P0002-C03) | Marks D3 runtime-home ownership implemented | Records the accepted startup behavior without marking later stages implemented |
 
 ## 5. Delivery plan
 
@@ -142,8 +144,8 @@ chunk in flight.
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
 | P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30, `9b3251b` |
-| P0002-C02 | D2 (all of it; issues #20 and #26) | accepted | 2026-10-08, PR #31, after rework | PR #31 (squash pending) |
-| P0002-C03 | D3 (all of it; issue #22), project completion evidence | ready for an executor | — | — |
+| P0002-C02 | D2 (all of it; issues #20 and #26) | accepted | 2026-10-08, PR #31, after rework | PR #31, `47b82da` |
+| P0002-C03 | D3 (all of it; issue #22), project completion evidence | accepted | 2026-10-09, PR #32 | PR #32 (squash pending) |
 
 ## 8. Closeout
 
