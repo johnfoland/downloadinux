@@ -938,7 +938,7 @@ Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
 current behavior until the corresponding chunks land. These rules replace its
 shared-jar execution and required Firefox/probe/user-agent recipe chain.
 
-### Source store and publication
+### 1. Source store and publication
 
 A source's name is its stable ID and display name: 1–64 ASCII characters,
 matching `[a-z0-9][a-z0-9_-]{0,63}`. There is no separate rename operation in
@@ -1003,7 +1003,7 @@ immutable retained revisions suffice. Stage 2 retains prior canonical revisions
 and does not garbage-collect them while an old reader or submitted job may
 still use them (DEC-31).
 
-### Registration, refresh, and parsing
+### 2. Registration, refresh, and parsing
 
 The shared host operations expose these CLI fronts (DEC-29, DEC-30). Global
 `--config`/`--set` keep their existing placement rules. Source registration and
@@ -1089,7 +1089,7 @@ accepts it. Human output renders the same data. `list --json` is an object with
 An empty list is successful. UTC timestamps and inspection time are injectable
 for tests; no inspection or health check verifies authentication against a site.
 
-### Selection, private working jars, and lifetime
+### 3. Selection, private working jars, and lifetime
 
 `dl` and `batch` gain mutually exclusive `--cookie-source NAME` and
 `--anonymous` options. Explicit anonymous bypasses the registry and legacy
@@ -1172,7 +1172,7 @@ cannot be established, preserve residue and report it rather than promising
 impossible cleanup (DEC-27). Cleanup ignores symlinks and unexpected entries
 and never traverses outside its invocation root.
 
-### User-agent policy
+### 4. User-agent policy
 
 Cookie sources contain no user-agent policy (DEC-32). Continue using the
 explicit `downloads.user_agent` setting, with its existing static Chrome
@@ -1194,7 +1194,7 @@ optional arguments. Cookie refresh and setup never invoke this lookup.
 never compares it to an installed browser or asserts a Chrome version is
 required. This is Stage 2's replacement for the Stage 1 health heuristic.
 
-### Compatibility and migration
+### 5. Compatibility and migration
 
 Stage 2 migration is automatic and idempotent on the first source-store host
 operation (`list`, `inspect`, registration, refresh, default, setup,

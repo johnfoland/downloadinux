@@ -127,6 +127,7 @@ this record supplies delivery and evidence rather than a second behavior spec.
 | [implementation-plan.md](../implementation-plan.md), *Stage 2* and *Decisions to resolve before their implementation* | Records resolved choices, migration and compatibility acceptance, cleanup and platform evidence | Owns stage boundaries and acceptance rather than executor-local choices |
 | [decisions.md](../decisions.md), DEC-28 to DEC-33 | Records durable choices and alternatives; DEC-31 and DEC-33 amended in place on 2026-10-09 after maintainer answers | Shared decision history |
 | [README.md](../README.md) (docs index), status, and projects registry | Routes to active P0003 while marking implementation pending | Separates process state from current-user behavior |
+| target design, *Named cookie sources* §1–§5 (P0003-C01 cut) | Numbers the existing subsections for precise chunk citations; no behavior or decision change | Gives briefs stable numbered references within the source contract |
 
 ## 5. Delivery plan
 
@@ -301,9 +302,14 @@ Beyond each item's focused tests, accepted chunks must evidence:
 
 | Chunk | Delivery items | State | Review | Integrated identity |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| [P0003-C01](../chunks/P0003-C01.md) | D1, parser/summaries and source-store reader/writer foundation | ready for an executor | — | — |
 
-No chunk has been cut. `/relay-next` owns chunk sizing and this ledger.
+P0003-C01 has three units. D1 still needs automatic legacy migration and the
+public `list`/`inspect`/`default` operations after this foundation; D2–D5 remain
+unstarted. The split keeps parser/schema and publication fault/concurrency
+coverage reviewable before commands begin using the store. The cut was checked
+against every brief-checklist entry; §6's cleanup qualification is explicit.
+No implementation has landed yet. `/relay-next` owns chunk sizing and this ledger.
 
 ## 8. Closeout
 
