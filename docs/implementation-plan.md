@@ -11,8 +11,10 @@ their wrapper and smoke coverage (P0001-C05); and D5: `just setup` over the
 CLI, the Stage 1 docs, and the in-place migration proof (P0001-C06). Its rules
 are in the [target design](target-design.md). Stage 2 is settled for project
 [P0003](projects/P0003-named-cookie-sources.md). P0003-C01 implements its internal
-parser and atomic source-store foundation; public commands, migration, and
-execution remain unimplemented. Stages 3–4 remain proposals.
+parser and atomic source-store foundation; P0003-C02 implements locked legacy
+migration and host-only list/inspect/default commands, finishing D1's build.
+Registration, refresh, and private execution remain unimplemented; downloads,
+export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -47,8 +49,11 @@ Acceptance criteria:
 Settled contract: target design *Named cookie sources*, DEC-28 to DEC-33.
 P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
 P0003-C01 implements the strict parser/summaries, immutable registry reader,
-and atomic host publication foundation. No public source command, automatic
-legacy migration, browser operation, or snapshot runner is implemented yet.
+and atomic host publication foundation. P0003-C02 implements automatic locked
+legacy migration and public `cookies list`, `inspect`, and `default` operations.
+These commands prepare the source workflow; current downloads/export/setup/doctor
+still use the Stage 1 shared jar and ignore the registry default. Browser/file
+registration, refresh, and snapshot execution remain pending in D2–D5.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.

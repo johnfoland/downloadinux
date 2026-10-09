@@ -22,11 +22,11 @@ Last review: 2026-10-10 (P0003-C01, accepted).
   immutable registry reader, and atomic host writer, accepted through PR #39
   after normalized-domain duplicate and BOM/UTF-8 diagnostic rework (649 tests
   and all seven gate steps green).
-  [P0003-C02](chunks/P0003-C02.md) is ready with two units for locked legacy
-  migration and public `cookies list`/`inspect`/`default` commands.
-  Public source commands, automatic legacy migration, and private execution
-  jars remain unimplemented; Stage 1 routes are unchanged. D1's migration and
-  inspection/default commands remain next; D2–D5 remain unstarted.
+  [P0003-C02](chunks/P0003-C02.md) implements locked legacy migration and
+  host-only `cookies list`/`inspect`/`default` commands, finishing D1's build.
+  Registration, refresh, and private execution jars remain unimplemented;
+  Stage 1 download/export/setup/doctor routes are unchanged and ignore the
+  preparatory source-store default. D2–D5 remain unstarted.
   The next project ID is P0004. Source lifecycle and canonical revision pruning
   remain deliberately outside Stage 2 (issue #35).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
@@ -39,7 +39,7 @@ Last review: 2026-10-10 (P0003-C01, accepted).
 - **State:** executing
 - **Branch:** `chunk/p0003-c02`
 - **Pull request:** `#40` (draft)
-- **Units committed:** a
+- **Units committed:** a, b
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
