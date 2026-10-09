@@ -44,8 +44,13 @@ done
 for mount in /downloads /state /cookies; do
   gosu dl test -w "$mount" || warn "$mount is not writable by dl (uid $uid, gid $gid)."
 done
-mkdir -p /home/dl/.local/share/downloadinux /home/dl/.config
-chown "$uid:$gid" /home/dl/.local/share/downloadinux /home/dl/.config
+# Runtime home entries (DEC-26, target design, Container contract). Docker
+# creates the nested history mount's parents as root. Repair entries only,
+# including unchanged IDs; -h keeps a final symlink's target untouched.
+for d in /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinux /home/dl/.config; do
+  mkdir -p "$d"
+  chown -h "$uid:$gid" "$d"
+done
 
 # A missing --cookies file is a hard error in yt-dlp, so seed a valid empty
 # one. Drop a real export over it whenever you need authenticated sites.

@@ -1,7 +1,7 @@
 # Target design
 
 Status: Stage 1 is implemented. P0002's portable writes and cookie/setup refresh
-hardening are implemented; runtime-home ownership remains pending. Stages 2–4
+hardening and runtime-home ownership are implemented. Stages 2–4
 remain proposed.
 
 ## Agreed decisions
@@ -28,7 +28,7 @@ Project P0002 adds DEC-24 to DEC-27 for the remaining Stage 1 follow-ups:
 portable no-clobber writes, cookie and user-agent refresh outcomes, and runtime
 ownership of application directories in `dl`'s home. P0002-C01 implements the
 portable writes (D1); P0002-C02 implements cookie and setup refresh (D2).
-Runtime-home ownership (D3, DEC-26) is settled but remains pending.
+P0002-C03 implements runtime-home ownership (D3, DEC-26).
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -499,6 +499,8 @@ Pinned for P0001-C04, the end of DEC-15's interval:
   Shell in with: just shell (or dlx shell)`.
 
 Runtime home ownership, pinned for P0002 (DEC-26):
+
+Implemented in P0002-C03.
 
 - After applying the configured UID and GID, the entrypoint ensures
   `/home/dl/.local`, `/home/dl/.local/share`,

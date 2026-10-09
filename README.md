@@ -483,6 +483,14 @@ holds the shipped presets read-only, `/state` holds mutable state, and
 no VPN capabilities or daemon. `just check` builds a separate check image
 and smoke-tests these mounts and identities with temporary directories.
 
+At every start, the runtime UID/GID owns `/home/dl/.local`,
+`/home/dl/.local/share`, `/home/dl/.local/share/downloadinux`, and
+`/home/dl/.config`. The nested `zsh-history` volume stays at
+`/home/dl/.local/share/downloadinux`: startup repairs only those four entries,
+without recursively changing retained data or following a final symlink.
+Installing this entrypoint repair requires `just build && just up`, because
+the script is copied into the image.
+
 ## Mounted config and installed shell files
 
 The checkout's `presets/` is mounted read-only at `/config`, so host edits to
