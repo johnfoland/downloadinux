@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-09 by `relay-next`.
+Last updated 2026-10-09 by `relay-execute`.
 Last review: 2026-10-09 (P0003-C01, rework).
 
 ## Where this stands
@@ -20,8 +20,8 @@ Last review: 2026-10-09 (P0003-C01, rework).
   answers: pin revisions at submission and retire container download shortcuts.
   [P0003-C01](chunks/P0003-C01.md) implements D1's strict parser/summaries,
   immutable registry reader, and atomic host writer on its chunk branch.
-  Its review requires normalized-domain duplicate rejection and accurate
-  BOM/UTF-8 error lines; the blocking work list is in the chunk review.
+  Its rework adds normalized-domain duplicate rejection and accurate BOM/UTF-8
+  error lines; the fixes and regression evidence await review in PR #39.
   Public source commands, automatic legacy migration, and private execution
   jars remain unimplemented; Stage 1 routes are unchanged. D1's migration and
   inspection/default commands remain next; D2–D5 remain unstarted.
@@ -34,7 +34,7 @@ Last review: 2026-10-09 (P0003-C01, rework).
 ## In flight
 
 - **Chunk:** P0003-C01
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0003-c01`
 - **Pull request:** `#39` (ready)
 - **Units committed:** a, b, c
