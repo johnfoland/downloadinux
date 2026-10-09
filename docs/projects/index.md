@@ -7,13 +7,13 @@ turns that plan into chunk briefs, and `/relay-execute` builds them.
 The routing header has a fixed shape. `/relay-project` owns both lines, and
 `/relay-next` reads `Active project`.
 
-- **Active project:** P0002
+- **Active project:** —
 - **Next project ID:** P0003
 
 | Project | State | File | Started | Finished | Outcome |
 |---|---|---|---|---|---|
 | P0001 | complete | [P0001-portable-config.md](P0001-portable-config.md) | 2026-10-05 | 2026-10-07 | Stage 1: portable configuration and shared operations |
-| P0002 | active | [P0002-stage1-followups.md](P0002-stage1-followups.md) | 2026-10-07 | — | Harden the four remaining Stage 1 follow-ups |
+| P0002 | complete | [P0002-stage1-followups.md](P0002-stage1-followups.md) | 2026-10-07 | 2026-10-09 | Hardened the four remaining Stage 1 follow-ups |
 
 ## 1. What a project is
 

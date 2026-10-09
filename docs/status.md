@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-09 by `relay-next`.
+Last updated 2026-10-09 by `relay-project`.
 Last review: 2026-10-09 (P0002-C03, accepted).
 
 ## Where this stands
@@ -8,13 +8,14 @@ Last review: 2026-10-09 (P0002-C03, accepted).
 - **P0001** (Stage 1, portable configuration and shared operations) is
   complete: DEC-7 to DEC-23, delivery items D1–D5, chunks P0001-C01 to
   P0001-C06.
-- **P0002** (Stage 1 follow-up hardening) is active: DEC-24 to DEC-27,
-  delivery items D1–D3. D1's portable atomic no-clobber writes are accepted
-  in P0002-C01; D2's reliable cookie and setup refresh are accepted in
-  P0002-C02 after rework. D3's runtime-home ownership and project completion
-  evidence are accepted in P0002-C03 (PR #32). All delivery items are accepted.
-  Remaining: record D3's squash identity and audit project completion with
-  `/relay-project`.
+- **P0002** (Stage 1 follow-up hardening) is complete: DEC-24 to DEC-27,
+  delivery items D1–D3, chunks P0002-C01 to P0002-C03 (PRs #30–#32;
+  `9b3251b`, `47b82da`, `2350732`). Its completion audit records the accepted
+  tests, current-user documentation, and closure of #14, #20, #22, and #26
+  in [the project closeout](projects/P0002-stage1-followups.md#8-closeout).
+- **No project is active and no chunk is in flight.** The next project ID is
+  P0003; Stage 2 (named cookie sources) remains the next proposed refactor
+  stage and needs design through `/relay-project` before chunks are cut.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
   CI runs it on every pull request, and `check` is required on `master`.
