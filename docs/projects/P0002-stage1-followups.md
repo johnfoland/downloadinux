@@ -143,7 +143,7 @@ chunk in flight.
 |---|---|---|---|---|
 | P0002-C01 | D1 (all of it; issue #14) | accepted | 2026-10-07, PR #30 | PR #30, `9b3251b` |
 | P0002-C02 | D2 (all of it; issues #20 and #26) | accepted | 2026-10-08, PR #31, after rework | PR #31, `47b82da` |
-| P0002-C03 | D3 (all of it; issue #22), project completion evidence | ready for an executor | — | — |
+| P0002-C03 | D3 (all of it; issue #22), project completion evidence | awaiting review | PR #32 | — |
 
 ## 8. Closeout
 

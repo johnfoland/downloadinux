@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-08 by `relay-next`.
+Last updated 2026-10-09 by `relay-execute`.
 Last review: 2026-10-08 (P0002-C02, accepted after rework).
 
 ## Where this stands
@@ -12,7 +12,7 @@ Last review: 2026-10-08 (P0002-C02, accepted after rework).
   delivery items D1–D3. D1's portable atomic no-clobber writes are accepted
   in P0002-C01; D2's reliable cookie and setup refresh are accepted in
   P0002-C02 after rework. D3's runtime-home ownership and project completion
-  evidence are ready for an executor in P0002-C03. Remaining: accept D3 and
+  evidence are implemented in P0002-C03, awaiting review. Remaining: accept D3 and
   audit project completion with `/relay-project`.
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
   request #6. The gate is `just check` (it needs the Docker daemon running),
@@ -21,9 +21,9 @@ Last review: 2026-10-08 (P0002-C02, accepted after rework).
 ## In flight
 
 - **Chunk:** P0002-C03
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0002-c03`
-- **Pull request:** `#32` (draft)
+- **Pull request:** `#32` (ready)
 - **Units committed:** a, b
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
