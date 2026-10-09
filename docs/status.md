@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-09 by `relay-next`.
+Last updated 2026-10-09 by `relay-execute`.
 Last review: 2026-10-09 (P0002-C03, accepted).
 
 ## Where this stands
@@ -32,9 +32,9 @@ Last review: 2026-10-09 (P0002-C03, accepted).
 ## In flight
 
 - **Chunk:** P0003-C01
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0003-c01`
-- **Pull request:** `#39` (draft)
+- **Pull request:** `#39` (ready)
 - **Units committed:** a, b, c
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
