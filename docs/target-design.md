@@ -1,8 +1,9 @@
 # Target design
 
 Status: Stage 1 is implemented. P0002's portable writes and cookie/setup refresh
-hardening and runtime-home ownership are implemented. Stages 2–4
-remain proposed.
+hardening and runtime-home ownership are implemented. Stage 2's named cookie
+source contract is settled in P0003 but not implemented; Stages 3–4 remain
+proposed.
 
 ## Agreed decisions
 
@@ -29,6 +30,10 @@ portable no-clobber writes, cookie and user-agent refresh outcomes, and runtime
 ownership of application directories in `dl`'s home. P0002-C01 implements the
 portable writes (D1); P0002-C02 implements cookie and setup refresh (D2).
 P0002-C03 implements runtime-home ownership (D3, DEC-26).
+
+Project P0003 settles Stage 2 with DEC-28 to DEC-33: a managed source store,
+browser/file operations, strict parsing, startup snapshots, independent
+user-agent policy, and compatibility migration. See *Named cookie sources*.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -536,9 +541,14 @@ the same host file as today. Settings applied only to Instagram today stay
 Instagram-only. The overrides go in as downloader arguments or as a generated
 file under `/state`; shipped preset files are never written.
 
+The Stage 2 *Named cookie sources / User-agent policy* contract replaces these
+Stage 1 fixed-cookie arguments with private jars, and adds explicit literals;
+it is not yet implemented.
+
 `config user-agent` writes `downloads.user_agent` into the settings file. In
 Stage 1 it keeps today's source, the host Chrome major version on macOS, and
-reports when it cannot read one; Stage 2 replaces that lookup.
+reports when it cannot read one; Stage 2 removes it from the required workflow
+and keeps the no-argument command as optional compatibility (DEC-32).
 
 Pinned for P0001-C04:
 
@@ -918,49 +928,356 @@ yt-dlp's input-before-output cookie lifecycle.
 
 ## Named cookie sources
 
-A source has a stable identity, display name, source type, origin, and refresh
-metadata. Examples: `personal-firefox` and `instagram-secondary`.
+Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
+(DEC-28 to DEC-33); not yet implemented. The Stage 1 descriptions above remain
+current behavior until the corresponding chunks land. These rules replace its
+shared-jar execution and required Firefox/probe/user-agent recipe chain.
 
-| Source type | Input |
-| --- | --- |
-| Browser | Browser selection plus profile name or path; additional selectors only where supported |
-| File | Imported Netscape-format cookie file |
+### Source store and publication
 
-Anonymous execution is an explicit job choice, not a fake cookie source. Support
-an application default; optional site defaults can be added if useful. Proposed
-resolution order: explicit job choice, site default, application default.
+A source's name is its stable ID and display name: 1–64 ASCII characters,
+matching `[a-z0-9][a-z0-9_-]{0,63}`. There is no separate rename operation in
+Stage 2. Sources belong to the effective `paths.cookies`, so configs sharing
+that directory intentionally share sources and the application default.
+Settings, credentials, mount locations, and the gallery archive do not move.
 
-Browser extraction runs on the host. Available browsers and export support may
-differ by OS and installed tooling; expose supported options and actionable
-errors rather than promising every browser works everywhere.
+The host owns a version-1 JSON registry, `paths.cookies/sources.json` (DEC-28):
 
-At job startup, resolve the selected source into a private working snapshot.
-Downloader writeback changes that snapshot, not the canonical source or another
-job's credentials. Record source identity and snapshot revision on the job.
-Whether a queued job pins the source revision at submission or startup needs a
-final decision; startup snapshotting is the current proposal.
+```json
+{"version": 1, "default": "personal-firefox", "sources": {
+  "personal-firefox": {"kind": "browser", "browser": "firefox",
+    "profile": null, "keyring": null, "container": null,
+    "revision": "0123456789abcdef0123456789abcdef",
+    "refreshed_at": "2026-10-09T12:00:00Z"},
+  "imported": {"kind": "file", "path": "/home/u/export.txt",
+    "revision": "abcdef0123456789abcdef0123456789",
+    "refreshed_at": "2026-10-09T12:00:00Z"}}}
+```
 
-Refreshing a source is explicit and atomic: a failed export must not replace a
-working source. Decouple export from an unrelated download probe. Treat imported
-files as managed copies by default; decide whether externally linked files are
-also needed.
+`default` is a registered ID or null (anonymous). New empty stores default to
+anonymous; registration does not silently select an account. `browser` is a
+supported browser ID; `profile`, `keyring`, and `container` are strings or null.
+File `path` is absolute, with leading `~` expanded and
+relative command arguments made absolute against the invoking directory,
+without resolving symlinks. A profile containing a path separator or leading
+`~` is normalized the same way; a profile name remains a name. No cookie value
+is stored in the registry. Revisions are fresh random 32-character lowercase
+hex IDs, not hashes of credentials. Successful publication, even of identical
+contents, gets a new revision and UTC refresh timestamp in
+`YYYY-MM-DDTHH:MM:SSZ` form.
 
-Display source origin, last successful refresh, relevant domains, and available
-expiry information. Distinguish “cookie present” from “authentication verified.”
-Do not display cookie values in the TUI, job metadata, or ordinary logs. Define
-permissions, snapshot retention, and cleanup with the implementation.
+Canonical material is an immutable, managed Netscape copy at
+`paths.cookies/sources/<name>/<revision>.txt`. It is never a symlink to an
+import or passed to a downloader. Refresh reads the registered origin again;
+missing original files do not invalidate the last successfully managed copy.
+There are no linked-file sources, site defaults, source deletion, or automatic
+refresh in Stage 2 (DEC-28, DEC-29).
 
-User-agent policy is separate from cookie selection. Preserve the current
-explicit Chrome policy as a preset option, with overrides where needed, without
-requiring Chrome at a macOS-specific location. Historical Instagram quality
-claims should be validated before becoming enforced application rules.
+Create managed directories at 0700 and material, registry, and lock files at
+0600; enforce these modes on files the application publishes. Do not chmod
+external imports or browser profiles. Readers reject malformed/unsupported
+registry versions, invalid records, or a missing referenced revision with a
+path-bearing operation error; they do not reset a damaged store to anonymous.
+Unknown fields in version 1 are errors. Require exact types, including an
+integer version rather than a boolean, valid IDs/revisions/timestamps, a
+registered default, and the fields appropriate to each kind.
+
+All host writers use one advisory exclusive lock at `paths.cookies/.lock`;
+re-read the registry under that lock before changing it. Extraction and
+validation may take place before the lock, but publication must check the
+source still has the record it began with; otherwise refuse and ask the user
+to retry. Two competing refreshes must not silently overwrite each other's
+origin or revision. First write and sync the complete new revision, then
+atomically publish the complete registry through a same-directory temporary.
+The registry replacement is the commit point for origin, revision, timestamp,
+and default together. Apply DEC-24/DEC-27's no-clobber writer where creation
+must refuse an existing path. Failure preserves the previous registry and
+referenced material; an unreferenced revision left by interruption is harmless.
+Readers need no host/container lock sharing: atomic registry reads plus
+immutable retained revisions suffice. Stage 2 retains prior canonical revisions
+and does not garbage-collect them while an old reader may still use them.
+
+### Registration, refresh, and parsing
+
+The shared host operations expose these CLI fronts (DEC-29, DEC-30). Global
+`--config`/`--set` keep their existing placement rules. Source registration and
+refresh success prints the same non-secret summary as inspection; default
+reports/sets print the name or `anonymous`. `browsers --json` is an object
+with `platform` (`macos` or `linux`) and `browsers`, an array in
+Firefox/Chrome/Chromium order: each entry has `id`, `profile` (boolean),
+`container` (boolean), and `keyrings` (supported IDs, empty when inapplicable).
+`cookies setup` is the shared compatibility setup front described below;
+cleanup reports removed/skipped directory counts, without cookie contents.
+
+| Command | Result |
+|---|---|
+| `cookies browsers [--json]` | Supported browser IDs and selectors; no promise that a profile is installed or decryptable |
+| `cookies add-browser NAME --browser BROWSER [--profile PROFILE] [--keyring KEYRING] [--container CONTAINER] [--replace]` | Export, validate, and register a source; an existing ID refuses unless `--replace` was explicit |
+| `cookies import NAME FILE [--replace]` | Parse a file and register a managed copy; the origin is retained for later refresh |
+| `cookies list [--json]` | Names in lexical order, kind, origin, revision, last successful refresh, and default status |
+| `cookies inspect NAME [--json]` | Source metadata and the non-secret cookie summary below |
+| `cookies refresh NAME` | Re-read the registered origin and publish a new revision on success |
+| `cookies default [NAME] [--anonymous]` | With neither selector, report the default; otherwise set a registered name or null; the selectors conflict |
+| `cookies cleanup` | Ask the container runner to remove abandoned working snapshots, as below |
+
+A new registration includes its first successful refresh: export/parse failure
+creates no source and changes no default. `--replace` may deliberately change
+kind or origin, retaining the ID and whether it is the default, only after a
+successful export/parse. An unknown name is an operation error, exit 1; invalid
+names, unsupported selectors, and conflicting flags are usage errors, exit 2.
+OS, parse, browser/profile, and decryption failures are operation errors, exit
+1. Human errors name the source and path or browser/selector and a practical
+remedy, never a cookie row, value, or raw third-party traceback.
+
+Initial browser support is `firefox`, `chrome`, and `chromium` on macOS and
+Linux. Delegate profile discovery and extraction to the host Python yt-dlp
+package through an injectable adapter, without a URL, network request, or
+simulated download. Add yt-dlp as a locked host runtime dependency and load its
+browser adapter only for browser operations; imports and downloads do not
+access an installed browser or keychain. The adapter uses cookie extraction
+and jar serialization APIs, not subprocess scraping or private browser SQL.
+Linux Chromium keyring dependencies are documented explicitly; missing support
+is an actionable failure, with Netscape import as the alternative. Bound and
+lock the version actually validated when implementing the adapter.
+
+Firefox accepts a profile and optional Firefox container name (`none` means
+cookies outside containers); absent container means all containers. Chrome and
+Chromium accept a profile and an optional Linux keyring ID from yt-dlp's
+supported set. Keyrings on macOS, keyrings for Firefox, and containers for
+Chromium browsers are refused. Absent profile/keyring follows yt-dlp's documented
+default discovery. `cookies browsers` lists these limits, including keyring
+IDs of the locked adapter version. A missing profile, denied keychain, any
+reported extraction/decryption warning or error, or unsupported browser schema
+fails conservatively rather than publishing a silently partial jar. A clean,
+valid export containing zero cookies is allowed and reported as empty. Consume
+adapter diagnostics internally and render safe categories/remedies; do not
+forward raw warnings, exception strings, debug output, or parser diagnostics
+that could contain cookie data.
+
+Use a real Netscape parser shared by import, refresh validation, inspection,
+migration, and health checks (DEC-30). Accept UTF-8, an optional leading BOM,
+LF or CRLF, the Netscape/Mozilla cookie header, blank/comment lines, and
+`#HttpOnly_` records. Require seven tab-separated fields, nonempty domain and
+path beginning `/`, exact `TRUE`/`FALSE` boolean fields, domain/subdomain flag
+consistency, and expiry either empty, zero (both session), or a non-negative
+integer Unix timestamp. Preserve empty names or values accepted by the Netscape
+format; a header-only jar is valid. Reject malformed rows and undecodable bytes
+rather than dropping them. Parse errors report path, line number, and failing
+field without echoing its content. Use `MozillaCookieJar` with session/expired
+records retained, with explicit validation/normalization around it for expiry
+zero and these strict input rules. Reject duplicate `(domain, path, name)`
+records, so parsers cannot pick different credentials by different precedence.
+Retain HttpOnly, secure, subdomain, session, and expiry semantics when serializing.
+
+`inspect` JSON has `source` (the registry record plus `name` and `is_default`),
+`total`, `session`, `expired`, `unexpired`, and `domains`. `domains` is sorted
+by cookie domain, each entry with `domain`, the same four counts, and
+`session_cookie_present`; that last boolean recognizes Instagram `sessionid`
+and YouTube `__Secure-3PSID`/`SAPISID` using exact domain or dot-suffix matching.
+Other domains report false. Counts partition the retained records: a non-session
+expiry at or before the inspection clock is expired; later ones are unexpired.
+No individual cookie names or values are emitted. A session cookie is present
+even if its recorded expiry has passed; presence never claims that the server
+accepts it. Human output renders the same data. `list --json` is an object with
+`default` and a `sources` array of the same source metadata, sorted by name.
+An empty list is successful. UTC timestamps and inspection time are injectable
+for tests; no inspection or health check verifies authentication against a site.
+
+### Selection, private working jars, and lifetime
+
+`dl` and `batch` gain mutually exclusive `--cookie-source NAME` and
+`--anonymous` options. Explicit anonymous bypasses the registry and legacy
+migration entirely. Otherwise resolve the explicit name, then the registry's
+application default, then anonymous; there is no site-dependent selection.
+A requested/mapped missing source fails before launch, never falls back to a
+different account. Store the selected identity, not cookie contents, in a
+future queued job; resolve the application default at submission and the latest
+revision of that identity at startup (DEC-31). Stage 3 owns persistence and
+failure states, but must use this timing rule.
+
+Stage 2 has invocations, not persisted jobs: one `dl` call, including all URLs,
+gets one working jar; one detached batch gets one jar for its whole loop,
+including delays. A refresh or changed default never changes that invocation.
+Concurrent calls, including two calls using the same source, have different
+working jars. Preserve Stage 1's fixed batch session names and limits until
+Stage 3; Stage 2 does not add same-preset batch concurrency.
+
+A container-side runner, using the same source-store reader/parser as the host,
+resolves the latest revision and creates a private copy immediately before
+starting the downloader or batch loop. Ship that reusable module and a thin
+runner entry point into the image's Python environment; the container path
+accepts `/cookies` and `/state` explicitly and never loads host settings or
+performs browser extraction. The host validates selectors before Compose; the
+runner revalidates at execution, and reports a failure if the source record is
+invalid or its revision is unavailable. A successful explicit replacement of
+the same identity before startup supplies that identity's latest credentials.
+For detached batches such a startup failure is visible through `watch`; no
+job-reporting API is implied.
+
+Each working directory is `/state/cookie-invocations/<random-id>/` (0700),
+with `cookies.txt` (0600), `metadata.json` (0600: version 1, invocation ID,
+source name, revision, creation timestamp, effective user-agent), and `lease`
+(0600). IDs have the same 32-character random-hex form as revisions. All snapshot
+producers and cleanup take a short-lived container-side exclusive
+lock at `/state/cookie-invocations/.lock` around allocation/publication or
+cleanup eligibility and removal. Under that lock, the runner creates a hidden
+staging directory, locks its lease, writes the complete copy and metadata,
+and renames the directory into visibility. This prevents cleanup acquiring a
+new lease before its producer can lock it. It holds that lease through the
+entire process tree/loop. The lease descriptor is inherited by the downloader
+or batch loop and every process that can access the working jar, so a hard
+kill of the supervising runner cannot unlock a still-active consumer. Test
+that inheritance against the actual Python/zsh launch boundary.
+Only the private jar path is passed as downloader arguments (DEC-20); yt-dlp
+writeback stays there. Anonymous execution allocates no cookie material and
+passes no cookie option. Gallery cookies remain Instagram-only (DEC-6).
+
+On normal completion, failure, or handled termination, the runner waits for
+its child process tree to finish and removes its own working directory before
+releasing the lease. For batches, cleanup happens after the loop, before the
+existing "done, press a key" pause; the host never cleans up on detached-launch
+return. Hard kill or container interruption can leave a working directory.
+`cookies cleanup` invokes the runner in the configured running container:
+it removes only well-formed invocation directories whose lease it can lock
+non-blockingly, holding that lock during removal; busy directories are skipped.
+It likewise cleans abandoned hidden staging directories only after acquiring
+their lease. It does not inspect host PIDs, guess from age, touch canonical
+revisions, or run automatically on `up`. If the container is stopped, report
+how to start it and rerun cleanup. Filesystem lock failure refuses cleanup;
+no time-based fallback. Sharing `/state` across instances is safe because all
+snapshot producers and cleanup execute in the same Docker Linux environment,
+not through a host/container advisory-lock assumption. The runner starts the
+downloader/loop in a process group, forwards handled termination signals to
+that group, and waits for it before deleting cookies.
+Normal child exit returns the downloader status; a signalled child returns
+128 plus the signal number. Cleanup failure exits 1 with the path-bearing
+error, even when the child otherwise succeeded. Snapshot creation and failure
+cleanup errors retain that same exit-1 contract. If lease identity or removal
+cannot be established, preserve residue and report it rather than promising
+impossible cleanup (DEC-27). Cleanup ignores symlinks and unexpected entries
+and never traverses outside its invocation root.
+
+### User-agent policy
+
+Cookie sources contain no user-agent policy (DEC-32). Continue using the
+explicit `downloads.user_agent` setting, with its existing static Chrome
+literal as the default; no automatic browser matching or quality claim becomes
+a new enforced rule. `dl` and `batch` gain `--user-agent VALUE`, overriding
+that setting for the whole invocation without writing settings. An explicit
+value must be nonempty and contain no CR/LF; invalid values are usage errors.
+A configured literal with CR/LF likewise refuses execution with an operation
+error naming `downloads.user_agent`; empty configured values retain Stage 1
+argument behavior and produce the health warning below.
+No implicit source switch or refresh changes the user-agent.
+
+`config user-agent VALUE` atomically writes an explicit literal, with the same
+comment/mode/no-change preservation as Stage 1; validate it as above. With no
+argument, retain DEC-21's optional macOS Chrome lookup for compatibility,
+including warn/no-write/exit-0 on unavailable Chrome. `just useragent` forwards
+optional arguments. Cookie refresh and setup never invoke this lookup.
+`doctor` reports the configured literal's presence/header suitability and
+never compares it to an installed browser or asserts a Chrome version is
+required. This is Stage 2's replacement for the Stage 1 health heuristic.
+
+### Compatibility and migration
+
+Stage 2 migration is automatic and idempotent on the first source-store host
+operation (`list`, `inspect`, registration, refresh, default, setup,
+non-anonymous `dl`/`batch`, or `doctor`) when `sources.json` is absent (DEC-33).
+Explicit anonymous execution, `cookies browsers`, `cookies cleanup`, and
+commands unrelated to cookies never trigger it. Under the host writer lock,
+parse `paths.cookies/cookies.txt`, the Stage 1 managed jar. If it has records,
+register a file source `legacy`, pointing its refresh origin at that old jar,
+and select it as default. Missing or valid header-only jars produce an empty
+registry with anonymous default; an invalid or unreadable jar fails without
+publishing a registry or altering the old file. Error text points to explicit
+anonymous mode or repairing/moving aside the invalid legacy jar before
+importing a valid file. Recheck registry absence
+under the lock; never merge a legacy jar over an existing registry. The old
+managed jar and checkout jar remain untouched, and neither receives downloader
+writeback afterwards. The container runner never migrates: old container
+helpers invoked before host migration refuse with a hint to run `dlx cookies
+list` on the host first. `config show` remains a settings report, without a
+registry read or migration side effect.
+
+`config import-env` keeps DEC-13's Stage 1 copy contract; the first cookie-aware
+operation then registers that managed copy. Document direct import of a
+checkout-only jar with `cookies import NAME FILE`, followed by `cookies
+default NAME`. Starting or rebuilding the container no longer seeds a shared
+placeholder jar; anonymous execution needs none. Existing mounts and UID/GID
+remain, and the updated image must be rebuilt before running the new runner.
+
+`just cookies [profile]` calls a shared compatibility operation: create or
+replace the source `firefox` with that Firefox profile (default discovery with
+no argument), atomically export it, then select it as default only as part of
+the same successful registry publication. A failed refresh preserves its prior
+origin, material, and default. It prints the shared non-secret summary and
+never invokes a site probe or user-agent lookup. This explicit wrapper remains
+an account-switching action; generic registration/refresh leaves the default
+alone. `just dl` and `just batch` forward the new options along with their
+existing positional arguments, including arguments with spaces; `watch` stays.
+
+Setup keeps five steps, settings and token choices, build/start, and final
+structured doctor. Its cookie step calls a shared `cookies setup` operation:
+migrate if necessary; when a named default exists, inspect it and leave it
+alone regardless of Instagram presence/expiry; with anonymous default, ask
+`Export Firefox cookies now? [y/N]`. Yes runs the compatibility export; no,
+empty input, or EOF keeps anonymous. A failed export is reported and setup
+continues anonymously or with the previous selection. This avoids requiring
+Firefox on import-only and unattended installations. No automatic refresh or
+user-agent change occurs on a kept source. The prompt belongs to this shared
+operation, with an injectable input boundary, rather than grep in the recipe.
+
+The container's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` keep their
+names. They route through the same runner, read the registry default at each
+invocation, take `DL_USER_AGENT` as before, and allocate their own working jar.
+Global settings changes still require the configured mounts/identity to match the
+running container; Stage 2 adds no automatic recreate on every download.
+They expose `--cookie-source`, `--anonymous`, and `--user-agent` with the same
+semantics; shell helper URLs/queues and preset output/archive behavior stay
+unchanged. They do not read or write `/cookies/cookies.txt`. Their default is
+read at invocation, so a source-default change needs no container recreation;
+the environment's user-agent still updates on recreate (DEC-20).
+
+`doctor`'s cookie/user-agent checks use the shared strict parser and selected
+default, with no browser access or site request. Keep `cookies.jar`,
+`cookies.instagram`,
+`cookies.youtube`, and `downloads.user_agent` IDs in their Stage 1 positions.
+Anonymous makes all three cookie checks `skip`, `anonymous cookie default`.
+A damaged registry/missing revision/invalid jar makes `cookies.jar` fail with a
+safe repair hint, site checks skip. A valid empty named source makes the jar
+check warn and site checks skip. Otherwise report counts and session-cookie
+presence from the retained records, with an expiry warning where the relevant
+session-cookie record is expired; never claim authentication validity.
+`downloads.user_agent` is ok for a nonempty CR/LF-free literal, otherwise warn
+with a hint to set an explicit value. Other health checks, JSON shape, ordering,
+and exit status stay as DEC-12/DEC-22. List/inspect/setup and doctor share the
+same source reader and summaries; doctor represents cookie-store operation
+failures as checks and continues the remaining report.
+
+Delivery may expose source inspection/registration before execution changes,
+but document those as preparatory: existing downloads still use the Stage 1
+jar until cutover. Ship and test the new runner before activating it. Switch
+foreground downloads, batches, all container download helpers, `just cookies`,
+setup, and cookie/user-agent health checks together in the cutover chunk. This
+prevents a refresh updating the old jar while a new route reads an immutable
+source, or a new default silently being ignored by a remaining old route.
+Additive preparation may be split; preserve the whole cutover boundary.
+Already-running Stage 1 batches may finish using their existing jar; operators
+stop/finish them before rebuilding/recreating the image for cutover.
+
+The README, cookie README, preset README, recipe menu text, and smoke test
+must change with the implementing chunks. Keep the 2026-09 current-state review
+as history and update its outcome notes only when implementation lands. Do not
+mark this design implemented merely because its planning PR merged.
 
 ## Persistent jobs
 
 Proposed job data:
 
 - Job ID, URL, downloader, preset, and destination.
-- Selected cookie source and resolved snapshot revision, or anonymous mode.
+- Selected cookie source identity (default resolved at submission) and latest
+  snapshot revision resolved at startup, or anonymous mode (DEC-31).
 - State, timestamps, attempt count, and structured error/result.
 - Log location and available downloader progress.
 - Output references when they can be obtained reliably.

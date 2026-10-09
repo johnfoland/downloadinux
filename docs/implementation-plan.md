@@ -9,8 +9,9 @@ the presets, `dl`, `batch`, `watch`, and `config user-agent`, ending the
 transitional in-container links (P0001-C04); D4: structured health checks and
 their wrapper and smoke coverage (P0001-C05); and D5: `just setup` over the
 CLI, the Stage 1 docs, and the in-place migration proof (P0001-C06). Its rules
-are in the [target design](target-design.md). Stages 2–4 below remain
-proposals.
+are in the [target design](target-design.md). Stage 2 is settled for project
+[P0003](projects/P0003-named-cookie-sources.md), but not implemented; Stages
+3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -42,6 +43,10 @@ Acceptance criteria:
 
 ## Stage 2 — Named cookie sources
 
+Settled contract: target design *Named cookie sources*, DEC-28 to DEC-33.
+P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
+No source operation or snapshot runner is implemented yet.
+
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
 - Support explicit anonymous execution.
@@ -49,18 +54,31 @@ Acceptance criteria:
 - Refresh atomically, retaining the previous source on failure.
 - Give each invocation its own working jar and separate user-agent policy.
 - Remove the fixed YouTube probe and macOS-only Chrome lookup from the required
-  cookie workflow.
+  cookie workflow; keep the lookup only in the optional compatibility command.
+- Migrate the managed Stage 1 jar once into `legacy` without altering it; keep
+  imports browser-independent and fresh/unattended setups anonymous by default.
+- Preserve host wrappers and container download helpers through the shared
+  snapshot runner; keep tmux and existing batch limits until Stage 3.
+- Clean abandoned snapshots through container-held leases, while retaining
+  immutable canonical revisions until a later pruning design.
 
 Acceptance criteria:
 
-- Two named sources can be used concurrently without sharing mutable jars.
+- Two named sources, and two invocations of one source, can be used
+  concurrently without sharing mutable jars.
 - Refreshing a source does not change an already-running job's cookies.
 - Imported files work without an installed browser.
 - Invalid imports and unavailable browsers/profiles produce actionable errors.
 - Failed refreshes preserve the existing usable source.
 - Inspection reports cookie presence/expiry without claiming unverified login
   validity or exposing values.
-- Cookie refresh does not dirty the checkout.
+- Cookie refresh does not dirty the checkout or alter the user-agent.
+- A detached batch keeps one snapshot until its loop finishes; cleanup does
+  not remove active foreground, batch, or shell-helper cookies.
+- Migration preserves the previous account choice; explicit anonymous mode
+  does not read even a damaged store.
+- Browser adapters are tested with fixtures on macOS and Linux; the gate
+  requires no browser, keychain, cookie credentials, or live-site request.
 
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
@@ -135,14 +153,14 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | --- | --- |
 | Configuration format and host installation method | Resolved for Stage 1: TOML at XDG locations (DEC-8), editable install from the checkout (DEC-7). A self-contained distribution is still open. |
 | Worker interface and job-store ownership | Determines status streaming, coordination, and restart behavior |
-| Cookie revision pinned at submission or startup | Determines what queued jobs do after a source refresh |
-| Imported managed copies versus linked files | Determines refresh and ownership semantics |
-| Browser support for the first release | Bounds OS-specific discovery/export work |
+| Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default at submission, latest revision at startup; one snapshot per invocation or whole batch (DEC-31). Stage 3 defines job persistence. |
+| Imported managed copies versus linked files | Resolved for Stage 2: immutable managed copies; refresh explicitly re-reads the stored origin, with no linked sources (DEC-28, DEC-29). |
+| Browser support for Stage 2 | Resolved: Firefox, Chrome, and Chromium through the locked host yt-dlp adapter; file imports require no browser (DEC-29). Other browsers remain outside this stage. |
 | Cancellation, retry, duplicates, and concurrency | Defines scheduler and user-visible behavior |
 | VPN packaging and required/optional policy | Optional per config (DEC-11). Same container or a separate service is still open. |
 | Archive/state migration locations | Avoids losing deduplication history. Stage 1 leaves the gallery archive in place (DEC-13); Stage 3 decides. |
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
-The next design task is to settle configuration, cookie-source, and job contracts
-with concrete examples. TUI styling and keybindings can follow once those
-operations are stable.
+Configuration and cookie-source contracts are settled. The next delivery task
+is P0003 D1, the source store, parser, and legacy migration. Worker/job rules
+still need Stage 3 design; TUI styling and keybindings follow stable operations.
