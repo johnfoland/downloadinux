@@ -71,15 +71,22 @@ def parse(data: bytes, path: Path) -> Material:
         if key in keys:
             raise invalid(path, number, 'duplicate domain/path/name')
         keys.add(key)
-        # Zero is a session, unlike the library's default interpretation.
         try:
-            fields[4] = '' if not expiry or int(expiry) == 0 else expiry
+            expiry_value = int(expiry) if expiry else 0
+        except ValueError:
+            raise invalid(path, number, 'expiry') from None
+        # Zero is a session. The library also converts expiry through float;
+        # restore the validated integer exactly rather than rounding it (§2).
+        try:
+            fields[4] = ''
             normalized = (HTTPONLY_PREFIX if httponly else '') + '\t'.join(fields)
             single = MozillaCookieJar()
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
                 single._really_load(StringIO(HEADER + normalized + '\n'), str(path), True, True)
             cookie, = single
+            cookie.expires = expiry_value or None
+            cookie.discard = cookie.expires is None
             # The library represents an empty Netscape name as value=None.
             # Restore the actual key before combining rows, avoiding collisions
             # with a named cookie whose name equals that empty-name value.

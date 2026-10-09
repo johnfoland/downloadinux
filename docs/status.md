@@ -18,10 +18,11 @@ Last review: 2026-10-09 (P0002-C03, accepted).
   revisions/private startup jars, independent user-agent policy, and host-command
   migration. DEC-31 and DEC-33 were amended on 2026-10-09 to the maintainer's
   answers: pin revisions at submission and retire container download shortcuts.
-  The design is not implemented. [P0003-C01](chunks/P0003-C01.md) is ready for
-  an executor: three units for D1's strict parser/summaries, registry reader,
-  and atomic host writer. D1's legacy migration and public inspection/default
-  commands remain after that foundation; D2–D5 remain unstarted.
+  [P0003-C01](chunks/P0003-C01.md) implements D1's strict parser/summaries,
+  immutable registry reader, and atomic host writer on its chunk branch.
+  Public source commands, automatic legacy migration, and private execution
+  jars remain unimplemented; Stage 1 routes are unchanged. D1's migration and
+  inspection/default commands remain next; D2–D5 remain unstarted.
   The next project ID is P0004. Source lifecycle and canonical revision pruning
   remain deliberately outside Stage 2 (issue #35).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
@@ -34,7 +35,7 @@ Last review: 2026-10-09 (P0002-C03, accepted).
 - **State:** executing
 - **Branch:** `chunk/p0003-c01`
 - **Pull request:** `#39` (draft)
-- **Units committed:** a, b
+- **Units committed:** a, b, c
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are

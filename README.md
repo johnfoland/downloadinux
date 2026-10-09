@@ -6,9 +6,12 @@ folder.
 
 It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
 wrap it, with its settings in a file of their own outside the checkout. That
-is Stage 1 of a refactor toward a portable application; the later stages
-(named cookie sources, a persistent download worker, a Python + Textual TUI)
-are proposals in the [planning documents](docs/README.md). This README covers
+is Stage 1 of a refactor toward a portable application. Stage 2 now has a
+tested internal cookie parser and atomic source-store foundation (P0003-C01);
+named-source commands, legacy migration, and private execution jars remain
+unimplemented. Downloads, cookie export, setup, and doctor still use the Stage 1
+shared jar. The [planning documents](docs/README.md) describe the remaining
+Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
@@ -701,6 +704,9 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   ├── cookiejar.py              # strict Netscape parsing and safe summaries (internal)
+│   ├── cookie_store.py           # immutable source registry/revision reader (internal)
+│   ├── cookie_writer.py          # locked atomic source publication (internal)
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
