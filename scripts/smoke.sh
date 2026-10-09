@@ -55,6 +55,109 @@ fi
 ' sh "$(id -u)" "$(id -g)"
 test -d "$smoke_dir/downloads with space/dlmp4"
 
+# DEC-26: use real Linux ownership and the shipped entrypoint. The fixture
+# containers share the check project's retained history volume; only root
+# prepares fixtures, and the entrypoint must drop to dl for every probe.
+cat >"$smoke_dir/state/check-home.sh" <<'SH'
+set -eu
+fail() { echo "Runtime home check: $*" >&2; exit 1; }
+uid=$1
+gid=$2
+test "$(id -u):$(id -g)" = "$uid:$gid" || fail "wrong runtime identity"
+for directory in /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinux; do
+    probe="$directory/.downloadinux-home-probe"
+    touch "$probe" || fail "cannot create probe in $directory"
+    rm "$probe" || fail "cannot remove probe in $directory"
+done
+sentinel="/home/dl/.local/share/downloadinux/retained-$uid"
+test "$(cat "$sentinel")" = "retained history $uid:$gid" || fail "history contents changed"
+test "$(stat -c %d:%i:%u:%g "$sentinel")" = "$(cat "/state/history-$uid.expected")" || fail "history identity or ownership changed"
+if test "$3" = symlink; then
+    target="/tmp/downloadinux-config-target"
+    test -L /home/dl/.config || fail "final symlink replaced"
+    test "$(readlink /home/dl/.config)" = "$target" || fail "final symlink redirected"
+    test "$(stat -c %d:%i:%u:%g "$target")" = "$(cat /tmp/config-target.expected)" || fail "symlink target identity or ownership changed"
+    test "$(stat -c %d:%i:%u:%g "$target/sentinel")" = "$(cat /tmp/config-sentinel.expected)" || fail "symlink sentinel identity or ownership changed"
+    test "$(cat "$target/sentinel")" = "untouched config target" || fail "symlink sentinel contents changed"
+fi
+for directory in /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinux /home/dl/.config; do
+    test "$(stat -c %u:%g "$directory")" = "$uid:$gid" || fail "wrong owner for $directory"
+done
+printf 'Runtime home passed (uid %s, gid %s, %s).\n' "$uid" "$gid" "$3"
+SH
+
+check_runtime_home() {
+  local uid=$1 gid=$2 kind=$3
+  local home_cli=("${cli[@]}" --set "container.uid=$uid" --set "container.gid=$gid")
+  # Seed before a subsequent start, with an owner different from the image
+  # and tested IDs. Device/inode and both owner IDs must survive startup.
+  # shellcheck disable=SC2016
+  "${home_cli[@]}" compose -- run --rm -T --user root --entrypoint sh downloadinux -c '
+set -eu
+sentinel="/home/dl/.local/share/downloadinux/retained-$1"
+printf "retained history %s:%s\n" "$1" "$2" > "$sentinel"
+chown 4242:4343 "$sentinel"
+stat -c %d:%i:%u:%g "$sentinel" > "/state/history-$1.expected"
+' sh "$uid" "$gid"
+  # Docker may copy already-owned image directories into a new volume.
+  # Explicit root parents make both missing-parent mutations observable.
+  # For the symlink case, preparation and startup share a disposable layer.
+  # shellcheck disable=SC2016
+  "${home_cli[@]}" compose -- run --rm -T --user root --entrypoint sh downloadinux -c '
+set -eu
+chown 0:0 /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinux
+if test "$3" = symlink; then
+    mkdir /tmp/downloadinux-config-target
+    printf "untouched config target\n" > /tmp/downloadinux-config-target/sentinel
+    chown 4242:4343 /tmp/downloadinux-config-target /tmp/downloadinux-config-target/sentinel
+    stat -c %d:%i:%u:%g /tmp/downloadinux-config-target > /tmp/config-target.expected
+    stat -c %d:%i:%u:%g /tmp/downloadinux-config-target/sentinel > /tmp/config-sentinel.expected
+    mkdir -p /home/dl/.config
+    rmdir /home/dl/.config
+    ln -s /tmp/downloadinux-config-target /home/dl/.config
+else
+    mkdir -p /home/dl/.config
+    chown 0:0 /home/dl/.config
+fi
+exec /usr/local/bin/entrypoint.sh sh /state/check-home.sh "$1" "$2" "$3"
+' sh "$uid" "$gid" "$kind"
+}
+check_runtime_home 1234 2345 directory
+check_runtime_home 1000 1000 directory
+check_runtime_home 1234 2345 symlink
+check_runtime_home 1000 1000 symlink
+
+# Broken home entries must stop before Ready, with the OS diagnostic visible.
+# shellcheck disable=SC2016
+if "${cli[@]}" --set container.uid=1000 --set container.gid=1000 compose -- \
+    run --rm -T --user root --entrypoint sh downloadinux -c '
+set -eu
+mkdir -p /home/dl/.config
+rmdir /home/dl/.config
+touch /home/dl/.config
+exec /usr/local/bin/entrypoint.sh true
+' >"$smoke_dir/home-mkdir.log" 2>&1; then
+  echo 'A non-directory home entry unexpectedly started.' >&2
+  exit 1
+fi
+if ! grep -q 'mkdir:.*home/dl/.config' "$smoke_dir/home-mkdir.log" \
+    || grep -q 'Ready\.' "$smoke_dir/home-mkdir.log"; then
+  cat "$smoke_dir/home-mkdir.log" >&2
+  exit 1
+fi
+if "${cli[@]}" --set container.uid=1000 --set container.gid=1000 compose -- \
+    run --rm -T --volume "$smoke_dir/state:/home/dl/.config:ro" downloadinux true \
+    >"$smoke_dir/home-chown.log" 2>&1; then
+  echo 'A read-only home ownership repair unexpectedly started.' >&2
+  exit 1
+fi
+if ! grep -q 'chown:.*home/dl/.config.*Read-only file system' "$smoke_dir/home-chown.log" \
+    || grep -q 'Ready\.' "$smoke_dir/home-chown.log"; then
+  cat "$smoke_dir/home-chown.log" >&2
+  exit 1
+fi
+printf 'Runtime home failure diagnostics passed (mkdir and chown).\n'
+
 # D4: the running VPN-off container must satisfy every container contract
 # check, while VPN probes are skipped without credentials.
 "${cli[@]}" up
