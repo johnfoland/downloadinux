@@ -77,15 +77,8 @@ def initialize(root: Path) -> store.Snapshot:
         return _commit(root, dict(version=1, default=None, sources={}), replace=False)
 
 
-def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
-            *, expected: store.Source | None, select: bool = False,
-            revision_factory: Callable[[], str] = lambda: uuid4().hex,
-            clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Source:
-    """Publish a fresh immutable copy, then origin/revision/default atomically.
-
-    Safe unreferenced revisions may remain on failure. Never remove immutable
-    material or guess at reservation ownership; DEC-27 cleanup lives in files.
-    """
+def _prepare(root: Path, name: str, material: cookiejar.Material, origin: dict,
+             revision_factory: Callable[[], str], clock: Callable[[], datetime]):
     registry = root / 'sources.json'
     store.validate_name(name, registry)
     revision = revision_factory()
@@ -99,19 +92,76 @@ def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
         raise store.invalid(registry, 'source origin')
     source = store.source_record(dict(origin, revision=revision, refreshed_at=timestamp), registry)
     text = cookiejar.serialize(material, path)
+    return source, path, text
+
+
+def _publish_locked(root: Path, name: str, source: store.Source, path: Path,
+                    text: str, current: store.Snapshot, exists: bool,
+                    *, select: bool) -> store.Snapshot:
+    """Caller holds the host lock; all publication paths share this transaction."""
+    _directory(root / 'sources')
+    _directory(path.parent)
+    _write(path, text, replace=False)
+    record = current.record()
+    record['sources'][name] = source.record()
+    if select:
+        record['default'] = name
+    return _commit(root, record, replace=exists)
+
+
+def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
+            *, expected: store.Source | None, select: bool = False,
+            revision_factory: Callable[[], str] = lambda: uuid4().hex,
+            clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Source:
+    """Publish a fresh immutable copy, then origin/revision/default atomically.
+
+    Safe unreferenced revisions may remain on failure. Never remove immutable
+    material or guess at reservation ownership; DEC-27 cleanup lives in files.
+    """
+    source, path, text = _prepare(root, name, material, origin, revision_factory, clock)
     with locked(root):
         current, exists = _current(root)
         if current.sources.get(name) != expected:
-            raise DownloadinuxError(f'{registry}: source {name} changed; retry the operation')
-        _directory(root / 'sources')
-        _directory(path.parent)
-        _write(path, text, replace=False)
-        record = current.record()
-        record['sources'][name] = source.record()
-        if select:
-            record['default'] = name
-        _commit(root, record, replace=exists)
+            raise DownloadinuxError(f'{root / "sources.json"}: source {name} changed; retry the operation')
+        _publish_locked(root, name, source, path, text, current, exists, select=select)
         return source
+
+
+def ensure_store(root: Path, *,
+                 revision_factory: Callable[[], str] = lambda: uuid4().hex,
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Snapshot:
+    """Migrate once on host source access (Named cookie sources §5, DEC-33).
+
+    The reader remains mutation-free. Recheck absence and validate legacy
+    material inside the same lock as publication, without nested acquisition.
+    """
+    current = store.read(root)
+    if current is not None:
+        return current
+    with locked(root):
+        current, exists = _current(root)
+        if exists:
+            return current
+        legacy = root / 'cookies.txt'
+        try:
+            try:
+                data = legacy.read_bytes()
+            except FileNotFoundError:
+                data = cookiejar.HEADER.encode()
+            except OSError as error:
+                raise _failure(legacy, error) from None
+            material = cookiejar.parse(data, legacy)
+        except DownloadinuxError as error:
+            raise DownloadinuxError(
+                f'{error}; repair or move aside {legacy} before importing valid cookie data'
+            ) from None
+        if not material.jar:
+            return _commit(root, current.record(), replace=False)
+        source, path, text = _prepare(
+            root, 'legacy', material, dict(kind='file', path=os.path.abspath(legacy)),
+            revision_factory, clock,
+        )
+        return _publish_locked(root, 'legacy', source, path, text, current, False, select=True)
 
 
 def set_default(root: Path, name: str | None) -> store.Snapshot:
