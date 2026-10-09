@@ -14,9 +14,11 @@ Last review: 2026-10-09 (P0002-C03, accepted).
   tests, current-user documentation, and closure of #14, #20, #22, and #26
   in [the project closeout](projects/P0002-stage1-followups.md#8-closeout).
 - **P0003** (Stage 2, named cookie sources) is active: DEC-28 to DEC-33
-  settle its source store, browser/file operations, parser, startup snapshots,
-  independent user-agent policy, and compatibility migration. The design is
-  not implemented. No chunk is in flight; in a fresh session run `/relay-next`
+  settle its source store, browser/file operations, parser, submission-pinned
+  revisions/private startup jars, independent user-agent policy, and host-command
+  migration. DEC-31 and DEC-33 were amended on 2026-10-09 to the maintainer's
+  answers: pin revisions at submission and retire container download shortcuts.
+  The design is not implemented. No chunk is in flight; in a fresh session run `/relay-next`
   to cut from [D1, source store/parser and legacy migration](projects/P0003-named-cookie-sources.md#d1--source-store-parser-and-idempotent-legacy-migration).
   The next project ID is P0004. Source lifecycle and canonical revision pruning
   remain deliberately outside Stage 2 (issue #35).

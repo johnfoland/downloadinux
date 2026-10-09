@@ -31,14 +31,16 @@ reviewable implementation outcomes.
 
 In scope: managed source storage, strict Netscape parsing, browser/file
 registration and refresh, safe inspection, application default and invocation
-selection, startup snapshots and lease-based cleanup, independent literal
-user-agent overrides, health reporting, and Stage 1 compatibility/migration.
+selection, submission-pinned revisions/private startup jars and lease-based
+cleanup, independent literal user-agent overrides, health reporting, and Stage 1
+compatibility/migration.
 
 Preserved: macOS/Linux hosts; Docker execution; current XDG/custom paths and
 four mounts; UID/GID; preset media behavior; Instagram-only gallery cookies;
 output layout and gallery archive; queue path/mutation/throttling behavior;
-fixed tmux batch session names; `watch`; host recipe and container helper names;
-DEC-21's optional no-argument user-agent command; credential-free gate.
+fixed tmux batch session names; `watch`; host recipe/CLI command names;
+`just shell` for diagnostics/utilities; DEC-21's optional no-argument user-agent
+command; credential-free gate.
 
 Deliberately excluded:
 
@@ -54,11 +56,19 @@ Deliberately excluded:
 - Self-contained packaging (#9), justfile shellchecking (#4), Dependabot (#8),
   action update policy (#13), archive/ExifTool redesign, and VPN redesign.
 
-Scope preferences were offered for browser coverage, startup versus submission
-pinning, and helper compatibility. With no contrary preference during shaping,
-the recommended bounded options were used: Firefox plus Chrome/Chromium,
-startup revisions, and preserved helpers. These follow existing Stage 2 goals
-and do not reopen DEC-1 to DEC-27.
+The maintainer answered the shaping questions on 2026-10-09: support Firefox
+plus Chrome/Chromium, pin the cookie revision at submission, and remove the
+container's interactive download shortcuts while retaining host commands.
+The initial planning PR #36 had merged recommended assumptions before those
+answers arrived. DEC-31 and DEC-33 are amended in place to the actual choices;
+the initial readiness audit below is history, and the updated authority and
+delivery plan supersede its startup-revision/helper assumptions. No product
+code or chunk brief was built from those assumptions.
+
+Retire `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` shortcuts during D4,
+with host replacements documented. Retain the non-interactive batch loop and
+its sleeps/queue behavior until Stage 3; shortcut retirement does not imply
+tmux removal.
 
 Investigation: the existing `operations.download` and `operations.batch` both
 build preset argv, while detached tmux owns the latter's lifetime; neither has
@@ -73,7 +83,10 @@ the specific package version it ships.
 
 Readiness audited 2026-10-09: every question below is resolved in authority,
 DEC-28 to DEC-33 are added, D1–D5 cover the outcome, and no other project is
-active. P0003 is activated in this planning session; no chunk is in flight.
+active. P0003 was activated in that planning session; no chunk is in flight.
+Readiness re-audited after the maintainer's answers on 2026-10-09: DEC-31 and
+DEC-33 amendments are reflected in authority, D1–D5, and completion criteria;
+P0003 remains active with the same idle chunk handoff.
 
 ## 3. Design questions
 
@@ -92,13 +105,13 @@ this record supplies delivery and evidence rather than a second behavior spec.
 | What constitutes a valid or empty jar? | Strict shared Netscape parser retaining session/expiry/HttpOnly; header-only allowed; duplicates rejected | *Registration, refresh, and parsing*; DEC-30 | resolved |
 | Which inspection data and JSON shapes are public? | Source metadata, domain counts and expiry partitions, recognized presence; no names/values or validity claims | *Registration, refresh, and parsing*; DEC-30 | resolved |
 | What is the selection precedence and anonymous behavior? | Explicit named/anonymous, then application default, then anonymous; no site defaults | *Selection, private working jars, and lifetime*; DEC-31 | resolved |
-| When is a future queued job's source/revision pinned? | Identity/default at submission, latest revision at startup | *Selection, private working jars, and lifetime*, *Persistent jobs*; DEC-31 | resolved |
+| When is a future queued job's source/revision pinned? | Identity/default and immutable revision at submission; private copy at startup | *Selection, private working jars, and lifetime*, *Persistent jobs*; DEC-31 | resolved |
 | What shares one jar, and what may write canonical material? | One jar per multi-URL invocation or whole batch; no downloader writes canonical material | *Selection, private working jars, and lifetime*; DEC-31 | resolved |
 | Who owns snapshots after detached launch and interruption? | Container runner holds lease through child tree/loop; handled exit cleans; explicit container cleanup skips live leases | *Selection, private working jars, and lifetime*; DEC-31 | resolved |
 | How are permissions, allocation races, and retention bounded? | 0700/0600, short container allocation lock, lease before publication, retained immutable canonical revisions | *Source store and publication*, *Selection, private working jars, and lifetime*; DEC-28, DEC-31 | resolved |
 | How is user-agent policy separated without losing the existing literal? | Keep setting/default, add explicit literal forms/overrides, remove lookup from cookie workflow and doctor | *User-agent policy*; DEC-32 | resolved |
 | How does existing state migrate without account changes? | Once-only locked import of nonempty managed jar to `legacy`/default; preserve originals and import-env behavior | *Compatibility and migration*; DEC-33 | resolved |
-| What do wrappers, setup, and shell helpers do after upgrade? | Named Firefox compatibility switch, optional setup export, same runner for all download routes | *Compatibility and migration*; DEC-33 | resolved |
+| What do wrappers, setup, and shell helpers do after upgrade? | Keep host commands, named Firefox switch, and optional setup export; retire container download shortcuts | *Compatibility and migration*; DEC-33 | resolved |
 | What health check contracts change? | Stable IDs/order; shared source parser; anonymous skips; safe store failure checks; no browser UA comparison | *Compatibility and migration*; DEC-30, DEC-32, DEC-33 | resolved |
 
 ## 4. Authority changes
@@ -107,12 +120,12 @@ this record supplies delivery and evidence rather than a second behavior spec.
 |---|---|---|
 | [target-design.md](../target-design.md), *Named cookie sources / Source store and publication* | Pins schema, permissions, immutable revisions, default ownership, transactions, errors, and retention | Owns source persistence shared across operations and container readers |
 | target design, *Named cookie sources / Registration, refresh, and parsing* | Pins CLI fronts, support matrix, direct host export, strict parsing, and public summaries | Owns cookie-source operations and data contracts |
-| target design, *Named cookie sources / Selection, private working jars, and lifetime* | Pins selection, startup timing, multi-URL/batch isolation, leases, cleanup and child lifetime | Owns the credential boundary across host launch, container execution, and future jobs |
+| target design, *Named cookie sources / Selection, private working jars, and lifetime* | Pins source/revision at submission, private copying at startup, multi-URL/batch isolation, leases and cleanup | Owns the credential boundary across host launch, container execution, and future jobs |
 | target design, *Named cookie sources / User-agent policy* | Pins explicit literals, overrides, optional compatibility lookup, and absence of browser inference | Owns user-agent policy independently of account selection |
-| target design, *Named cookie sources / Compatibility and migration* | Pins automatic legacy import, wrappers/setup/helpers, image upgrade, and health overrides | Owns the user transition from the implemented Stage 1 bridge |
-| target design, *Status*, *Agreed decisions*, *Presets*, and *Persistent jobs* | Marks Stage 2 settled/unimplemented; cross-links private jars/optional lookup and the future startup rule | Prevents old Stage 1 examples or Stage 3 proposals being mistaken for conflicting current rules |
+| target design, *Named cookie sources / Compatibility and migration* | Pins automatic legacy import, host wrappers/setup, shortcut retirement, image upgrade, and health overrides | Owns the user transition from the implemented Stage 1 bridge |
+| target design, *Status*, *Agreed decisions*, *Presets*, and *Persistent jobs* | Marks Stage 2 settled/unimplemented; cross-links private jars/optional lookup and the submission-pinning rule | Prevents old Stage 1 examples or Stage 3 proposals being mistaken for conflicting current rules |
 | [implementation-plan.md](../implementation-plan.md), *Stage 2* and *Decisions to resolve before their implementation* | Records resolved choices, migration and compatibility acceptance, cleanup and platform evidence | Owns stage boundaries and acceptance rather than executor-local choices |
-| [decisions.md](../decisions.md), DEC-28 to DEC-33 | Records new durable choices and rejected alternatives; none reopened | Shared decision history |
+| [decisions.md](../decisions.md), DEC-28 to DEC-33 | Records durable choices and alternatives; DEC-31 and DEC-33 amended in place on 2026-10-09 after maintainer answers | Shared decision history |
 | [README.md](../README.md) (docs index), status, and projects registry | Routes to active P0003 while marking implementation pending | Separates process state from current-user behavior |
 
 ## 5. Delivery plan
@@ -180,9 +193,11 @@ stay on the Stage 1 bridge until D4's coordinated cutover.
 **Done when:** controlled downloader fixtures invoking the runner in
 credential-free containers show different jars for two source accounts and two
 invocations of one source; writeback/refresh/default changes cannot affect an
-already-started process; latest revision is resolved at startup; anonymous
-bypasses even a damaged store and passes no cookie option; literal overrides
-change no source/settings. Completion and handled signals wait for children
+already-started process. Pin a revision, refresh or replace the source before
+runner startup, and prove it copies the originally pinned bytes and revision;
+remove pinned material and prove it fails without selecting newer cookies.
+Anonymous bypasses even a damaged store and passes no cookie option; literal
+overrides change no source/settings. Completion and handled signals wait for children
 and remove the private jar; a killed supervisor with a live cookie-consuming
 child keeps its lease. Interrupted cleanup removes only unlocked valid
 working/staging directories, without deleting active leases or traversing a
@@ -193,8 +208,10 @@ Current-user docs explain that source execution cutover remains pending.
 
 ### D4 — Coordinated download, cookie workflow, and health cutover
 
-**Build:** Activate the runner for host `dl`/`batch` and all four container
-helpers together; expose named/anonymous selection and literal overrides,
+**Build:** Activate the runner for host `dl`/`batch`; pin source identity and
+revision before launch, expose named/anonymous selection and literal overrides,
+and retire all four container download shortcuts and their helper-specific
+user-agent environment channel in the same cutover,
 keeping preset arguments, Instagram cookie scoping, tmux, queue behavior, sleep,
 and done-pause. Forward options through `just dl`/`just batch`. Replace `just
 cookies` with atomic Firefox export/select and setup's grep/required-UA path
@@ -213,11 +230,16 @@ image recreation.
 
 **Depends on:** D3.
 
-**Done when:** foreground CLI and all shell helpers use the same snapshot
-module, with no canonical/shared jar in downloader argv. A detached fixture
-batch remains alive after host return, uses one revision across multiple URLs
-and sleeps despite refresh, and removes its
-jar after the loop before the done-pause. Launch failure or duplicate session
+**Done when:** foreground CLI and host-launched batches use the same snapshot
+module, with no canonical/shared jar in downloader argv. Test a refresh between
+host submission and container startup: host `dl` and detached `batch` pass the
+pinned source/revision and run with that exact material despite changed defaults
+or replacement. All four interactive shortcuts are absent from the updated
+image, their environment channel is removed, and README names their host
+replacements; `just shell` and the non-interactive batch loop still work.
+A detached fixture batch remains alive after host return, uses one revision
+across multiple URLs and sleeps despite refresh, and removes its jar after the
+loop before the done-pause. Launch failure or duplicate session
 creates no live snapshot; cleanup skips an active detached loop. Stubbed wrappers
 preserve positional/option words including spaces. Compatibility export success
 atomically changes Firefox source/default without changing UA; failure preserves
@@ -257,8 +279,8 @@ Beyond each item's focused tests, accepted chunks must evidence:
 - A public route from legacy jar or fresh/import-only setup through named-source
   selection into a real container fixture invocation and a detached batch.
 - Two-account and same-account isolation, immutable canonical material,
-  refresh failure preservation, latest startup revisions, and harmless default
-  changes during running work.
+  refresh failure preservation, pinned submissions across pre-start refresh,
+  unavailable-revision failure, and harmless default changes during running work.
 - Explicit anonymous execution without source-store access or cookie argv;
   source/user-agent independence and preserved media/output/archive behavior.
 - Cleanup after normal/failed/signalled execution and lease-safe interrupted
@@ -266,6 +288,9 @@ Beyond each item's focused tests, accepted chunks must evidence:
 - Shared secret-free parser/inspection/health behavior, actionable errors,
   0700/0600 material, both host platforms' selectors/paths, and no routine dirty
   tracked config or dependency on a browser/site in the gate.
+- Retired container download shortcuts and their environment channel; host
+  replacement commands documented, `just shell` retained, and host batches
+  still use the preserved non-interactive loop/tmux path until Stage 3.
 - README, cookie/preset documentation, recipe menu text, authority implementation
   status, and issue #34 closure consistent with the accepted chunks. Issue #35
   remains the deliberate lifecycle/pruning exclusion.

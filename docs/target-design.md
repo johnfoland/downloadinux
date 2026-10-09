@@ -32,8 +32,9 @@ portable writes (D1); P0002-C02 implements cookie and setup refresh (D2).
 P0002-C03 implements runtime-home ownership (D3, DEC-26).
 
 Project P0003 settles Stage 2 with DEC-28 to DEC-33: a managed source store,
-browser/file operations, strict parsing, startup snapshots, independent
-user-agent policy, and compatibility migration. See *Named cookie sources*.
+browser/file operations, strict parsing, submission-pinned cookie revisions,
+private startup jars, independent user-agent policy, and host-command migration.
+See *Named cookie sources*.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -499,6 +500,10 @@ Pinned for P0001-C04, the end of DEC-15's interval:
   `zsh/batch.zsh` (in the image `/home/dl/.zsh-custom/batch.zsh`), which
   `batch` sources and the interactive shell sources with the other `zsh/`
   files; `exifmod` stays in `functions.zsh`.
+  These remain the implemented Stage 1 contracts. Stage 2's *Named cookie
+  sources / Compatibility and migration* retires the four download shortcuts
+  and their user-agent environment channel at cutover (DEC-33, amended
+  2026-10-09); the non-interactive batch loop and `exifmod` remain.
 - Entrypoint messages (issue #18): without a token, `NORDVPN_TOKEN not set.
   Store one on the host with: just token <token>`; the last line, `Ready.
   Shell in with: just shell (or dlx shell)`.
@@ -995,7 +1000,8 @@ must refuse an existing path. Failure preserves the previous registry and
 referenced material; an unreferenced revision left by interruption is harmless.
 Readers need no host/container lock sharing: atomic registry reads plus
 immutable retained revisions suffice. Stage 2 retains prior canonical revisions
-and does not garbage-collect them while an old reader may still use them.
+and does not garbage-collect them while an old reader or submitted job may
+still use them (DEC-31).
 
 ### Registration, refresh, and parsing
 
@@ -1090,29 +1096,38 @@ for tests; no inspection or health check verifies authentication against a site.
 migration entirely. Otherwise resolve the explicit name, then the registry's
 application default, then anonymous; there is no site-dependent selection.
 A requested/mapped missing source fails before launch, never falls back to a
-different account. Store the selected identity, not cookie contents, in a
-future queued job; resolve the application default at submission and the latest
-revision of that identity at startup (DEC-31). Stage 3 owns persistence and
-failure states, but must use this timing rule.
+different account. Resolve the application default to a source identity and
+pin that identity's current immutable revision at submission (DEC-31). Store
+both identifiers, not cookie contents, in a future queued job; a later refresh,
+replacement, or changed default cannot change its submitted credentials.
+Stage 3 owns persistence and failure states, but must use this timing rule.
+Do not allocate a mutable working jar while work waits in a queue: keep the
+pinned canonical revision available, then make the private copy at startup.
 
-Stage 2 has invocations, not persisted jobs: one `dl` call, including all URLs,
-gets one working jar; one detached batch gets one jar for its whole loop,
-including delays. A refresh or changed default never changes that invocation.
+Stage 2 has invocations, not persisted jobs: the host resolves and pins the
+source identity/revision once for each `dl` or `batch` request, after its normal
+preset/URL-argument or queue-path validation and before launching Compose/tmux.
+It passes that exact pair to
+the container runner. One `dl` call, including all URLs, gets one working jar;
+one detached batch gets one jar for its whole loop, including delays. A refresh,
+replacement, or changed default after pinning never changes that invocation,
+even if the runner has not started yet.
 Concurrent calls, including two calls using the same source, have different
 working jars. Preserve Stage 1's fixed batch session names and limits until
 Stage 3; Stage 2 does not add same-preset batch concurrency.
 
-A container-side runner, using the same source-store reader/parser as the host,
-resolves the latest revision and creates a private copy immediately before
+A container-side runner, using the same parser and revision-path validation as
+the host, creates a private copy of the submitted revision immediately before
 starting the downloader or batch loop. Ship that reusable module and a thin
 runner entry point into the image's Python environment; the container path
 accepts `/cookies` and `/state` explicitly and never loads host settings or
-performs browser extraction. The host validates selectors before Compose; the
-runner revalidates at execution, and reports a failure if the source record is
-invalid or its revision is unavailable. A successful explicit replacement of
-the same identity before startup supplies that identity's latest credentials.
-For detached batches such a startup failure is visible through `watch`; no
-job-reporting API is implied.
+performs browser extraction. The host validates the source and pinned material
+before Compose. The runner validates the supplied identifiers and parses the
+exact immutable file at execution; it does not resolve the default or current
+registry revision again. Missing or invalid pinned material fails, never falls
+back to newer cookies. A replaced current source record does not invalidate an
+older pinned revision that remains available. For detached batches a startup
+failure is visible through `watch`; no job-reporting API is implied.
 
 Each working directory is `/state/cookie-invocations/<random-id>/` (0700),
 with `cookies.txt` (0600), `metadata.json` (0600: version 1, invocation ID,
@@ -1195,10 +1210,9 @@ anonymous mode or repairing/moving aside the invalid legacy jar before
 importing a valid file. Recheck registry absence
 under the lock; never merge a legacy jar over an existing registry. The old
 managed jar and checkout jar remain untouched, and neither receives downloader
-writeback afterwards. The container runner never migrates: old container
-helpers invoked before host migration refuse with a hint to run `dlx cookies
-list` on the host first. `config show` remains a settings report, without a
-registry read or migration side effect.
+writeback afterwards. The container runner never migrates or selects a default;
+its source/revision pair comes from the host request. `config show` remains a
+settings report, without a registry read or migration side effect.
 
 `config import-env` keeps DEC-13's Stage 1 copy contract; the first cookie-aware
 operation then registers that managed copy. Document direct import of a
@@ -1228,16 +1242,24 @@ Firefox on import-only and unattended installations. No automatic refresh or
 user-agent change occurs on a kept source. The prompt belongs to this shared
 operation, with an injectable input boundary, rather than grep in the recipe.
 
-The container's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` keep their
-names. They route through the same runner, read the registry default at each
-invocation, take `DL_USER_AGENT` as before, and allocate their own working jar.
-Global settings changes still require the configured mounts/identity to match the
-running container; Stage 2 adds no automatic recreate on every download.
-They expose `--cookie-source`, `--anonymous`, and `--user-agent` with the same
-semantics; shell helper URLs/queues and preset output/archive behavior stay
-unchanged. They do not read or write `/cookies/cookies.txt`. Their default is
-read at invocation, so a source-default change needs no container recreation;
-the environment's user-agent still updates on recreate (DEC-20).
+Retire the container's interactive download shortcuts `dlmp4`, `dlgal`,
+`dlmp4_batch`, and `dlgal_batch` at Stage 2 cutover (DEC-33). Users start
+managed downloads from the host: `just dl video ...` / `dlx dl video ...`,
+`just dl gallery ...` / `dlx dl gallery ...`, and `just batch ...` / `dlx batch
+...`. Do not add interactive container-side replacements, new shell flags, or a shell
+source/default selector. Preserve `just shell` for diagnostics and utilities,
+and keep the shared non-interactive zsh batch loop until Stage 3 replaces it.
+The downloaders remain installed for the runner.
+
+The helper-specific `DL_USER_AGENT` / `DOWNLOADINUX_USER_AGENT` environment
+channel ends with those shortcuts; host operations pass the configured or
+invocation user-agent directly to the runner, as DEC-20 already does for host
+commands. The Stage 1 environment table above remains implemented history until
+cutover. A changed source default or user-agent applies to the next host request
+without recreation; mounts/identity still require the configured running
+container to match. Stage 2 adds no automatic recreate on every download.
+The README and recipe guidance give the host replacement for every retired
+shortcut and explain the required image rebuild.
 
 `doctor`'s cookie/user-agent checks use the shared strict parser and selected
 default, with no browser access or site request. Keep `cookies.jar`,
@@ -1258,9 +1280,10 @@ failures as checks and continues the remaining report.
 Delivery may expose source inspection/registration before execution changes,
 but document those as preparatory: existing downloads still use the Stage 1
 jar until cutover. Ship and test the new runner before activating it. Switch
-foreground downloads, batches, all container download helpers, `just cookies`,
-setup, and cookie/user-agent health checks together in the cutover chunk. This
-prevents a refresh updating the old jar while a new route reads an immutable
+host foreground downloads, batches, `just cookies`, setup, and cookie/user-agent
+health checks together, and remove the container download shortcuts in that
+same cutover chunk. This prevents a refresh updating the old jar while a new
+route reads an immutable
 source, or a new default silently being ignored by a remaining old route.
 Additive preparation may be split; preserve the whole cutover boundary.
 Already-running Stage 1 batches may finish using their existing jar; operators
@@ -1276,8 +1299,8 @@ mark this design implemented merely because its planning PR merged.
 Proposed job data:
 
 - Job ID, URL, downloader, preset, and destination.
-- Selected cookie source identity (default resolved at submission) and latest
-  snapshot revision resolved at startup, or anonymous mode (DEC-31).
+- Selected cookie source identity and immutable revision pinned at submission,
+  or anonymous mode; the private working copy is created at startup (DEC-31).
 - State, timestamps, attempt count, and structured error/result.
 - Log location and available downloader progress.
 - Output references when they can be obtained reliably.

@@ -543,31 +543,43 @@ site's current behavior.
 refresh, and parsing* and *Compatibility and migration* (health checks). Added
 during project P0003 (issue #34).
 
-## DEC-31: Resolve identity at submission and cookies at execution startup (2026-10)
+## DEC-31: Pin source identity and revision at submission; copy at startup (2026-10)
+
+*Amended 2026-10-09 after the maintainer answered the shaping question.* The
+initial plan selected the latest revision at startup before that answer had
+arrived. It is replaced by submission-time revision pinning, so submitted work
+keeps the credentials selected for it even if the source is refreshed later.
 
 Explicit named selection wins over the application default; explicit anonymous
 bypasses the source store entirely. Resolve a future job's default to a source
-identity at submission, then use that identity's latest revision when it starts.
-An unknown or unavailable source fails rather than changing account. Stage 2
-implements the same rule for invocations: a multi-URL `dl` gets one jar and a
-whole detached batch gets one jar. A container runner copies the canonical
-revision immediately before execution, holds a lease inherited by
-cookie-consuming children through the process tree/loop, and removes its
-private jar on handled completion. Cleanup runs in
-the Docker Linux environment and only removes directories with an available
-lease; active jars are never removed by age or host PID guesses. A short
-container allocation/cleanup lock closes the lease-creation race.
+identity and pin that identity's immutable current revision at submission.
+Persist both IDs, not cookie contents, and keep that revision available until
+execution. Stage 2 applies this to each host `dl`/`batch` request before launch.
+An unknown source or unavailable pinned revision fails rather than changing
+account or substituting newer cookies.
 
-Submission-time credential pinning was rejected so queued work can benefit from
-an explicit refresh before it starts. Per-URL batch refresh was rejected because
-it changes an active invocation's credentials. Host-return cleanup was rejected
-because detached batches outlive their launching CLI. This does not introduce
-job storage, batch concurrency, scheduling, or tmux removal before Stage 3.
+A multi-URL `dl` gets one jar and a whole detached batch gets one jar. The
+container runner creates the private copy from the supplied pinned revision
+immediately before execution; it never resolves a default/current revision
+again. It holds a lease inherited by cookie-consuming children through the
+process tree/loop and removes its private jar on handled completion. Cleanup
+runs in the Docker Linux environment and only removes directories with an
+available lease; active jars are never removed by age or host PID guesses. A
+short container allocation/cleanup lock closes the lease-creation race.
 
-*Where:* [target design](target-design.md), *Named cookie sources / Selection,
-private working jars, and lifetime*, and *Persistent jobs*;
-[implementation plan](implementation-plan.md), *Stage 2* and *Decisions to
-resolve*. Added during project P0003 (issue #34).
+Startup-time revision selection is replaced because it would change submitted
+work after a refresh. Creating mutable working jars at submission is unnecessary:
+immutable canonical revisions already preserve the selected material. Per-URL
+batch refresh remains rejected because it changes an active invocation's
+credentials. Host-return cleanup remains rejected because detached batches
+outlive their launching CLI. This adds no job storage, batch concurrency,
+scheduling, or tmux removal before Stage 3.
+
+*Where:* [target design](target-design.md), *Named cookie sources / Source store
+and publication*, *Selection, private working jars, and lifetime*, and
+*Persistent jobs*; [implementation plan](implementation-plan.md), *Stage 2*
+and *Decisions to resolve*. Added during project P0003 (issue #34); amended in
+place during that project's shaping follow-up, with the maintainer's choice.
 
 ## DEC-32: Cookie operations do not set or infer the user-agent (2026-10)
 
@@ -591,7 +603,12 @@ policy*, *Compatibility and migration*, and *Presets*;
 [implementation plan](implementation-plan.md), *Stage 2*. Added during project
 P0003 (issue #34).
 
-## DEC-33: Migrate the Stage 1 jar once and preserve compatibility through snapshots (2026-10)
+## DEC-33: Migrate the Stage 1 jar once and keep host download commands (2026-10)
+
+*Amended 2026-10-09 after the maintainer answered the shaping question.* The
+initial plan preserved container download shortcuts before that answer had
+arrived. It is replaced by retaining host commands and retiring those shortcuts;
+managed downloads begin from the host terminal.
 
 When there is no source registry, a cookie-aware host operation parses the
 managed Stage 1 jar and registers a nonempty one as the file source `legacy`
@@ -604,19 +621,27 @@ behavior; migration follows on the first source-store operation.
 `just cookies [profile]` becomes an explicit create/replace/export/select of the
 named Firefox source in one successful publication. Setup preserves a named
 default regardless of Instagram cookies; with anonymous default, it offers an
-optional Firefox export, no by default or EOF. Host and container download
-helpers retain their names through the shared private-jar runner; the container
-never performs migration or accesses a browser. The image no longer seeds a
-shared cookie placeholder. Doctor reports source-store problems as structured
-checks using the shared parser, with cookie checks skipped for anonymous mode.
+optional Firefox export, no by default or EOF. Host recipes/CLI commands keep
+their names and execute through the shared private-jar runner. Retire the
+container's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` shortcuts and their
+helper-specific user-agent environment channel at cutover. The container runner
+receives explicit pinned identifiers and user-agent arguments from the host;
+it never performs migration, chooses a default, or accesses a browser.
+`just shell` remains for diagnostics/utilities and the non-interactive zsh batch
+loop remains until Stage 3. The image no longer seeds a shared cookie placeholder.
+Doctor reports source-store problems as structured checks using the shared parser,
+with cookie checks skipped for anonymous mode.
 
 Manual-only migration was rejected because existing downloads would silently
 become anonymous after upgrade. Reusing the old jar as a working jar was rejected
 because it would retain cross-invocation writeback. Mandatory Firefox export was
 rejected because imported and unattended setups must be usable independently.
 DEC-13's migration and DEC-25's Stage 1 bridge remain history; Stage 2 replaces
-the bridge at its planned boundary without reopening those decisions.
+the bridge at its planned boundary without reopening those decisions. Keeping
+interactive download shortcuts is replaced by the maintainer's choice to use
+the host commands; docs give the corresponding host command for each shortcut.
 
 *Where:* [target design](target-design.md), *Named cookie sources / Compatibility
 and migration*; [implementation plan](implementation-plan.md), *Stage 2* and
-*Migration checklist*. Added during project P0003 (issue #34).
+*Migration checklist*. Added during project P0003 (issue #34); amended in
+place during that project's shaping follow-up, with the maintainer's choice.
