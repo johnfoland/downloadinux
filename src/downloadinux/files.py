@@ -4,8 +4,9 @@ Writes are atomic: a temporary file in the same directory, created with the
 final mode, then published by rename or hard link. No-clobber creation falls
 back to an exclusive reservation on filesystems without hard links (DEC-24).
 A killed process or an unverifiable reservation may leave a mode-000 entry
-(DEC-27). `tomlkit` renders values and edits existing files so a user's
-comments survive; reading stays with `tomllib`.
+(DEC-27). `tomlkit` edits existing files so a user's comments survive;
+strings are encoded here as TOML 1.0, the version `tomllib` reads, which stays
+the reader.
 """
 
 from __future__ import annotations
@@ -109,10 +110,38 @@ def _remove_reservation(path: Path, reservation: tuple[int, int]) -> None:
             pass
 
 
-def _toml_value(value: Any) -> str:
+_SHORT_ESCAPES = {"\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\"}
+
+
+def _basic_string(value: str) -> str:
+    """`value` as a TOML 1.0 basic string, the version `tomllib` reads: a
+    control character with no short escape is `\\uXXXX`, never TOML 1.1's
+    `\\e` or `\\xHH`, which tomlkit can emit (target design, *Package
+    details*; issue #53). Other text matches tomlkit's rendering."""
+    out = []
+    for ch in value:
+        if ch in _SHORT_ESCAPES:
+            out.append(_SHORT_ESCAPES[ch])
+        elif ch < " " or ch == "\x7f":
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def _toml_item(value: Any) -> Any:
+    """A tomlkit item for `value`; strings go through `_basic_string`, so
+    every writer shares one TOML 1.0 encoder while tomlkit keeps editing
+    documents with their comments."""
     if isinstance(value, Path):
         value = str(value)
-    return tomlkit.item(value).as_string()
+    if isinstance(value, str):
+        return tomlkit.parse(f"v = {_basic_string(value)}\n")["v"]
+    return tomlkit.item(value)
+
+
+def _toml_value(value: Any) -> str:
+    return _toml_item(value).as_string()
 
 
 HEADER = """\
@@ -152,7 +181,7 @@ def setting_text(existing: str, key: str, value: Any) -> str:
     document = tomlkit.parse(existing)
     if table not in document:
         document[table] = tomlkit.table()
-    document[table][name] = str(value) if isinstance(value, Path) else value
+    document[table][name] = _toml_item(value)
     return tomlkit.dumps(document)
 
 
@@ -162,5 +191,5 @@ def credentials_text(token: str, existing: str | None = None) -> str:
     document = tomlkit.parse(existing) if existing is not None else tomlkit.document()
     if "nordvpn" not in document:
         document["nordvpn"] = tomlkit.table()
-    document["nordvpn"]["token"] = token
+    document["nordvpn"]["token"] = _toml_item(token)
     return tomlkit.dumps(document)
