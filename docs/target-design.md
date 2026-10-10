@@ -943,8 +943,8 @@ yt-dlp's input-before-output cookie lifecycle.
 ## Named cookie sources
 
 Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
-(DEC-28 to DEC-34). P0003-C01 implements §1's internal reader/publication
-foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
+(DEC-28 to DEC-34). PR #39 implements §1's internal reader/publication
+foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
 registration with explicit replacement, and stored-origin refresh. Private

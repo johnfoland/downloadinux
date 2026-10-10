@@ -675,6 +675,6 @@ need not preserve the original format and must not prevent structural cleanup.
 
 *Where:* [target design](target-design.md), *Named cookie sources* §3,
 “Snapshot storage format and interrupted allocation”. Added on 2026-10-10 for
-issue #34 during the planning follow-up to PR #41. This specifies previously
-unnamed storage details; DEC-31's submission pinning and process lifetime remain
+issue #34 in PR #44, following the accepted work in PR #41. This specifies
+previously unnamed storage details; DEC-31's submission pinning and process lifetime remain
 unchanged.
