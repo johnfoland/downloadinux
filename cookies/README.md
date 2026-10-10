@@ -74,6 +74,13 @@ It is the account switch `just cookies` will call from the download cutover.
 Until then it is preparatory, like the other `cookies` commands, and `just
 cookies` still writes the Stage 1 jar.
 
+`dlx cookies setup` is setup's cookie step from the cutover; `just setup`
+still runs its Stage 1 step until then. A named default is kept and summarized,
+never refreshed, and nothing is asked. An anonymous default asks `Export
+Firefox cookies now? [y/N] `: only `y`/`yes` (any case) runs `cookies
+firefox`; anything else, or end of input, keeps anonymous. A failed export
+exits 1 with the default still anonymous.
+
 The browser adapter uses locked yt-dlp 2026.08.19 directly without a URL/probe.
 Firefox accepts containers (`none` = outside, omitted = all); Chrome/Chromium
 accept Linux keyrings only. Profile names stay names; path-like/tilde profiles

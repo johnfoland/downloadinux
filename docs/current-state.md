@@ -255,6 +255,8 @@ in a private snapshot and is tested inside the built image by the gate's smoke
 test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) completes D3's operations: public `cookies cleanup`
 runs that runner's cleanup in the running container, and `config user-agent
 VALUE` writes an explicit literal, with in-image cleanup evidence in the smoke
-test. No download calls the runner yet; the coordinated cutover (D4) remains
-pending.
+test. [PR #55](https://github.com/johnfoland/downloadinux/pull/55) adds the preparatory `cookies firefox` and
+`cookies setup` fronts that `just cookies` and setup will call, and makes the
+settings and credentials writers emit TOML 1.0 strings. No download calls the
+runner yet; the coordinated cutover (D4) remains pending.
 The dated review and Stage 1 outcomes above remain historical observations.

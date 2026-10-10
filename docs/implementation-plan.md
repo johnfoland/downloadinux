@@ -64,7 +64,10 @@ lifetime are pinned in §3 / DEC-36 and implemented in PR #49: the image ships
 `downloadinux-runner`, proven in the built image by the gate's smoke test.
 PR #52 completes D3 with the public `cookies cleanup` front and the explicit
 `config user-agent VALUE` write (§3 host front, §4, DEC-37), with in-image
-cleanup evidence. None of this preparation activates public download routes before the coordinated
+cleanup evidence. PR #55 starts D4's additive preparation: TOML 1.0 settings
+and credentials writes (issue #53) and the `cookies firefox` and `cookies setup`
+fronts (§5, DEC-38), which the recipes call only from the cutover. None of this
+preparation activates public download routes before the coordinated
 cutover.
 
 - Implement source registration for browser/profile exports and Netscape imports.
@@ -190,6 +193,7 @@ store, parser, and legacy migration, and D2, browser/file registration and
 explicit refresh, are implemented and accepted. D3, private execution jars and
 explicit user-agent operations, is implemented: PR #45 adds its internal
 pinning/snapshot foundation, PR #49 the container runner and its image
-integration, and PR #52 public cleanup and the explicit user-agent write. The
-next delivery task is D4, the coordinated download cutover. Worker/job rules
+integration, and PR #52 public cleanup and the explicit user-agent write. D4,
+the coordinated download cutover, is next; PR #55 adds its preparatory
+`cookies firefox` and `cookies setup` fronts. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

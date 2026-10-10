@@ -137,6 +137,45 @@ def firefox_cookies(profile: str | None = None, config: str | None = None,
                                    overrides=overrides, host=host, now=now)
 
 
+SETUP_PROMPT = 'Export Firefox cookies now? [y/N] '
+
+
+@dataclass(frozen=True)
+class CookieSetup:
+    """`cookies setup`'s outcome: `kept` names a named default left alone;
+    `report` is its summary, or the new firefox source's after an export,
+    and is None when the default stays anonymous."""
+
+    kept: str | None
+    report: dict | None
+
+
+def cookie_setup(config: str | None = None, overrides: Sequence[str] = (),
+                 host: Host = Host(), *, ask, exporter=None,
+                 now: float | None = None) -> CookieSetup:
+    """Setup's cookie step (§5, DEC-38). `ask(prompt)` returns one line and
+    raises `EOFError` at end of input, which is a no.
+
+    Migrates first. A named default is inspected and kept, never refreshed;
+    an anonymous default asks once, and only y/yes exports through
+    `firefox_cookies` with default discovery. Settings and the user-agent
+    are never touched.
+    """
+    root = settings.load(config, overrides, host)['paths.cookies']
+    snapshot = cookie_writer.ensure_store(root)
+    if snapshot.default is not None:
+        report = cookie_store.inspect(root, snapshot, snapshot.default, now=now)
+        return CookieSetup(snapshot.default, report)
+    try:
+        answer = ask(SETUP_PROMPT)
+    except EOFError:
+        answer = ''
+    if answer.strip().lower() not in ('y', 'yes'):
+        return CookieSetup(None, None)
+    return CookieSetup(None, firefox_cookies(None, config, overrides, host,
+                                             exporter=exporter, now=now))
+
+
 def refresh_cookies(name: str, config: str | None = None,
                      overrides: Sequence[str] = (), host: Host = Host(),
                      *, exporter=None, now: float | None = None) -> dict:

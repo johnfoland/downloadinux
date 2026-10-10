@@ -7,9 +7,11 @@ safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
 operations. PR #41 implements accepted browser/file registration and explicit refresh.
 PR #49 ships the container runner for private execution, tested in the image;
-PR #52 adds public `cookies cleanup` and `config user-agent VALUE`. `cookies
-setup`, the download selection and user-agent options, and the runner's use by
-downloads arrive together at D4's cutover.
+PR #52 adds public `cookies cleanup` and `config user-agent VALUE`. PR #55
+adds the preparatory `cookies firefox` and `cookies setup` fronts (DEC-38) and
+TOML 1.0 settings writes. The recipes' switch to those fronts, the download
+selection and user-agent options, and the runner's use by downloads arrive
+together at D4's cutover.
 Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
@@ -967,7 +969,8 @@ Linux evidence. PR #49 ships §3's container runner ("Runner interface and
 process lifetime") as `downloadinux-runner` in the image, with in-image evidence
 from the gate's smoke test. PR #52 implements §3's public `cookies cleanup` host
 front, with in-image evidence, and §4's explicit `config user-agent VALUE`.
-No download calls the runner yet: that is D4's cutover.
+PR #55 implements §5's `cookies firefox` and `cookies setup` fronts, which no
+recipe calls yet. No download calls the runner yet: that is D4's cutover.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its

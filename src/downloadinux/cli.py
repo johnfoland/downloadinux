@@ -101,6 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
     cookie_firefox.add_argument('profile', nargs='?', metavar='PROFILE',
                                 help='Firefox profile name or path (default: Firefox default discovery)')
     cookie_firefox.set_defaults(handler=_cookies_firefox)
+    cookie_setup = cookie_commands.add_parser(
+        'setup', help="setup's cookie step: keep a named default, or offer a Firefox export")
+    _add_global_options(cookie_setup, 2)
+    cookie_setup.set_defaults(handler=_cookies_setup)
     cookie_refresh = cookie_commands.add_parser('refresh', help='reread a stored origin and publish a fresh immutable revision')
     _add_global_options(cookie_refresh, 2)
     cookie_refresh.add_argument('name', metavar='NAME', type=_source_name)
@@ -349,6 +353,28 @@ def _cookies_add_browser(args: argparse.Namespace, options: GlobalOptions) -> in
 def _cookies_firefox(args: argparse.Namespace, options: GlobalOptions) -> int:
     report = operations.firefox_cookies(args.profile, options.config, options.overrides)
     print(render_cookie_inspection(report))
+    return 0
+
+
+def _ask_line(prompt: str) -> str:
+    """Prompt on standard output and read one line; end of input ends the
+    prompt line before it reaches the caller as `EOFError` (§5, DEC-38)."""
+    try:
+        return input(prompt)
+    except EOFError:
+        print()
+        raise
+
+
+def _cookies_setup(args: argparse.Namespace, options: GlobalOptions) -> int:
+    outcome = operations.cookie_setup(options.config, options.overrides, ask=_ask_line)
+    if outcome.kept is not None:
+        print(f'Keeping the default cookie source {outcome.kept}; it was not refreshed.')
+    if outcome.report is None:
+        print('The cookie default stays anonymous; add a source later with '
+              'dlx cookies firefox, add-browser, or import.')
+    else:
+        print(render_cookie_inspection(outcome.report))
     return 0
 
 
