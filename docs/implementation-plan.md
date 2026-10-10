@@ -11,8 +11,10 @@ their wrapper and smoke coverage (P0001-C05); and D5: `just setup` over the
 CLI, the Stage 1 docs, and the in-place migration proof (P0001-C06). Its rules
 are in the [target design](target-design.md). Stage 2 is settled for project
 [P0003](projects/P0003-named-cookie-sources.md). P0003-C01 implements its internal
-parser and atomic source-store foundation; public commands, migration, and
-execution remain unimplemented. Stages 3–4 remain proposals.
+parser and atomic source-store foundation; P0003-C02 implements locked legacy
+migration and host-only list/inspect/default commands, finishing D1's build.
+Registration, refresh, and private execution remain unimplemented; downloads,
+export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -47,8 +49,11 @@ Acceptance criteria:
 Settled contract: target design *Named cookie sources*, DEC-28 to DEC-33.
 P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
 P0003-C01 implements the strict parser/summaries, immutable registry reader,
-and atomic host publication foundation. No public source command, automatic
-legacy migration, browser operation, or snapshot runner is implemented yet.
+and atomic host publication foundation. P0003-C02 implements automatic locked
+legacy migration and public `cookies list`, `inspect`, and `default` operations.
+These commands prepare the source workflow; current downloads/export/setup/doctor
+still use the Stage 1 shared jar and ignore the registry default. Browser/file
+registration, refresh, and snapshot execution remain pending in D2–D5.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
@@ -168,6 +173,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | Archive/state migration locations | Avoids losing deduplication history. Stage 1 leaves the gallery archive in place (DEC-13); Stage 3 decides. |
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
-Configuration and cookie-source contracts are settled. The next delivery task
-is P0003 D1, the source store, parser, and legacy migration. Worker/job rules
+Configuration and cookie-source contracts are settled. P0003 D1, the source
+store, parser, and legacy migration, is implemented and accepted. The next
+delivery task is D2, browser/file registration and explicit refresh. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

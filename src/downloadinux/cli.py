@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import health, migrate, operations, presets, servers
+from downloadinux import cookie_store, health, migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -72,6 +72,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_global_options(parser, 0)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    cookies = commands.add_parser('cookies', help='inspect cookie sources and select their future default')
+    _add_global_options(cookies, 1)
+    cookie_commands = cookies.add_subparsers(dest='cookie_command', metavar='SUBCOMMAND', required=True)
+    cookie_list = cookie_commands.add_parser('list', help='list source metadata')
+    _add_global_options(cookie_list, 2)
+    cookie_list.add_argument('--json', action='store_true', help='print JSON')
+    cookie_list.set_defaults(handler=_cookies_list)
+    cookie_inspect = cookie_commands.add_parser('inspect', help='summarize a source without exposing cookies')
+    _add_global_options(cookie_inspect, 2)
+    cookie_inspect.add_argument('name', metavar='NAME', type=_source_name)
+    cookie_inspect.add_argument('--json', action='store_true', help='print JSON')
+    cookie_inspect.set_defaults(handler=_cookies_inspect)
+    cookie_default = cookie_commands.add_parser('default', help='report or select the future source default')
+    _add_global_options(cookie_default, 2)
+    selectors = cookie_default.add_mutually_exclusive_group()
+    selectors.add_argument('name', nargs='?', metavar='NAME', type=_source_name)
+    selectors.add_argument('--anonymous', action='store_true', help='select anonymous as the future default')
+    cookie_default.set_defaults(handler=_cookies_default)
 
     config = commands.add_parser(
         "config", help="inspect and migrate configuration"
@@ -233,6 +252,55 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _passthrough(args: list[str]) -> list[str]:
     return args[1:] if args[:1] == ["--"] else args
+
+
+def _source_name(value: str) -> str:
+    if not cookie_store.NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError('source name must match [a-z0-9][a-z0-9_-]{0,63}')
+    return value
+
+
+def _cookies_list(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.list_cookies(options.config, options.overrides)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        lines = [f"Default: {report['default'] or 'anonymous'}"]
+        lines.extend(render_cookie_source(source) for source in report['sources'])
+        print('\n'.join(lines))
+    return 0
+
+
+def _cookies_inspect(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.inspect_cookies(args.name, options.config, options.overrides)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        lines = [render_cookie_source(report['source']), render_cookie_counts(report)]
+        for domain in report['domains']:
+            presence = 'present' if domain['session_cookie_present'] else 'absent'
+            lines.append(f"  {domain['domain']}: {render_cookie_counts(domain)}; recognized session cookie {presence}")
+        print('\n'.join(lines))
+    return 0
+
+
+def _cookies_default(args: argparse.Namespace, options: GlobalOptions) -> int:
+    default = operations.cookie_default(args.name, anonymous=args.anonymous,
+                                        config=options.config, overrides=options.overrides)
+    print(default or 'anonymous')
+    return 0
+
+
+def render_cookie_source(source: dict) -> str:
+    """Render the same metadata fields as JSON, without individual cookies."""
+    origin = {key: source[key] for key in ('path', 'browser', 'profile', 'keyring', 'container') if key in source}
+    return (f"{source['name']}: {source['kind']}; default: {'yes' if source['is_default'] else 'no'}\n"
+            f"  origin: {json.dumps(origin, ensure_ascii=False)}\n"
+            f"  revision: {source['revision']}; refreshed_at: {source['refreshed_at']}")
+
+
+def render_cookie_counts(summary: dict) -> str:
+    return '; '.join(f'{key}: {summary[key]}' for key in ('total', 'session', 'expired', 'unexpired'))
 
 
 def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:

@@ -379,6 +379,7 @@ def setup_headings(output):
 
 def assert_full_setup_finishes(result, host):
     assert result.returncode == 0, result.stderr
+    assert not (host['directory'] / 'sources.json').exists()
     assert setup_headings(result.stdout) == [
         "==> 1/5  Settings",
         "==> 2/5  NordVPN token",

@@ -7,9 +7,9 @@ folder.
 It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
 wrap it, with its settings in a file of their own outside the checkout. That
 is Stage 1 of a refactor toward a portable application. Stage 2 now has a
-tested internal cookie parser and atomic source-store foundation (P0003-C01);
-named-source commands, legacy migration, and private execution jars remain
-unimplemented. Downloads, cookie export, setup, and doctor still use the Stage 1
+tested cookie parser, atomic source store, automatic legacy migration, and
+`cookies list`/`inspect`/`default` commands (P0003-C01/C02). These source commands
+are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
 shared jar. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
@@ -266,7 +266,7 @@ checkout:
 |---|---|
 | Settings | `$XDG_CONFIG_HOME/downloadinux/config.toml` (`~/.config/downloadinux/config.toml`) |
 | NordVPN token | `credentials.toml` beside it, mode 0600, written by `just token` |
-| Managed cookie jar | `$XDG_DATA_HOME/downloadinux/cookies/` (`~/.local/share/…`), directory 0700 |
+| Managed cookies and source store | `$XDG_DATA_HOME/downloadinux/cookies/` (`~/.local/share/…`), directory 0700 |
 | State | `$XDG_STATE_HOME/downloadinux/` (`~/.local/state/…`) |
 
 The file is chosen by `--config PATH`, then the `DOWNLOADINUX_CONFIG`
@@ -333,6 +333,45 @@ they were so the import can be redone, and you can delete both once the new
 setup works. Until then, remember what they hold: `.env` has the token, and
 the old jar has live session cookies and may be world-readable: check with
 `ls -l cookies/cookies.txt`, then `chmod 600` it or delete it.
+
+## Inspecting the preparatory source store
+
+**These commands prepare Stage 2. Current downloads, `just cookies`, setup,
+and doctor still use `paths.cookies/cookies.txt` and ignore the registry default,
+including `anonymous`.** Browser registration, import/refresh commands, private
+execution jars, and anonymous download flags are still pending.
+
+The first `cookies list`, `inspect`, or `default` reads the managed Stage 1 jar
+under the host writer lock when no `sources.json` exists. A valid nonempty jar
+becomes source `legacy` and the source-store default in one atomic publication;
+a missing or valid header-only jar creates an empty anonymous store. The old
+managed jar and checkout jar keep their bytes and permissions. An invalid or
+unreadable managed jar fails without publishing a registry: repair it or move it
+aside before retrying with valid data. `config import-env` keeps its existing
+copy behavior; a later source command migrates that managed copy.
+
+```sh
+dlx cookies list --json          # migrate once, then list metadata
+dlx cookies default              # print legacy or anonymous
+# With a nonempty migrated jar:
+dlx cookies inspect legacy --json
+dlx cookies default legacy       # select the future named-source default
+dlx cookies default --anonymous  # future default only; current downloads still use the old jar
+```
+
+With an empty store, list/default succeed; `inspect legacy` fails because no
+source was registered. Human list/inspect output carries the same metadata as
+JSON. Inspection reports total/session/expired/unexpired counts and ordered
+domain summaries with recognized session-cookie presence. It shows no cookie
+names or values and does not establish that a site accepts the session.
+
+The store lives at the effective `paths.cookies`: `sources.json`, `.lock`,
+and immutable copies at `sources/<name>/<revision>.txt`. Managed directories
+are 0700; published material, registry, and lock are 0600. Selecting a default
+changes no revision or refresh timestamp. Existing registries are never remigrated
+or reset on damage. A later Stage 1 export can change the old jar, but the
+`legacy` inspection copy stays at its original revision during this transition.
+These commands need no Docker, browser, token, or user-agent lookup.
 
 ---
 
@@ -603,6 +642,10 @@ dlx config import-env        Turn the checkout's .env into the new files (VPN on
                                (--env PATH, --force; .env and the old jar stay put)
 dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
                                (macOS); without a readable Chrome, warn and change nothing
+dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
+dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
+dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
+                               (NAME and --anonymous conflict; current downloads ignore it)
 dlx build / up / down        Build, start in the background, or stop the configured project
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
@@ -624,8 +667,8 @@ dlx doctor [--json]          Structured settings, cookies, Docker, mount, tool, 
                                checks; exits 1 when any check fails
 ```
 
-`--config PATH` and `--set table.key=value` work on every command, before or
-after it ([The settings file](#the-settings-file)). `dlx` with no command
+`--config PATH` and `--set table.key=value` work on every command, before,
+between, or after nested subcommands ([The settings file](#the-settings-file)). `dlx` with no command
 prints help. A command that runs a program (`dl`, `shell`, `watch`, `vpn`,
 `compose --`) exits with that program's status; otherwise the status is 0 on
 success, 1 when an operation fails, and 2 for a usage error or invalid
@@ -704,12 +747,21 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
-│   ├── cookiejar.py              # strict Netscape parsing and safe summaries (internal)
-│   ├── cookie_store.py           # immutable source registry/revision reader (internal)
-│   ├── cookie_writer.py          # locked atomic source publication (internal)
+│   ├── cookiejar.py              # strict Netscape parsing and safe summaries
+│   ├── cookie_store.py           # mutation-free immutable registry/revision reader
+│   ├── cookie_writer.py          # atomic publication and locked legacy migration
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # old jar, retained only for migration
+```
+
+Under the effective `paths.cookies`, outside the checkout:
+
+```text
+cookies.txt                       # Stage 1 working jar; retained by migration
+sources.json                      # named-source metadata and future default (0600)
+.lock                             # host writer lock (0600)
+sources/<name>/<revision>.txt      # immutable managed copy (0600 in 0700 directories)
 ```

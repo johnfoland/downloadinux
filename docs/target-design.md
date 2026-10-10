@@ -4,8 +4,10 @@ Status: Stage 1 is implemented. P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
 safe summaries, immutable registry reader, and locked atomic host writer;
-public operations, migration, and execution remain unimplemented. Stages 3–4
-remain proposed.
+P0003-C02 implements locked legacy migration and public list/inspect/default
+operations. Registration, refresh, and private execution remain unimplemented;
+downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
+Stages 3–4 remain proposed.
 
 ## Agreed decisions
 
@@ -937,10 +939,12 @@ yt-dlp's input-before-output cookie lifecycle.
 
 Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
 (DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
-foundation and §2's parser, serializer, and safe metadata assembly. Public
-source commands, browser extraction, migration, and private execution jars
-remain unimplemented. The Stage 1 descriptions above remain current behavior
-until the corresponding chunks land. These rules replace its
+foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
+implements §5's locked migration and §2's public list/inspect/default operations.
+Browser/file registration, refresh, and private execution jars remain
+unimplemented. The new source commands are preparatory: downloads, export,
+setup, and doctor retain the Stage 1 shared jar and ignore the registry default
+until D4's coordinated cutover. These rules replace its
 shared-jar execution and required Firefox/probe/user-agent recipe chain.
 
 ### 1. Source store and publication

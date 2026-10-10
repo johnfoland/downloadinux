@@ -408,19 +408,29 @@ def test_empty_material_publish_and_default_only_failure(tmp_path,monkeypatch):
     assert store.read(tmp_path).sources['empty']==source
 
 
-def test_source_writer_reuses_portable_reservation_fallback(tmp_path,monkeypatch):
+@pytest.mark.parametrize('migration',[False,True])
+def test_source_writer_reuses_portable_reservation_fallback(tmp_path,monkeypatch,migration):
     def no_links(source,destination):
         raise OSError(errno.EOPNOTSUPP,os.strerror(errno.EOPNOTSUPP),str(source),None,str(destination))
     monkeypatch.setattr(files.os,'link',no_links)
-    publish(tmp_path,select=True)
-    assert store.read(tmp_path).default=='a'
-    assert all(stat.S_IMODE(p.stat().st_mode)==0o600 for p in tmp_path.rglob('*') if p.is_file())
+    if migration:
+        (tmp_path/'cookies.txt').write_text(cookiejar.serialize(material(),Path('fixture')))
+        writer.ensure_store(tmp_path)
+    else:
+        publish(tmp_path,select=True)
+    assert store.read(tmp_path).default==('legacy' if migration else 'a')
+    assert all(stat.S_IMODE(p.stat().st_mode)==0o600 for p in tmp_path.rglob('*') if p.is_file() and p.name!='cookies.txt')
     assert not list(tmp_path.rglob('*.tmp'))
 
 
-def test_unverifiable_reservation_is_preserved_and_reported(tmp_path,monkeypatch):
-    first=publish(tmp_path);before=bytes_state(tmp_path)
-    target=store.revision_path(tmp_path,'a','2'*32)
+@pytest.mark.parametrize('migration',[False,True])
+def test_unverifiable_reservation_is_preserved_and_reported(tmp_path,monkeypatch,migration):
+    if migration:
+        (tmp_path/'cookies.txt').write_text(cookiejar.serialize(material(),Path('fixture')))
+        before=None
+    else:
+        first=publish(tmp_path);before=bytes_state(tmp_path)
+    target=store.revision_path(tmp_path,'legacy' if migration else 'a','2'*32)
     real_replace=files.os.replace;real_lstat=Path.lstat
     def no_links(source,destination):
         raise OSError(errno.EOPNOTSUPP,os.strerror(errno.EOPNOTSUPP),str(source),None,str(destination))
@@ -435,10 +445,13 @@ def test_unverifiable_reservation_is_preserved_and_reported(tmp_path,monkeypatch
     monkeypatch.setattr(files.os,'link',no_links)
     monkeypatch.setattr(files.os,'replace',refuse_replace)
     monkeypatch.setattr(Path,'lstat',refuse_identity)
-    with pytest.raises(DownloadinuxError) as error:publish(tmp_path,rid='2'*32,expected=first)
+    with pytest.raises(DownloadinuxError) as error:
+        if migration:writer.ensure_store(tmp_path,revision_factory=lambda:'2'*32)
+        else:publish(tmp_path,rid='2'*32,expected=first)
     assert str(target) in str(error.value) and 'Permission denied' in str(error.value)
     assert stat.S_IMODE(target.stat().st_mode)==0
-    assert bytes_state(tmp_path)==before
+    if migration:assert store.read(tmp_path) is None
+    else:assert bytes_state(tmp_path)==before
     assert not list(target.parent.glob('*.tmp'))
 
 

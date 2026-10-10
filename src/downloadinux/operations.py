@@ -15,10 +15,51 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, files, health, presets, servers, settings, useragent
-from downloadinux.errors import DownloadinuxError
+from downloadinux import compose, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
+from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
+
+
+def _cookie_name(name: str) -> None:
+    if type(name) is not str or not cookie_store.NAME.fullmatch(name):
+        raise ConfigError('source name must match [a-z0-9][a-z0-9_-]{0,63}')
+
+
+def list_cookies(config: str | None = None, overrides: Sequence[str] = (),
+                 host: Host = Host()) -> dict:
+    """Host-only source metadata; migrate on first access (§2, §5, DEC-33)."""
+    root = settings.load(config, overrides, host)['paths.cookies']
+    return cookie_store.list_metadata(cookie_writer.ensure_store(root))
+
+
+def inspect_cookies(name: str, config: str | None = None,
+                    overrides: Sequence[str] = (), host: Host = Host(),
+                    *, now: float | None = None) -> dict:
+    """Shared secret-free source summary with an injectable clock (§2, DEC-30)."""
+    _cookie_name(name)
+    root = settings.load(config, overrides, host)['paths.cookies']
+    snapshot = cookie_writer.ensure_store(root)
+    return cookie_store.inspect(root, snapshot, name, now=now)
+
+
+def cookie_default(name: str | None = None, *, anonymous: bool = False,
+                   config: str | None = None, overrides: Sequence[str] = (),
+                   host: Host = Host()) -> str | None:
+    """Report or atomically select the future source default (§1–§2, DEC-28).
+
+    Existing Stage 1 download/export/setup/doctor routes stay on their shared
+    jar until the coordinated cutover described in §5.
+    """
+    if name is not None:
+        _cookie_name(name)
+        if anonymous:
+            raise ConfigError('source name and --anonymous conflict')
+    root = settings.load(config, overrides, host)['paths.cookies']
+    snapshot = cookie_writer.ensure_store(root)
+    if name is not None or anonymous:
+        snapshot = cookie_writer.set_default(root, name)
+    return snapshot.default
 
 
 def _invocation(effective: settings.Settings, host: Host) -> compose.Invocation:

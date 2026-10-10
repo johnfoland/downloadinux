@@ -7,6 +7,39 @@ in place. Cookie files hold live session credentials; treat them like passwords.
 Once the import has run, delete the old jar here, or `chmod 600` it if you
 keep it: it may be world-readable.
 
+## Preparatory source inspection
+
+`dlx cookies list [--json]`, `dlx cookies inspect NAME [--json]`, and
+`dlx cookies default [NAME] [--anonymous]` are implemented. **Downloads,
+`just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
+this source-store default, even when it is anonymous.** Import/refresh commands
+and private execution jars remain pending.
+
+On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
+is copied into immutable source `legacy` and selected as the future default.
+Missing or header-only material creates an anonymous empty registry; malformed
+or unreadable material fails with a repair/move-aside hint and publishes nothing.
+Migration never changes either old jar's bytes or modes. An existing registry
+is kept unchanged, and a damaged one is never reset automatically.
+
+```sh
+dlx cookies list --json
+dlx cookies default
+# When list reports a migrated legacy source:
+dlx cookies inspect legacy
+dlx cookies default legacy
+dlx cookies default --anonymous
+```
+
+`sources.json`, `.lock`, and `sources/<name>/<revision>.txt` live below
+`paths.cookies`. Managed directories are 0700; published files and lock are
+0600. List shows origin/revision/time/default metadata; inspect adds expiry
+counts and domain/session-cookie presence without individual cookie names or
+values, and never asserts login validity. Default changes retain revisions and
+timestamps. No browser, Docker, token, or user-agent operation is needed.
+A later `just cookies` export changes the old Stage 1 jar; the immutable
+`legacy` inspection copy remains unchanged until the future refresh/cutover work.
+
 ## Just use the recipe
 
 ```sh

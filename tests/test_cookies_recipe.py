@@ -184,6 +184,7 @@ def test_usable_stage_is_published_even_when_the_probe_fails(cookie_host, probe_
 
     assert result.returncode == 0, result.stderr
     assert cookie_host["jar"].read_bytes() == HEADER + COOKIE
+    assert not (cookie_host["directory"] / 'sources.json').exists()
     assert mode(cookie_host["directory"]) == 0o700
     assert mode(cookie_host["jar"]) == 0o600
     assert "yt-dlp diagnostic from the probe" in result.stderr
