@@ -9,7 +9,9 @@ with its internal parser and atomic source-store foundation implemented in
 P0003-C01 and locked legacy migration plus public list/inspect/default operations
 implemented in P0003-C02. [PR #41](https://github.com/johnfoland/downloadinux/pull/41) adds direct host browser extraction,
 support reporting, file/browser registration/replacement, and explicit refresh.
-Private execution jars and D4 cutover remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
+[PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds unused internal groundwork for private execution jars: submission
+pinning, exact pinned reads, lease-held snapshot allocation, and lease-safe cleanup.
+The runner, image integration, and D4 cutover remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
 and ignore the preparatory registry default. Stages 3–4 (a persistent worker in place of tmux
 and the Python + Textual TUI) remain proposals; batch runs still use tmux.
 

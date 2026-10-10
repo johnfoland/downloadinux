@@ -947,8 +947,13 @@ Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/do
 foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
-registration with explicit replacement, and stored-origin refresh. Private
-execution jars remain unimplemented.
+registration with explicit replacement, and stored-origin refresh. PR #45 adds
+§3's internal groundwork, unused by any public route: host submission pinning,
+the settings-free reader of a pinned revision's exact bytes, and a
+standard-library library that allocates private snapshots under a held lease,
+tears them down, and cleans up abandoned ones, with credential-free Docker
+Linux evidence. No runner, image entry point, public `cookies cleanup`, or
+download uses them yet.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
@@ -1177,7 +1182,9 @@ revisions, or run automatically on `up`. If the container is stopped, report
 how to start it and rerun cleanup. Filesystem lock failure refuses cleanup;
 no time-based fallback. Sharing `/state` across instances is safe because all
 snapshot producers and cleanup execute in the same Docker Linux environment,
-not through a host/container advisory-lock assumption. The runner starts the
+not through a host/container advisory-lock assumption, and take their locks on
+reopened descriptors (DEC-35), which Docker Desktop's bind mounts enforce
+across containers. The runner starts the
 downloader/loop in a process group, forwards handled termination signals to
 that group, and waits for it before deleting cookies.
 Normal child exit returns the downloader status; a signalled child returns
@@ -1217,7 +1224,10 @@ resolve or change the submitted account. Cookie contents and origins are absent.
 
 The configured state root may retain its symlink spelling, as other configured
 roots do; `cookie-invocations` and every managed entry below it must not be a
-symlink. Create/enforce the managed invocation root at 0700 and its persistent
+symlink. The snapshot library never creates the state root itself: `up`,
+`restart`, and `update` create `paths.state` (*Host application*), and inside
+the container it is the `/state` mount. Allocation with a missing state root is
+a path-bearing operation failure. Create/enforce the managed invocation root at 0700 and its persistent
 regular `.lock` at 0600; never delete/replace that lock during normal use.
 Staging directories are `.staging-<invocation_id>` at 0700. Under the allocation
 lock, create the directory and an empty regular mode-0600 `lease`, acquire its
@@ -1257,6 +1267,12 @@ known files and the directory. Owner teardown likewise verifies ownership and
 holds the lease through removal, reporting cleanup failure before release.
 Descriptor closure is attempted even on failed cleanup. No cleanup route touches
 canonical revisions, external imports or browser profiles.
+
+Take the allocation lock and every lease through a descriptor that opened the
+existing file, never the descriptor whose open created it, and check that both
+opens name the same file (DEC-35). Docker Desktop's macOS file sharing ignores
+a lock held through the creating descriptor, so a later open could acquire it
+and cleanup would remove an active snapshot.
 
 ### 4. User-agent policy
 

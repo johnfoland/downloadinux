@@ -2,6 +2,8 @@
 
 The root is supplied explicitly. Reading never migrates, creates directories,
 loads settings, or changes state; immutable revisions outlive snapshots.
+``read_pinned`` is the startup path for a submitted pair: it reads one exact
+retained revision without the registry (Named cookie sources §3, DEC-34).
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,6 +35,17 @@ def validate_name(name: str, path: Path) -> None:
 def validate_revision(revision: str, path: Path) -> None:
     if type(revision) is not str or not REVISION.fullmatch(revision):
         raise invalid(path, 'revision')
+
+
+def valid_timestamp(timestamp: object) -> bool:
+    """A real UTC instant in YYYY-MM-DDTHH:MM:SSZ form (§1)."""
+    if type(timestamp) is not str or not TIMESTAMP.fullmatch(timestamp):
+        return False
+    try:
+        datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ')
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -74,13 +87,8 @@ def source_record(record: object, path: Path) -> Source:
     if set(record) != fields:
         raise invalid(path, 'source fields')
     validate_revision(record['revision'], path)
-    timestamp = record['refreshed_at']
-    if type(timestamp) is not str or not TIMESTAMP.fullmatch(timestamp):
+    if not valid_timestamp(record['refreshed_at']):
         raise invalid(path, 'refresh timestamp')
-    try:
-        datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ')
-    except ValueError:
-        raise invalid(path, 'refresh timestamp') from None
     if kind == 'file':
         origin = record['path']
         if type(origin) is not str or not Path(origin).is_absolute() or '\x00' in origin:
@@ -111,7 +119,7 @@ def validate_record(record: object, path: Path) -> Snapshot:
     return Snapshot(default, MappingProxyType(sources))
 
 
-def _unique_object(pairs):
+def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
@@ -126,7 +134,31 @@ def revision_path(root: Path, name: str, revision: str) -> Path:
     return root / 'sources' / name / f'{revision}.txt'
 
 
-def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
+@dataclass(frozen=True)
+class Pinned:
+    """A submitted source identity: stable IDs only, never cookie contents (DEC-31)."""
+    source: str
+    revision: str
+
+
+@dataclass(frozen=True)
+class Anonymous:
+    """An explicit anonymous result: no source, revision, or snapshot (§3)."""
+
+
+ANONYMOUS = Anonymous()
+
+
+@dataclass(frozen=True, repr=False)
+class Revision:
+    """Exact bytes of one retained revision, validated as read (DEC-34)."""
+    path: Path
+    data: bytes
+    material: cookiejar.Material
+
+
+def read_revision(root: Path, name: str, revision: str) -> Revision:
+    """Read and validate the bytes of one safely opened regular file."""
     path = revision_path(root, name, revision)
     try:
         # A configured root can be a symlink; managed children must not be.
@@ -140,7 +172,23 @@ def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
             data = handle.read()
     except OSError as error:
         raise DownloadinuxError(f'{path}: {error.strerror or "cannot read managed revision"}') from None
-    return cookiejar.parse(data, path)
+    return Revision(path, data, cookiejar.parse(data, path))
+
+
+def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
+    return read_revision(root, name, revision).material
+
+
+def read_pinned(root: Path, pinned: Pinned) -> Revision:
+    """Startup read of a submitted pair (§3, DEC-31, DEC-34).
+
+    Only the explicit root and pinned IDs are used: no registry, default,
+    migration, lock, or host settings. A retained revision stays usable after
+    replacement or a damaged registry; a missing or invalid one fails.
+    """
+    if type(pinned) is not Pinned:
+        raise invalid(root, 'pinned source')
+    return read_revision(root, pinned.source, pinned.revision)
 
 
 def read(root: Path) -> Snapshot | None:
@@ -153,7 +201,7 @@ def read(root: Path) -> Snapshot | None:
     except OSError as error:
         raise DownloadinuxError(f'{path}: {error.strerror or "cannot read registry"}') from None
     try:
-        record = json.loads(data.decode('utf-8'), object_pairs_hook=_unique_object)
+        record = json.loads(data.decode('utf-8'), object_pairs_hook=unique_object)
     except Exception:
         raise invalid(path, 'registry JSON') from None
     snapshot = validate_record(record, path)

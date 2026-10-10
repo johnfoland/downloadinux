@@ -56,9 +56,10 @@ These commands prepare the source workflow; current downloads/export/setup/docto
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
 registration/explicit refresh are implemented and accepted in PR #41 (D2), including direct
 browser extraction and the support report. Snapshot execution and D4 cutover
-remain pending. Internal pinned reads and snapshot storage/cleanup can land
-before the process-tree runner and image integration; the storage boundary is
-pinned in Named cookie sources §3 / DEC-34. Neither preparation activates public
+remain pending. Internal pinned reads and snapshot storage/cleanup land in
+PR #45, ahead of the process-tree runner and image integration; the storage
+boundary is pinned in Named cookie sources §3 / DEC-34, and its locks follow
+DEC-35. Neither preparation activates public
 download routes before the coordinated cutover.
 
 - Implement source registration for browser/profile exports and Netscape imports.
@@ -182,6 +183,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, and D2, browser/file registration and
 explicit refresh, are implemented and accepted. The next
-delivery task is D3, private execution jars and explicit user-agent operations,
-following the accepted evidence from PR #41. Worker/job rules
+delivery task is D3, private execution jars and explicit user-agent operations;
+PR #45 adds its internal pinning/snapshot foundation, and the runner, image
+integration, public cleanup, and user-agent operations remain. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.
