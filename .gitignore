@@ -21,3 +21,6 @@ cookies/*
 __pycache__/
 .pytest_cache/
 *.egg-info/
+
+# Relay workflow process files: local, never committed.
+/.relay/

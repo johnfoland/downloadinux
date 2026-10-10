@@ -63,8 +63,10 @@ The roadmap is the issue list on `johnfoland/downloadinux`. Keep it current:
   `container`, `vpn`, `docs`) and a type label (`bug`, `enhancement`,
   `question`) where one fits.
 - Ideas, bugs, and follow-ups are issues. The design and delivery plan for
-  anything bigger than one chunk live in a project file under `docs/projects/`,
-  and each chunk in its brief; both link the issues they come from.
+  anything bigger than one chunk live in a local project file under
+  `.relay/projects/`, and each chunk in its local brief; both link the issues
+  they come from. Neither is in the repository, so issue comments summarize
+  the plan rather than linking it.
 - Before starting work, look for an existing issue and reference it. Close
   issues from the pull request that resolves them (`Fixes #12` in its body).
 - Comment on an issue when you learn something that matters to whoever picks
@@ -83,7 +85,7 @@ The roadmap is the issue list on `johnfoland/downloadinux`. Keep it current:
 ## Relay workflow
 
 Work in this repository is built by fresh agent sessions that hand it to one
-another through the files below, using the relay skills:
+another through local process files and pull requests, using the relay skills:
 
 - `/relay-project` shapes an idea into settled design and an ordered delivery
   plan, and closes the project when its work is accepted.
@@ -97,6 +99,16 @@ another through the files below, using the relay skills:
 Code reaches the integration branch only through a chunk pull request, so every
 change gets the executor's test discipline and a CI run. The status file is the
 handoff between sessions: run each skill in a fresh session.
+
+The process files (status, chunk briefs, projects, and the two checklists)
+live in `.relay/`, which git ignores: they are never committed, and there is
+one copy whatever branch is checked out. A session in a linked worktree uses
+the main working tree's `.relay/`. Never run `git clean -x` or `-X`: it
+deletes them, and nothing else holds a copy. A chunk's remote record is its
+pull request, whose body carries the executor's report and whose comments
+carry the review. Tracked files (code, docs, the decision log, the changelog,
+pull request titles) cite authority sections, decision IDs, issues, and pull
+requests, never a chunk ID, a review finding, or a checklist entry.
 
 When code and an authority doc disagree, one of them is wrong: fix it and say
 which. A decided entry in the decision log is not re-litigated; where the docs
@@ -121,12 +133,12 @@ said it, and cite the entry at the code site.
 - **Authority:** `docs/target-design.md`, then `docs/implementation-plan.md`,
   then `docs/current-state.md`, then `README.md` for current behavior;
   `docs/README.md` gives the reading order.
-- **Status:** `docs/status.md`
-- **Chunks:** `docs/chunks/<ID>.md`
+- **Status:** `.relay/status.md` (local)
+- **Chunks:** `.relay/chunks/<ID>.md` (local)
 - **Decision log:** `docs/decisions.md`, entries cited as `(DEC-n)`
-- **Review checklist:** `docs/review-checklist.md`
-- **Brief checklist:** `docs/brief-checklist.md`
-- **Projects:** `docs/projects/` (`index.md`, `template.md`, one
+- **Review checklist:** `.relay/review-checklist.md` (local)
+- **Brief checklist:** `.relay/brief-checklist.md` (local)
+- **Projects:** `.relay/projects/` (local; `index.md`, `template.md`, one
   `P####-slug.md` per project)
 - **Tools:** `tools/`, review aids run by hand, outside the gate and the build
 - **Review extras:** none.
