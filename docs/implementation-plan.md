@@ -47,7 +47,7 @@ Acceptance criteria:
 
 ## Stage 2 — Named cookie sources
 
-Settled contract: target design *Named cookie sources*, DEC-28 to DEC-38.
+Settled contract: target design *Named cookie sources*, DEC-28 to DEC-39.
 P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
 P0003-C01 implements the strict parser/summaries, immutable registry reader,
 and atomic host publication foundation. P0003-C02 implements automatic locked

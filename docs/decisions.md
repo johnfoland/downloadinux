@@ -790,3 +790,31 @@ subcommand.
 table) and §5 (the `just cookies` and setup paragraphs). Added on 2026-10-10
 for issue #34, before the cutover's preparation was cut; the maintainer chose
 the command name.
+
+## DEC-39: Host launch through the runner and doctor's Stage 2 rows are pinned exactly (2026-10)
+
+At the cutover, `dl` and `batch` validate their selectors and an explicit
+`--user-agent` as usage errors before loading settings. After settings and the
+existing preset, URL and queue checks, they refuse a configured user-agent with
+CR/LF, then pin through the shared submission pinning, so a refused run never
+migrates. They launch only through `downloadinux-runner` with the container
+roots `/cookies` and `/state`. A batch's tmux script is `downloadinux-runner
+"$@"; echo; echo "[done — press a key]"; read -k1`, so the pause follows the
+runner's cleanup. Every other *Host application* message and exit status stays.
+The two user-agent errors have fixed texts.
+
+Doctor's cookie and user-agent rows keep their IDs and positions and read the
+default through `ensure_store` and the shared revision reader. Any store
+failure is a `cookies.jar` failure whose summary is the shared path-bearing
+error and whose fix is `repair or restore the file it names`. The registry
+reader validates each source's current revision, so neither refresh nor
+replacement can run until the named file is repaired. Site checks distinguish a present,
+expired-only, and absent session record, a session record never being
+expired. The user-agent row checks only presence and CR/LF. Generic fixes that
+name `dlx cookies refresh NAME` were preferred over `just cookies`, because the
+default need not be the `firefox` source.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3 (the
+host-launch paragraph), §4 (the two user-agent errors), and §5 (doctor's Stage
+2 rows). Added on 2026-10-10 for issue #34, before the cutover's last additive
+preparation was cut.
