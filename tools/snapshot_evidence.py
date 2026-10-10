@@ -15,6 +15,19 @@ sources* §3 (DEC-31, DEC-34): the pinned read, byte-equal allocation,
 cleanup competing with a held and an inherited lease, abandonment and later
 cleanup, and interrupted staging. Every scratch directory is removed on exit.
 No real cookie, credential, or site is involved.
+
+What it does not verify: the production runner (process groups, signals,
+child-tree waiting, the Python-to-zsh descriptor boundary), the image's
+packaged entry point, a public cleanup command, or any downloader run; the
+exhaustive fault and race cases live in the pytest suite. It exits non-zero on
+any failed step and when the steps that ran differ from its fixed list
+(``STEPS``), so a new or dropped step must be modelled here first.
+
+It is not in the gate because it needs Docker and its point is the host's
+file sharing: only a Docker Desktop bind mount on macOS reproduces the lock
+behavior behind DEC-35 (a lock taken through the creating descriptor is not
+enforced), which CI's native Linux filesystem cannot show. Rerun it whenever
+lock, lease, allocation, or cleanup code changes.
 """
 import json
 import os
@@ -28,6 +41,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CANARY = 'SYNTHETIC_CANARY'
+STEPS = ('platform', 'pinned read', 'byte-equal allocation', 'private writeback isolated',
+         'cleanup competing with held leases', 'inherited lease outlives killed owner',
+         'abandoned snapshot removed later', 'interrupted staging', 'allocation lock excludes cleanup',
+         'owner teardown and final cleanup')
 HOST_MODULES = ('downloadinux.settings', 'downloadinux.cookie_writer', 'downloadinux.cookie_pinning',
                 'downloadinux.files', 'downloadinux.operations', 'downloadinux.cli', 'downloadinux.health',
                 'downloadinux.cookie_browser', 'downloadinux.migrate', 'yt_dlp', 'tomlkit')
@@ -74,7 +91,8 @@ def host(image: str) -> int:
         after = {str(p): (p.read_bytes() if p.is_file() else None, p.stat().st_mode) for p in sorted(cookies.rglob('*'))}
         checks = {
             'container exited 0': result.returncode == 0,
-            'every step ok': bool(steps) and all(step['ok'] for step in steps),
+            'every expected step ran, in order': [step.get('step') for step in steps] == list(STEPS),
+            'every step ok': bool(steps) and all(step.get('ok') is True for step in steps),
             'no cookie material in output': CANARY not in output,
             'canonical store unchanged': before == after,
             'state left only lock and lease-less staging': sorted(os.listdir(state / 'cookie-invocations'))

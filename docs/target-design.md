@@ -1182,7 +1182,9 @@ revisions, or run automatically on `up`. If the container is stopped, report
 how to start it and rerun cleanup. Filesystem lock failure refuses cleanup;
 no time-based fallback. Sharing `/state` across instances is safe because all
 snapshot producers and cleanup execute in the same Docker Linux environment,
-not through a host/container advisory-lock assumption. The runner starts the
+not through a host/container advisory-lock assumption, and take their locks on
+reopened descriptors (DEC-35), which Docker Desktop's bind mounts enforce
+across containers. The runner starts the
 downloader/loop in a process group, forwards handled termination signals to
 that group, and waits for it before deleting cookies.
 Normal child exit returns the downloader status; a signalled child returns
@@ -1222,7 +1224,10 @@ resolve or change the submitted account. Cookie contents and origins are absent.
 
 The configured state root may retain its symlink spelling, as other configured
 roots do; `cookie-invocations` and every managed entry below it must not be a
-symlink. Create/enforce the managed invocation root at 0700 and its persistent
+symlink. The snapshot library never creates the state root itself: `up`,
+`restart`, and `update` create `paths.state` (*Host application*), and inside
+the container it is the `/state` mount. Allocation with a missing state root is
+a path-bearing operation failure. Create/enforce the managed invocation root at 0700 and its persistent
 regular `.lock` at 0600; never delete/replace that lock during normal use.
 Staging directories are `.staging-<invocation_id>` at 0700. Under the allocation
 lock, create the directory and an empty regular mode-0600 `lease`, acquire its

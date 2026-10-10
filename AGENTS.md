@@ -37,6 +37,12 @@ run it; `docs/` holds the planning documents for the refactor, and
   absent temporary settings file, and the Compose files interpolate only
   `DOWNLOADINUX_*` names. Never run `docker compose config` without `-q`: it
   prints the resolved file, NordVPN token included.
+- `uv run --locked python tools/snapshot_evidence.py`: credential-free
+  Docker Linux evidence for cookie snapshot locking, allocation, and cleanup
+  (needs the `downloadinux:check` image). Not in the gate: rerun it by hand
+  whenever lock, lease, allocation, or cleanup code changes, on macOS Docker
+  Desktop where possible. Only a Docker Desktop bind mount reproduces the
+  lock behavior behind DEC-35; host tests and CI's native Linux cannot.
 
 ## Workflow
 
