@@ -1184,23 +1184,7 @@ It likewise cleans abandoned hidden staging directories only after acquiring
 their lease. It does not inspect host PIDs, guess from age, touch canonical
 revisions, or run automatically on `up`. If the container is stopped, report
 how to start it and rerun cleanup. Filesystem lock failure refuses cleanup;
-no time-based fallback.
-
-The host front (DEC-37) loads settings only: it reads no registry and never
-migrates. When Compose reports the service not running it runs nothing and
-fails, exit 1, with `the container is not running; start it with dlx up, then
-rerun dlx cookies cleanup`. Otherwise it runs, as `dl` with captured output,
-`downloadinux-runner cleanup --state /state`; the runner's and Compose's
-standard error reach the terminal unchanged. Status 0 with standard output of
-exactly one JSON object holding non-negative integers `removed` and `skipped`
-and no other field prints `Removed N abandoned cookie snapshots; skipped M in
-use or unverifiable.` and exits 0. Status 0 with any other output fails with
-`downloadinux-runner cleanup printed unexpected output`, without echoing it.
-Status 126 or 127 means the running image predates the runner: fail with
-`the running container has no downloadinux-runner; rebuild and recreate it
-with dlx build and dlx restart`. Any other status fails with
-`downloadinux-runner cleanup failed in the container (exit N)`. Every failure
-exits 1. Sharing `/state` across instances is safe because all
+no time-based fallback. Sharing `/state` across instances is safe because all
 snapshot producers and cleanup execute in the same Docker Linux environment,
 not through a host/container advisory-lock assumption, and take their locks on
 reopened descriptors (DEC-35), which Docker Desktop's bind mounts enforce
@@ -1215,6 +1199,22 @@ cleanup errors retain that same exit-1 contract. If lease identity or removal
 cannot be established, preserve residue and report it rather than promising
 impossible cleanup (DEC-27). Cleanup ignores symlinks and unexpected entries
 and never traverses outside its invocation root.
+
+The host front (DEC-37) loads settings only: it reads no registry and never
+migrates. When Compose reports the service not running it runs nothing and
+fails, exit 1, with `the container is not running; start it with dlx up, then
+rerun dlx cookies cleanup`. Otherwise it runs, as `dl` with captured output,
+`downloadinux-runner cleanup --state /state`; the runner's and Compose's
+standard error reach the terminal unchanged. Status 0 with standard output of
+exactly one JSON object holding non-negative integers (not booleans) `removed`
+and `skipped` and no other field prints `Removed N abandoned cookie snapshots; skipped M in
+use or unverifiable.` and exits 0. Status 0 with any other output fails with
+`downloadinux-runner cleanup printed unexpected output`, without echoing it.
+Status 126 or 127 means the running image predates the runner: fail with
+`the running container has no downloadinux-runner; rebuild and recreate it
+with dlx build and dlx restart`. Any other status fails with
+`downloadinux-runner cleanup failed in the container (exit N)`. Every failure
+exits 1.
 
 #### Snapshot storage format and interrupted allocation
 
