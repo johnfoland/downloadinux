@@ -704,3 +704,37 @@ inheritance by descriptor.
 "Snapshot storage format and interrupted allocation". Added on 2026-10-10 in
 PR #45, from its credential-free Docker Linux evidence
 (`tools/snapshot_evidence.py`).
+
+## DEC-36: The container runner is a standard-library entry point that waits on a lifetime pipe (2026-10)
+
+The image ships the checkout's package at `/opt/downloadinux` and a
+`downloadinux-runner` executable run by the system `/usr/bin/python3 -I`, with
+`download`, `batch`, and `cleanup` subcommands taking explicit roots, an
+explicit source/revision pair or `--anonymous`, the effective user-agent, and a
+canonical preset. The runner builds the downloader or batch-loop argument list
+itself from the shared preset table, so only it knows the private jar path. It
+starts that child in a new process group with `/dev/null` input, forwards
+`SIGINT`, `SIGTERM`, `SIGHUP`, and `SIGWINCH` to the group, and after the direct
+child exits waits for end-of-file on a lifetime pipe whose write end travels
+with the lease, before owner teardown. Exit statuses follow Named cookie
+sources §3; `cleanup` prints `{"removed": N, "skipped": M}`.
+
+Installing the package into `/opt/venv` was rejected because that interpreter
+carries yt-dlp and other third-party packages the runner must not depend on.
+Copying only the modules the runner imports was rejected because a new import
+would fail only in the image; the import-blocking tests already prove the
+standard-library boundary. A placeholder token in a host-built argument list
+was rejected because it would make the host and the runner share an encoding
+for the jar path. Waiting for the process group to empty was rejected because
+the container's PID 1 (`sleep`) never reaps orphans, and a zombie keeps a group
+alive; making the runner a Linux child subreaper was rejected as Linux-only and
+untestable on a macOS host, while the pipe tracks exactly the processes that
+inherited the lease. Giving the child the terminal's foreground group was
+rejected because the runner would then miss keyboard signals and have to
+reclaim the terminal; `/dev/null` input keeps the background group from being
+stopped by a terminal read, and the presets read no input.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3,
+"Runner interface and process lifetime". Added on 2026-10-10 for issue #34,
+after the snapshot library landed in PR #45; it specifies what DEC-31 left to
+the runner and changes no decided behavior.

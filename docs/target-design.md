@@ -943,7 +943,7 @@ yt-dlp's input-before-output cookie lifecycle.
 ## Named cookie sources
 
 Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
-(DEC-28 to DEC-34). PR #39 implements §1's internal reader/publication
+(DEC-28 to DEC-36). PR #39 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
@@ -1140,7 +1140,8 @@ Stage 3; Stage 2 does not add same-preset batch concurrency.
 A container-side runner, using the same parser and revision-path validation as
 the host, creates a private copy of the submitted revision immediately before
 starting the downloader or batch loop. Ship that reusable module and a thin
-runner entry point into the image's Python environment; the container path
+runner entry point into the image ("Runner interface and process lifetime"
+below, DEC-36); the container path
 accepts `/cookies` and `/state` explicitly and never loads host settings or
 performs browser extraction. The host validates the source and pinned material
 before Compose. The runner validates the supplied identifiers and parses the
@@ -1186,7 +1187,8 @@ not through a host/container advisory-lock assumption, and take their locks on
 reopened descriptors (DEC-35), which Docker Desktop's bind mounts enforce
 across containers. The runner starts the
 downloader/loop in a process group, forwards handled termination signals to
-that group, and waits for it before deleting cookies.
+that group, and waits for every process that inherited its lease before
+deleting cookies ("Runner interface and process lifetime", DEC-36).
 Normal child exit returns the downloader status; a signalled child returns
 128 plus the signal number. Cleanup failure exits 1 with the path-bearing
 error, even when the child otherwise succeeded. Snapshot creation and failure
@@ -1273,6 +1275,79 @@ existing file, never the descriptor whose open created it, and check that both
 opens name the same file (DEC-35). Docker Desktop's macOS file sharing ignores
 a lock held through the creating descriptor, so a later open could acquire it
 and cleanup would remove an active snapshot.
+
+#### Runner interface and process lifetime
+
+These details pin the container runner (DEC-36). The runner is shipped and
+tested before D4 activates it; until then no host route calls it.
+
+*Packaging.* The image copies the checkout's `src/downloadinux/` package to
+`/opt/downloadinux/downloadinux/`, owned by root and not writable by `dl`, and
+installs `/usr/local/bin/downloadinux-runner`, a thin executable that runs
+`/usr/bin/python3 -I` with `/opt/downloadinux` first on `sys.path` and calls
+`downloadinux.cookie_runner.main`. The runner and everything it imports use
+only the standard library: never settings, the source writer, host pinning,
+browser support, `tomlkit`, yt-dlp, or the `/opt/venv` interpreter. Its
+children inherit the container environment unchanged, so `yt-dlp` and
+`gallery-dl` resolve through `PATH` as they do today.
+
+*Interface.* It is a container-internal boundary; host operations build its
+argument lists, each item one list element:
+
+```
+downloadinux-runner download --cookies DIR --state DIR SELECTION --user-agent UA PRESET URL...
+downloadinux-runner batch --cookies DIR --state DIR SELECTION --user-agent UA PRESET QUEUE
+downloadinux-runner cleanup --state DIR
+```
+
+`SELECTION` is `--source NAME --revision REVISION` (both, using §1's identifier
+rules) or `--anonymous`, exactly one form. Every option is required: there are
+no default roots, selection, or user-agent. `--user-agent` may be empty (§4)
+and is refused if it contains CR/LF. `PRESET` is a canonical preset name
+(`video` or `gallery`); the host resolves aliases. `download` takes at least one
+URL; `batch` takes one queue path as the container sees it. Invalid, missing,
+or conflicting arguments are usage errors: exit 2 before any filesystem access.
+Errors use the host's `downloadinux: error: <message>` form on stderr, naming
+paths and never cookie contents.
+
+*Child argument lists.* `download` runs the preset's argument list (*Presets*)
+with the URLs after it. `batch` runs the shared non-interactive loop:
+`zsh -f -c 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
+zsh QUEUE LOG_PREFIX TITLE COLOUR` followed by the preset's batch argument
+list, with the preset table's fields (*Host application*). For a named
+selection the cookie argument names the private jar: `--cookies <jar>` for
+`video`, `-o extractor.instagram.cookies=<jar>` for `gallery` (DEC-6, DEC-20).
+Anonymous lists contain no cookie argument at all. The batch loop's
+`[done — press a key]` pause is not the runner's: D4's tmux command runs it
+after the runner exits, so cleanup precedes the pause. The runner inherits its
+working directory from the caller.
+
+*Lifetime.* After argument validation the runner installs handlers for
+`SIGINT`, `SIGTERM`, `SIGHUP`, and `SIGWINCH`, then allocates the snapshot
+(anonymous allocates nothing). It starts the child in a new process group with
+`/dev/null` as standard input and the caller's standard output and error.
+Besides those it passes only the lease (named selection) and the write end of
+a lifetime pipe, whose read end the runner keeps.
+A handled signal is forwarded to the child's process group and the runner keeps
+waiting; it never exits early because of one. A termination signal that
+arrives before the child starts aborts the launch: the runner tears down and
+exits 128 plus the signal number. After the direct child exits, the runner reads
+the lifetime pipe until end-of-file, which arrives once every process that
+inherited its write end (the same processes that inherited the lease) has exited
+or closed it; zombies hold no descriptors, so a non-reaping PID 1 cannot delay
+it. Only then does owner teardown remove the snapshot and release the lease.
+The child's group is not made the terminal's foreground group: the runner
+receives keyboard signals and forwards them, and `/dev/null` input keeps a
+background process from being stopped by a terminal read.
+
+*Exit status.* A normal child exit returns its status; a child killed by signal
+N returns 128 plus N. Allocation, launch (an absent or non-executable
+downloader), and teardown failures exit 1 with the path-bearing error, after
+attempting teardown; a teardown failure exits 1 even when the child succeeded
+(DEC-27). On success `download` and `batch` print nothing of their own.
+`cleanup` prints one JSON object, `{"removed": N, "skipped": M}`, and a newline
+on standard output and exits 0; its operation failures exit 1. `cleanup` never
+reads `/cookies` or migrates.
 
 ### 4. User-agent policy
 
