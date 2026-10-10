@@ -1,6 +1,6 @@
 # Host browser adapter evidence
 
-Validated in P0003-C03-a against the locked PyPI release **2026.08.19**
+Validated on 2026-10-10 for [PR #41](https://github.com/johnfoland/downloadinux/pull/41) against the locked PyPI release **2026.08.19**
 (`yt-dlp==2026.8.19`, `uv.lock`). Updates require revalidating these boundaries.
 
 The installed [cookie module](https://github.com/yt-dlp/yt-dlp/blob/2026.08.19/yt_dlp/cookies.py)
@@ -19,7 +19,11 @@ destination. However, it mutates session expiry to zero and its `_really_save`
 omits available HttpOnly metadata. The adapter therefore passes the real jar
 through the shared Mozilla/Netscape serializer and strict parser, retaining
 session/expired/secure/domain/available HttpOnly semantics with a record-count
-check. Browser extractors do not expose HttpOnly from every database; the
+check. This count check covers serialization only: upstream extraction can
+already have overwritten duplicate domain/path/name keys, including cookies
+from different Firefox containers. Rejection before that loss is still pending
+in PR #41; the present adapter must not be treated as proving lossless extraction.
+Browser extractors do not expose HttpOnly from every database; the
 adapter preserves metadata that they provide, without adding private browser SQL.
 
 `tests/test_cookie_browser.py` pins the exact signature/keyring set, real-jar

@@ -213,7 +213,7 @@ There are no tracked automated tests or CI configuration in the reviewed tree.
 ## Since this review: Stage 1
 
 Everything above is the dated baseline of 2026-09-27 and is left as written.
-Stage 1 (project [P0001](projects/P0001-portable-config.md), chunks
+Stage 1 (project P0001, chunks
 P0001-C01 to P0001-C06) has since been implemented; this table maps each
 portability constraint above, and the notes after it, to what Stage 1 did.
 [README.md](../README.md) describes the implemented behavior.
@@ -236,9 +236,9 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 
 ## Since this review: Stage 2 preparation
 
-P0003-C01/C02 added the strict parser/summaries, atomic source registry and
+[PRs #39–#40](https://github.com/johnfoland/downloadinux/pull/40) added the strict parser/summaries, atomic source registry and
 immutable revisions, locked legacy migration, and public list/inspect/default
-operations. P0003-C03 adds Firefox/Chrome/Chromium host extraction on macOS/Linux,
+operations. [PR #41](https://github.com/johnfoland/downloadinux/pull/41) adds Firefox/Chrome/Chromium host extraction on macOS/Linux,
 selector capabilities, browser-independent Netscape imports, explicit replacement,
 and stored-origin refresh. The host adapter is locked to yt-dlp 2026.08.19 and
 uses no URL/site probe; failed extraction/parsing/publication preserves the last

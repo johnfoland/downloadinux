@@ -1,7 +1,7 @@
 # Implementation plan
 
 Status: Stage 1 is implemented, as project
-[P0001](projects/P0001-portable-config.md): D1's package and configuration
+P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
 (`shell`, `vpn`, `servers`) and login on `config set-token` (P0001-C03); D3:
@@ -10,10 +10,10 @@ transitional in-container links (P0001-C04); D4: structured health checks and
 their wrapper and smoke coverage (P0001-C05); and D5: `just setup` over the
 CLI, the Stage 1 docs, and the in-place migration proof (P0001-C06). Its rules
 are in the [target design](target-design.md). Stage 2 is settled for project
-[P0003](projects/P0003-named-cookie-sources.md). P0003-C01 implements its internal
+P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34)). P0003-C01 implements its internal
 parser and atomic source-store foundation; P0003-C02 implements locked legacy
 migration and host-only list/inspect/default commands, finishing D1's build.
-P0003-C03 implements browser/file registration and explicit refresh (D2).
+[PR #41](https://github.com/johnfoland/downloadinux/pull/41) adds browser/file registration and explicit refresh (D2), pending acceptance.
 Private execution remains unimplemented; downloads,
 export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
 
@@ -54,7 +54,7 @@ and atomic host publication foundation. P0003-C02 implements automatic locked
 legacy migration and public `cookies list`, `inspect`, and `default` operations.
 These commands prepare the source workflow; current downloads/export/setup/doctor
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
-registration/explicit refresh are implemented in P0003-C03 (D2), including direct
+registration/explicit refresh are added in PR #41 (D2), pending acceptance, including direct
 browser extraction and the support report. Snapshot execution and D4 cutover
 remain pending.
 
@@ -179,5 +179,5 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, is implemented and accepted. The next
 delivery task is D3, private execution jars and explicit user-agent operations,
-after accepting D2 registration/refresh evidence from P0003-C03. Worker/job rules
+after accepting D2 registration/refresh evidence from PR #41. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.
