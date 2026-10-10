@@ -765,3 +765,28 @@ rejected as noise for a value the user just typed; `config show` reports it.
 *Where:* [target design](target-design.md), *Named cookie sources* §3 (the host
 front paragraph) and §4; *Host application* command table. Added on 2026-10-10
 for issue #34, before the remaining Stage 2 private-execution work (D3) was cut.
+
+## DEC-38: The Firefox export and setup cookie step are `cookies` subcommands with fixed reports (2026-10)
+
+`just cookies [profile]` runs a new `cookies firefox [PROFILE]` subcommand. It
+creates or replaces the source `firefox`, whatever its kind, and selects it as
+default in the same publication. It needs no `--replace` and takes no keyring
+or container, and its success and errors are `add-browser`'s. Setup's cookie
+step is `cookies setup`, with no operand. It keeps a named default and prints a
+fixed line and that source's summary, or, with an anonymous default, prompts
+`Export Firefox cookies now? [y/N] `: only `y`/`yes` (any case) exports, and a
+failed export exits 1 so the recipe can report it and continue. Both fronts
+ship before the cutover as preparatory commands. The recipes switch to them at
+the cutover.
+
+A `--default` flag on `add-browser` was rejected: it would make account
+switching depend on remembering `--replace` as well, and blur §2's rule that
+generic registration leaves the default alone. Folding the export into
+`cookies setup --export` was rejected because the account switch is a
+standing action, not part of setup. The maintainer chose the dedicated
+subcommand.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §2 (command
+table) and §5 (the `just cookies` and setup paragraphs). Added on 2026-10-10
+for issue #34, before the cutover's preparation was cut; the maintainer chose
+the command name.

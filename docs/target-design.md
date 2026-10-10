@@ -105,7 +105,11 @@ Package details, pinned for P0001-C01:
 - Python 3.11 or later (`requires-python = ">=3.11"`, for `tomllib`), with
   `.python-version` naming 3.13 and `uv.lock` committed. The one runtime
   dependency in Stage 1 was `tomlkit`, used only to write and edit settings
-  and credentials so comments survive; reading uses `tomllib`. Stage 2 adds
+  and credentials so comments survive; reading uses `tomllib`. Every string
+  a writer emits is TOML 1.0, the version `tomllib` reads: a control
+  character without a short escape is written `\uXXXX`, never TOML 1.1's
+  `\e` or `\xHH`, so whatever a writer accepts reads back exactly
+  ([issue #53](https://github.com/johnfoland/downloadinux/issues/53)). Stage 2 adds
   `yt-dlp==2026.8.19` for host-only direct browser cookie extraction
   (DEC-29, PR #41); its browser code is loaded only for browser operations.
   No host media dependency is added.
@@ -1043,8 +1047,9 @@ reports/sets print the name or `anonymous`. `browsers --json` is an object
 with `platform` (`macos` or `linux`) and `browsers`, an array in
 Firefox/Chrome/Chromium order: each entry has `id`, `profile` (boolean),
 `container` (boolean), and `keyrings` (supported IDs, empty when inapplicable).
-`cookies setup` is the shared compatibility setup front described below;
-cleanup reports removed/skipped directory counts, without cookie contents.
+`cookies firefox` and `cookies setup` are the shared compatibility fronts §5
+describes (DEC-38); cleanup reports removed/skipped directory counts, without
+cookie contents.
 
 | Command | Result |
 |---|---|
@@ -1055,6 +1060,8 @@ cleanup reports removed/skipped directory counts, without cookie contents.
 | `cookies inspect NAME [--json]` | Source metadata and the non-secret cookie summary below |
 | `cookies refresh NAME` | Re-read the registered origin and publish a new revision on success |
 | `cookies default [NAME] [--anonymous]` | With neither selector, report the default; otherwise set a registered name or null; the selectors conflict |
+| `cookies firefox [PROFILE]` | Create or replace the source `firefox` from a Firefox profile and select it as default in one publication (§5) |
+| `cookies setup` | Setup's cookie step: keep a named default, or offer a Firefox export (§5) |
 | `cookies cleanup` | Ask the container runner to remove abandoned working snapshots, as below |
 
 A new registration includes its first successful refresh: export/parse failure
@@ -1453,6 +1460,17 @@ an account-switching action; generic registration/refresh leaves the default
 alone. `just dl` and `just batch` forward the new options along with their
 existing positional arguments, including arguments with spaces; `watch` stays.
 
+Its CLI front is `cookies firefox [PROFILE]` (DEC-38). It takes no other
+operand or option: no `--replace` (replacing is its purpose), keyring, or
+container, so a Firefox export covers all containers. `PROFILE` is validated
+as `add-browser --profile` is. After the first source access (migration), it
+records the current `firefox` record, whatever its kind, exports and parses the
+profile, and makes one publication. That publication writes the new revision,
+the Firefox origin, and `default: "firefox"`, refusing as `refresh` does when
+the record changed meanwhile. Success prints the same summary as `add-browser`
+and exits 0. Usage errors exit 2. Operation errors exit 1 with
+`add-browser`'s `source firefox: …` messages and change nothing.
+
 Setup keeps five steps, settings and token choices, build/start, and final
 structured doctor. Its cookie step calls a shared `cookies setup` operation:
 migrate if necessary; when a named default exists, inspect it and leave it
@@ -1463,6 +1481,21 @@ continues anonymously or with the previous selection. This avoids requiring
 Firefox on import-only and unattended installations. No automatic refresh or
 user-agent change occurs on a kept source. The prompt belongs to this shared
 operation, with an injectable input boundary, rather than grep in the recipe.
+
+`cookies setup` takes no operand (DEC-38). Migration failure exits 1 with the
+migration error. With a named default it prints `Keeping the default cookie
+source NAME; it was not refreshed.` and then that source's inspection summary,
+exiting 0. If the summary cannot be produced (a missing or invalid revision), it
+fails with that error, exit 1, and changes nothing. With an anonymous default it
+writes `Export Firefox cookies now? [y/N] ` to standard output with no newline
+and reads one line from the input boundary. `y` or `yes`, in any case and with
+surrounding whitespace ignored, is yes. Anything else, an empty line, or end of
+input is no; at end of input it first ends the prompt line. No prints `The
+cookie default stays anonymous; add a source later with dlx cookies firefox,
+add-browser, or import.` and exits 0. Yes runs `cookies firefox` with default
+discovery: success prints its summary and exits 0, and failure exits 1 with its
+error and the default still anonymous. The setup recipe reports a non-zero
+status and continues to the build.
 
 Retire the container's interactive download shortcuts `dlmp4`, `dlgal`,
 `dlmp4_batch`, and `dlgal_batch` at Stage 2 cutover (DEC-33). Users start
