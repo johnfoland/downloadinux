@@ -1457,7 +1457,8 @@ the same successful registry publication. A failed refresh preserves its prior
 origin, material, and default. It prints the shared non-secret summary and
 never invokes a site probe or user-agent lookup. This explicit wrapper remains
 an account-switching action; generic registration/refresh leaves the default
-alone.
+alone. `just dl` and `just batch` forward the new options along with their
+existing positional arguments, including arguments with spaces; `watch` stays.
 
 Its CLI front is `cookies firefox [PROFILE]` (DEC-38). It takes no other
 operand or option: no `--replace` (replacing is its purpose), keyring, or
@@ -1468,8 +1469,7 @@ profile, and makes one publication. That publication writes the new revision,
 the Firefox origin, and `default: "firefox"`, refusing as `refresh` does when
 the record changed meanwhile. Success prints the same summary as `add-browser`
 and exits 0. Usage errors exit 2. Operation errors exit 1 with
-`add-browser`'s `source firefox: …` messages and change nothing. `just dl` and `just batch` forward the new options along with their
-existing positional arguments, including arguments with spaces; `watch` stays.
+`add-browser`'s `source firefox: …` messages and change nothing.
 
 Setup keeps five steps, settings and token choices, build/start, and final
 structured doctor. Its cookie step calls a shared `cookies setup` operation:
