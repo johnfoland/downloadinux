@@ -14,8 +14,9 @@ keep it: it may be world-readable.
 `just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
 this source-store default, even when it is anonymous.** File/browser registration
 and explicit refresh are implemented. Private execution jars (PR #45) and the
-container runner that creates them (PR #49) are shipped but unused: no
-download or recipe creates them yet. `dlx cookies cleanup` asks the running
+container runner that creates them (PR #49) are shipped, and the public
+cleanup front is implemented (PR #52), but no download or recipe creates
+snapshots until the pending download cutover. `dlx cookies cleanup` asks the running
 container's runner to remove abandoned ones (a hard-killed download's, once
 downloads use them), skipping any still in use or unverifiable, and prints
 both counts. It needs the running container from an image built with the

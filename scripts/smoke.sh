@@ -240,4 +240,37 @@ test "$alpha_pinned" != "$alpha_refreshed"
   /usr/bin/python3 -I /runner-smoke/check.py "$alpha_pinned" "$alpha_refreshed" "$(revision_of beta)"
 # The result is visible through the mount: only the persistent lock remains.
 test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+
+# Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
+# against the running `up` container. A one-off container allocates a
+# snapshot of beta and exits with os._exit, so no teardown runs and its
+# lease is free: an abandoned snapshot in the shared /state. Cleanup removes
+# it, then finds nothing; with the service down it refuses. This runs last
+# because it stops the container.
+# shellcheck disable=SC2016
+"${cli[@]}" compose -- run --rm -T downloadinux /usr/bin/python3 -I -c '
+import os, sys
+sys.path.insert(0, "/opt/downloadinux")
+from pathlib import Path
+from downloadinux import cookie_snapshot, cookie_store
+cookie_snapshot.allocate(Path("/cookies"), Path("/state"), cookie_store.Pinned("beta", sys.argv[1]), "smoke")
+os._exit(0)
+' "$(revision_of beta)"
+test "$(find "$smoke_dir/state/cookie-invocations" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+test "$("${cli[@]}" cookies cleanup)" = \
+  'Removed 1 abandoned cookie snapshots; skipped 0 in use or unverifiable.'
+test "$("${cli[@]}" cookies cleanup)" = \
+  'Removed 0 abandoned cookie snapshots; skipped 0 in use or unverifiable.'
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+"${cli[@]}" down
+status=0
+"${cli[@]}" cookies cleanup >"$smoke_dir/cleanup.out" 2>"$smoke_dir/cleanup.err" || status=$?
+if [[ $status -ne 1 || -s "$smoke_dir/cleanup.out" ]] || ! grep -Fqx \
+    'downloadinux: error: the container is not running; start it with dlx up, then rerun dlx cookies cleanup' \
+    "$smoke_dir/cleanup.err"; then
+  echo "cookies cleanup with the service down: exit $status" >&2
+  cat "$smoke_dir/cleanup.out" "$smoke_dir/cleanup.err" >&2
+  exit 1
+fi
+printf 'Cookie cleanup passed (removed 1, then 0, then refused when stopped).\n'
 printf 'Container smoke test passed (uid %s, gid %s).\n' "$(id -u)" "$(id -g)"

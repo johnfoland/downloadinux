@@ -15,7 +15,12 @@ shared jar. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds in
 jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup),
 and [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner, `downloadinux-runner`, that wraps one
 download or batch loop in such a jar, tested inside the built image by the
-gate's smoke test. No host command calls either yet. The [planning documents](docs/README.md) describe the remaining
+gate's smoke test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) completes the Stage 2 operations
+before the download cutover: `dlx cookies cleanup` asks the running container's
+runner to remove abandoned snapshots, and `dlx config user-agent VALUE` sets an
+explicit user-agent literal. No download calls the runner yet; switching
+downloads, `just cookies`, setup, and doctor to named sources together is the
+pending cutover. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 

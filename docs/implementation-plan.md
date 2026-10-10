@@ -62,7 +62,9 @@ boundary is pinned in Named cookie sources §3 / DEC-34, and its locks follow
 DEC-35. The container runner's packaging, argument lists, and process
 lifetime are pinned in §3 / DEC-36 and implemented in PR #49: the image ships
 `downloadinux-runner`, proven in the built image by the gate's smoke test.
-Neither preparation activates public download routes before the coordinated
+PR #52 completes D3 with the public `cookies cleanup` front and the explicit
+`config user-agent VALUE` write (§3 host front, §4, DEC-37), with in-image
+cleanup evidence. None of this preparation activates public download routes before the coordinated
 cutover.
 
 - Implement source registration for browser/profile exports and Netscape imports.
@@ -185,9 +187,9 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 
 Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, and D2, browser/file registration and
-explicit refresh, are implemented and accepted. The next
-delivery task is D3, private execution jars and explicit user-agent operations;
-PR #45 adds its internal pinning/snapshot foundation and PR #49 the container
-runner and its image integration; public cleanup and user-agent operations
-remain. Worker/job rules
+explicit refresh, are implemented and accepted. D3, private execution jars and
+explicit user-agent operations, is implemented: PR #45 adds its internal
+pinning/snapshot foundation, PR #49 the container runner and its image
+integration, and PR #52 public cleanup and the explicit user-agent write. The
+next delivery task is D4, the coordinated download cutover. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.
