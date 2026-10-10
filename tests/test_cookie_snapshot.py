@@ -16,7 +16,7 @@ import pytest
 from downloadinux import cookie_pinning, cookie_snapshot as cs, cookie_store as store, cookie_writer as writer, cookiejar
 from downloadinux.errors import DownloadinuxError
 
-from snapshot_support import (NOW, SRC, UA, Faults, allocate, allocate_after, hold_allocation, ids,
+from snapshot_support import (NOW, SRC, UA, Faults, allocate, allocate_after, first_allocations, hold_allocation, ids,
                               lease_busy, listing, open_fds, publish, roots, tree, wait_for)
 
 ID, ID2, ID3 = 'c' * 32, 'd' * 32, 'e' * 32
@@ -542,6 +542,20 @@ def test_failed_allocation_close_failure_alone_is_reported(tmp_path, monkeypatch
     assert open_fds() == fds
 
 
+def test_abandon_closes_descriptors_and_removes_nothing(tmp_path):
+    cookies, state = roots(tmp_path)
+    invocation = allocate(cookies, state)
+    assert lease_busy(invocation.path / 'lease')
+    invocation.abandon()
+    assert_closed(invocation)
+    assert sorted(os.listdir(invocation.path)) == ['cookies.txt', 'lease', 'metadata.json']
+    assert not lease_busy(invocation.path / 'lease')
+    invocation.close()
+    invocation.abandon()
+    assert sorted(os.listdir(invocation.path)) == ['cookies.txt', 'lease', 'metadata.json']
+    assert cs.cleanup(state) == cs.CleanupResult(1, 0)
+
+
 def test_teardown_refuses_foreign_replacement(tmp_path):
     cookies, state = roots(tmp_path)
     invocation = allocate(cookies, state)
@@ -602,6 +616,18 @@ def test_teardown_failure_supersedes_consumer_error(tmp_path):
 
 
 # Independent processes -----------------------------------------------------------
+
+def test_concurrent_first_allocations_all_succeed(tmp_path):
+    # macOS spuriously fails a racing directory-relative O_CREAT of `.lock`
+    # with ENOENT; every allocator must still succeed.
+    cookies, _ = roots(tmp_path)
+    for round in range(15):
+        state = tmp_path / f'state-{round}'
+        state.mkdir()
+        outcomes = first_allocations(cookies, state, tmp_path / f'ready-{round}', tmp_path / f'go-{round}', 3)
+        assert outcomes == [(0, '')] * 3, outcomes
+        assert listing(state / cs.DIRECTORY) == {'.lock': None}
+
 
 @pytest.mark.parametrize('stage', ['lease', 'rename'])
 def test_allocation_lock_excludes_other_allocators(tmp_path, stage):

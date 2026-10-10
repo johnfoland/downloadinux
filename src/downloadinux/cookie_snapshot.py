@@ -133,7 +133,17 @@ class _NotOwned(Exception):
 def _create_regular(dir_fd: int, name: str, *, exclusive: bool) -> tuple[int, int]:
     """Create (or find) a regular file and return its identity."""
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_EXCL if exclusive else 0)
-    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+    for attempt in range(ATTEMPTS):
+        try:
+            fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+            break
+        except FileNotFoundError:
+            # macOS can fail a directory-relative O_CREAT with ENOENT while
+            # another process creates the same name (the first allocations
+            # into a new root); the next attempt finds the file. A directory
+            # that has really gone fails every attempt.
+            if exclusive or attempt == ATTEMPTS - 1:
+                raise
     try:
         status = os.fstat(fd)
     finally:
@@ -248,6 +258,19 @@ class Invocation:
         _release(self.path, (self.lease_fd, self._dir_fd, self._root_fd),
                  lambda: _remove_owned(self._root_fd, self.path.parent, self._name, self._dir_fd,
                                        self._identity, self._lease_identity))
+
+    def abandon(self) -> None:
+        """Close the owner's descriptors and remove nothing.
+
+        For an owner that cannot confirm its consumers have exited: removal
+        could delete a jar still in use, so the snapshot stays as residue.
+        Inheritors keep the lease until they exit; ``cleanup`` then removes
+        it (DEC-27, DEC-36).
+        """
+        if self._closed:
+            return
+        self._closed = True
+        _close_all(self.path, (self.lease_fd, self._dir_fd, self._root_fd))
 
 
 def _close_all(path: Path, fds) -> None:

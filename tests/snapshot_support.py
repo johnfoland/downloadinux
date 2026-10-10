@@ -245,3 +245,28 @@ def clean_together(state, start, result):
     start.wait(60)
     outcome = cs.cleanup(Path(state))
     result.put((outcome.removed, outcome.skipped))
+
+
+FIRST = '''
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from downloadinux import cookie_snapshot as cs, cookie_store
+open(sys.argv[4], 'w').close()
+while not os.path.exists(sys.argv[5]):
+    pass
+cs.allocate(Path(sys.argv[2]), Path(sys.argv[3]), cookie_store.Pinned('alpha', '1' * 32), 'UA').close()
+'''
+
+
+def first_allocations(cookies, state, ready, go, count):
+    """Real allocators that start together into a root none of them has created."""
+    processes = [subprocess.Popen([sys.executable, '-I', '-c', FIRST, str(SRC), str(cookies), str(state),
+                                   f'{ready}-{n}', str(go)], stderr=subprocess.PIPE) for n in range(count)]
+    wait_for(lambda: all(os.path.exists(f'{ready}-{n}') for n in range(count)))
+    Path(go).touch()
+    outcomes = []
+    for process in processes:
+        _, err = process.communicate(timeout=60)
+        outcomes.append((process.returncode, err.decode()))
+    return outcomes
