@@ -1157,6 +1157,27 @@ Concurrent calls, including two calls using the same source, have different
 working jars. Preserve Stage 1's fixed batch session names and limits until
 Stage 3; Stage 2 does not add same-preset batch concurrency.
 
+Host launch (DEC-39). A malformed `--cookie-source` name, both selectors
+together, or an invalid `--user-agent` (§4) is a usage error, exit 2, before
+settings are loaded. After settings load and *Host application*'s preset/URL or
+queue validation, the host refuses a configured user-agent with CR/LF (§4),
+then pins through the shared submission pinning (`cookie_pinning.pin`): a
+migration failure, an unregistered name, or a missing or invalid pinned
+revision exits 1 with that error and launches nothing. The runner argument
+list is `downloadinux-runner download|batch --cookies /cookies --state /state
+SELECTION --user-agent UA PRESET` followed by the URLs or the container queue
+path, where `SELECTION` is the pinned `--source NAME --revision REVISION` or
+`--anonymous`, `UA` the effective user-agent (§4), and `PRESET` the canonical
+preset name ("Runner interface and process lifetime"). `dl` runs that list
+through `exec -u dl downloadinux` uncaptured and exits with its status.
+`batch` runs, the same way, `tmux new-session -d -s <session> -c /downloads
+zsh -f -c <script> zsh <the list after downloadinux-runner>`, each a separate
+argument, with `<script>` exactly `downloadinux-runner "$@"; echo; echo "[done
+— press a key]"; read -k1`, so the pause follows the runner's cleanup. Its
+`Queue:`/`Running detached` report, its tmux failure message, and every other
+*Host application* rule stay. Neither host front allocates, copies, or cleans a
+snapshot itself.
+
 A container-side runner, using the same parser and revision-path validation as
 the host, creates a private copy of the submitted revision immediately before
 starting the downloader or batch loop. Ship that reusable module and a thin
@@ -1404,10 +1425,13 @@ explicit `downloads.user_agent` setting, with its existing static Chrome
 literal as the default; no automatic browser matching or quality claim becomes
 a new enforced rule. `dl` and `batch` gain `--user-agent VALUE`, overriding
 that setting for the whole invocation without writing settings. An explicit
-value must be nonempty and contain no CR/LF; invalid values are usage errors.
-A configured literal with CR/LF likewise refuses execution with an operation
-error naming `downloads.user_agent`; empty configured values retain Stage 1
-argument behavior and produce the health warning below.
+value must be nonempty and contain no CR/LF; an invalid one is the usage error
+`--user-agent: VALUE must be nonempty and contain no CR or LF` (DEC-39).
+A configured literal with CR/LF likewise refuses execution, before pinning,
+with the operation error `downloads.user_agent contains CR or LF; set a
+single-line value with dlx config user-agent VALUE`, exit 1 (DEC-39); empty
+configured values retain Stage 1 argument behavior and produce the health
+warning below.
 No implicit source switch or refresh changes the user-agent.
 
 `config user-agent VALUE` atomically writes an explicit literal, with the same
@@ -1534,6 +1558,29 @@ with a hint to set an explicit value. Other health checks, JSON shape, ordering,
 and exit status stay as DEC-12/DEC-22. List/inspect/setup and doctor share the
 same source reader and summaries; doctor represents cookie-store operation
 failures as checks and continues the remaining report.
+
+Doctor's Stage 2 rows (DEC-39) replace the Stage 1 rows of *Health checks* at
+the same IDs and positions. Its cookie checks call `ensure_store` on
+`paths.cookies`, migrating as any source operation does, and read the
+default's current revision through the shared reader; doctor no longer reads
+`cookies.txt` itself. Any error or operating-system failure from that store
+access is the `cookies.jar` failure below. The site rules (domain match and
+cookie names) are *Health checks*', applied to the revision's records. A
+record is expired when it has an expiry at or before doctor's clock; a session
+record (no expiry) is never expired. `NAME` is the default source.
+
+| `id` | `ok` when, with summary | Otherwise: status, summary, fix |
+| --- | --- | --- |
+| `cookies.jar` | a named default whose revision has at least one cookie: `source NAME: <n> cookies (<e> expired)` | anonymous default: skip, `anonymous cookie default`; no cookies: warn, `source NAME has no cookies; public downloads still work`, `dlx cookies refresh NAME`; store failure: fail, `<error>`, `repair or restore the file it names` |
+| `cookies.instagram` | an unexpired `sessionid` record for `instagram.com`: `instagram: session cookie present` | only expired ones: warn, `instagram: session cookie expired`, `log in to Instagram, then: dlx cookies refresh NAME`; none: warn, `instagram: no session cookie`, the same fix |
+| `cookies.youtube` | an unexpired `__Secure-3PSID` or `SAPISID` record for `youtube.com`: `youtube: session cookie present` | only expired ones: warn, `youtube: session cookie expired (fine unless you need age-gated or members-only video)`, no fix; none: warn, `youtube: no session cookie (fine unless you need age-gated or members-only video)`, no fix |
+| `downloads.user_agent` | a nonempty literal with no CR or LF: `explicit user-agent set` | empty: warn, `user-agent is empty`, `dlx config user-agent VALUE`; CR or LF: warn, `user-agent contains CR or LF; downloads refuse it`, `dlx config user-agent VALUE` |
+
+Skips, first match wins: with an anonymous default both site checks are
+`skip`, `anonymous cookie default`; with `cookies.jar` not `ok` they are
+`skip`, `no usable cookie source`. The user-agent check reads no Chrome
+version. `<error>` is the shared reader's or migration's path-bearing message,
+which never holds a cookie value.
 
 Delivery may expose source inspection/registration before execution changes,
 but document those as preparatory: existing downloads still use the Stage 1
