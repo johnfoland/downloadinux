@@ -178,7 +178,9 @@ the setting; no file in the checkout changes. Run `just useragent` on its own
 after a Chrome update; `just doctor` warns if the setting falls behind the
 host version or stops being Chrome. Without Chrome in `/Applications` (any
 Linux host) it warns and leaves the setting alone, so the export still
-succeeds.
+succeeds. To pin an exact literal instead (on Linux, say), pass it as one
+argument: `just useragent "Mozilla/5.0 …"` (`dlx config user-agent "…"`).
+That form never reads Chrome; see the main README.
 
 `just setup` attempts the same refresh exactly once before its build when it
 keeps an existing Instagram session or publishes a usable export. The existing

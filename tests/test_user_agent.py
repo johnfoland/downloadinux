@@ -226,3 +226,166 @@ def test_a_malformed_plist_date_warns_and_writes_nothing(plist, config, capsys):
 
     assert (status, out, err) == (0, "", WARNING.format(plist))
     assert not config.parent.exists()
+
+
+# `config user-agent VALUE` (Named cookie sources §4; DEC-37).
+
+def set_line(config):
+    return f"downloads.user_agent set in {config}.\n"
+
+
+def same_line(config):
+    return f"downloads.user_agent already has that value in {config}.\n"
+
+
+@pytest.fixture
+def unreadable_plist(tmp_path, monkeypatch):
+    """A Chrome plist path whose read fails loudly: a directory, so any open
+    raises, and a lookup would have warned on stderr."""
+    path = tmp_path / "chrome-is-a-directory"
+    path.mkdir()
+    monkeypatch.setattr(useragent, "CHROME_PLIST", path)
+
+    def refuse(plist):
+        raise AssertionError(f"read the Chrome plist at {plist}")
+
+    monkeypatch.setattr(useragent, "chrome_version", refuse)
+    return path
+
+
+@pytest.mark.parametrize("value", [
+    'Mozilla/5.0 "quoted" agent',
+    "back\\slash",
+    "tab\there",
+    "Mözilla ☃ 日本",
+    "it's '''literal'''",
+    'triple """ quotes',
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/151.0.0.0 Safari/537.36",
+])
+@pytest.mark.parametrize("existing", [False, True])
+def test_an_explicit_value_round_trips_exactly(unreadable_plist, config, capsys, value, existing):
+    if existing:
+        config.parent.mkdir()
+        config.write_text("[downloads]\nuser_agent = 'old'\n")
+    status, out, err = user_agent(capsys, config, value)
+    assert (status, out, err) == (0, set_line(config), "")
+    assert stored(config) == value
+
+
+def test_a_value_beginning_with_a_dash_follows_double_dash(unreadable_plist, config, capsys):
+    status, out, err = user_agent(capsys, config, "--", "-Mozilla/5.0 dash")
+    assert (status, out, err) == (0, set_line(config), "")
+    assert stored(config) == "-Mozilla/5.0 dash"
+
+
+def test_an_explicit_value_keeps_comments_mode_and_other_settings(unreadable_plist, config, capsys):
+    config.parent.mkdir()
+    before = (
+        "# my settings\n"
+        "[paths]\n"
+        'downloads = "~/Media"  # the external drive\n'
+        "\n"
+        "[downloads]\n"
+        "# keep in step with the cookies\n"
+        'user_agent = "Mozilla/5.0 old"  # set by hand\n'
+        "\n"
+        "[vpn]\n"
+        "enabled = true\n"
+    )
+    config.write_text(before)
+    config.chmod(0o640)
+    status, out, _ = user_agent(capsys, config, 'Agent "two"')
+    assert (status, out) == (0, set_line(config))
+    assert config.read_text() == before.replace('"Mozilla/5.0 old"', '"Agent \\"two\\""')
+    assert os.stat(config).st_mode & 0o777 == 0o640
+
+
+def test_an_explicit_value_adds_the_downloads_table(unreadable_plist, config, capsys):
+    config.parent.mkdir()
+    config.write_text("# mine\n[vpn]\nenabled = true\n")
+    assert user_agent(capsys, config, "Agent")[0] == 0
+    assert tomllib.loads(config.read_text()) == {
+        "vpn": {"enabled": True}, "downloads": {"user_agent": "Agent"},
+    }
+    assert config.read_text().startswith("# mine\n[vpn]\nenabled = true\n")
+
+
+def test_an_unchanged_explicit_value_is_not_rewritten(unreadable_plist, config, capsys):
+    config.parent.mkdir()
+    config.write_text('[downloads]\nuser_agent = "tab\\there"  # mine\n')
+    old = os.stat(config)
+    os.utime(config, ns=(old.st_atime_ns, old.st_mtime_ns - 10**9))
+    old = os.stat(config)
+    status, out, err = user_agent(capsys, config, "tab\there")
+    assert (status, out, err) == (0, same_line(config), "")
+    new = os.stat(config)
+    assert (new.st_ino, new.st_mtime_ns) == (old.st_ino, old.st_mtime_ns)
+
+
+def test_an_explicit_value_without_a_file_writes_the_starter_file(unreadable_plist, config, capsys):
+    status, out, _ = user_agent(
+        capsys, config, "--set", "vpn.server=us8649",
+        "--set", "downloads.user_agent=other", "Explicit",
+    )
+    assert (status, out) == (0, set_line(config))
+    assert config.read_text() == files.starter_text(
+        {"vpn.server": "us8649", "downloads.user_agent": "Explicit"}
+    )
+    assert stored(config) == "Explicit"
+    assert os.stat(config).st_mode & 0o777 == files.default_file_mode()
+
+
+@pytest.mark.parametrize("argv", [
+    [""], ["a\rb"], ["a\nb"], ["a\r\nb"], ["Agent\n"], ["one", "two"],
+])
+@pytest.mark.parametrize("existing", [False, True])
+def test_an_invalid_explicit_value_is_a_usage_error(unreadable_plist, config, capsys, argv, existing):
+    if existing:
+        config.parent.mkdir()
+        config.write_text('[downloads]\nuser_agent = "old"\n')
+        before = os.stat(config)
+    try:
+        status, out, err = user_agent(capsys, config, *argv)
+    except SystemExit as exit:  # argparse's own usage error
+        status, (out, err) = exit.code, capsys.readouterr()
+    assert (status, out) == (2, "")
+    errors = [line for line in err.splitlines() if "error:" in line]
+    assert len(errors) == 1 and errors[0].startswith("downloadinux: error: ")
+    if len(argv) == 1:
+        assert "config user-agent" in errors[0]
+        assert "\r" not in err and (not argv[0] or argv[0] not in err)
+    if existing:
+        after = os.stat(config)
+        assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+        assert stored(config) == "old"
+    else:
+        assert not config.parent.exists()
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses permissions")
+@pytest.mark.parametrize("existing", [False, True])
+def test_an_explicit_value_in_an_unwritable_directory_exits_1(unreadable_plist, config, capsys, existing):
+    # review-checklist §1: the real failure, a directory without write access.
+    config.parent.mkdir()
+    if existing:
+        config.write_text('[downloads]\nuser_agent = "old"\n')
+    config.parent.chmod(0o500)
+    try:
+        status, out, err = user_agent(capsys, config, "Agent")
+    finally:
+        config.parent.chmod(0o700)
+    assert (status, out) == (1, "")
+    assert err == f"downloadinux: error: {config}: Permission denied\n"
+    assert list(config.parent.iterdir()) == ([config] if existing else [])
+
+
+def test_an_explicit_value_with_an_invalid_settings_file_is_a_configuration_error(
+    unreadable_plist, config, capsys
+):
+    config.parent.mkdir()
+    config.write_text("[downloads]\nuser_agent = 5\n")
+    status, _, err = user_agent(capsys, config, "Agent")
+    assert status == 2
+    assert err.startswith(f"downloadinux: error: {config}: downloads.user_agent: ")
+    assert config.read_text() == "[downloads]\nuser_agent = 5\n"

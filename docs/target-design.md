@@ -282,7 +282,9 @@ Downloads, pinned for P0001-C04:
   `downloads.user_agent`. When the version cannot be read
   it prints `downloadinux: warning: cannot read Chrome's version from
   <plist path>; downloads.user_agent is unchanged`, writes nothing, and
-  exits 0 (DEC-21).
+  exits 0 (DEC-21). With a `VALUE` argument it writes that literal through
+  the same edit instead and never reads the plist (*Named cookie sources*
+  §4, DEC-37; implemented).
 
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
@@ -855,7 +857,8 @@ Pinned for P0001-C04, D3's wrappers:
 
 - `dl`, `batch`, and `watch` run the CLI commands of the same names
   (`batch` passes the queue only when one is given); `useragent` runs
-  `config user-agent`; `cookies` keeps its export and still ends with
+  `config user-agent`, forwarding any arguments unchanged (*Named cookie
+  sources* §4); `cookies` keeps its export and still ends with
   `just useragent`. No recipe names `/home/dl` any more, so the `chome`
   variable goes.
 - `doctor` changes only where the retired paths reach it: its user-agent

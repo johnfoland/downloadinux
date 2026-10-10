@@ -163,12 +163,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     user_agent = config_commands.add_parser(
         "user-agent",
-        help="pin downloads.user_agent to the host Chrome's major version",
-        description="Read the host Chrome's version (macOS, /Applications) and "
-        "write the matching Chrome user-agent into the settings file. Without "
-        "a readable Chrome it warns and changes nothing.",
+        help="set downloads.user_agent to VALUE, or to the host Chrome's major version",
+        description="With VALUE, write that literal as downloads.user_agent in "
+        "the settings file (nonempty, one line; put a VALUE beginning with - "
+        "after --). Without VALUE, read the host Chrome's version (macOS, "
+        "/Applications) and write the matching Chrome user-agent; without a "
+        "readable Chrome it warns and changes nothing.",
     )
     _add_global_options(user_agent, 2)
+    user_agent.add_argument("value", nargs="?", metavar="VALUE")
     user_agent.set_defaults(handler=_config_user_agent)
 
     init = commands.add_parser(
@@ -476,6 +479,14 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
 
 
 def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
+    if args.value is not None:
+        # DEC-37: name the file, never echo the value.
+        write = operations.set_user_agent(args.value, options.config, options.overrides)
+        if write.written:
+            print(f"downloads.user_agent set in {write.settings_file}.")
+        else:
+            print(f"downloads.user_agent already has that value in {write.settings_file}.")
+        return 0
     result = operations.refresh_user_agent(options.config, options.overrides)
     if result.major is None:
         # DEC-21: `just cookies` runs this after every export, so a host

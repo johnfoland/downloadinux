@@ -181,6 +181,18 @@ warns when the setting falls behind the host Chrome. Without Chrome in
 cookies` still succeeds; with no settings file yet it writes the starter file
 `dlx init` would, holding the new value.
 
+To set an exact literal instead, give it as one argument:
+`just useragent "Mozilla/5.0 (X11; Linux x86_64) …"` or
+`dlx config user-agent "…"` (a value beginning with `-` goes after `--`:
+`dlx config user-agent -- -VALUE`). The value must be nonempty and a single
+line. It is written the same way, comments and permissions kept, reads back
+exactly whatever quotes, backslashes, tabs or non-ASCII text it holds, and the
+command prints `downloads.user_agent set in <file>.` or, when the file already
+held it, `downloads.user_agent already has that value in <file>.` It never
+reads Chrome. Like the lookup it changes settings only: `dlx dl` and
+`dlx batch` read the new value on their next run, while the container's shell
+helpers need a `dlx restart` ([Inside the container](#inside-the-container)).
+
 > **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
 > only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
 > downloaders cap at 720p. It's also gallery-dl's own default pairing. The
@@ -724,8 +736,10 @@ dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, w
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
-dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
-                               (macOS); without a readable Chrome, warn and change nothing
+dlx config user-agent [VALUE] Set downloads.user_agent to the literal VALUE (nonempty, one
+                               line; -- before a VALUE starting with -), or without VALUE
+                               from the host Chrome's major version (macOS); without a
+                               readable Chrome, warn and change nothing
 dlx cookies browsers [--json] Supported browser selectors, without installation/store access
 dlx cookies import NAME FILE Register a managed file copy; --replace explicitly replaces a name
 dlx cookies add-browser NAME --browser BROWSER
@@ -787,7 +801,8 @@ just env             Write a legacy .env with your real UID/GID, for
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
-just useragent       Pin downloads.user_agent to your host Chrome version
+just useragent [ua]  Set downloads.user_agent to a literal (quote it), or
+                       with no argument to your host Chrome version
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries

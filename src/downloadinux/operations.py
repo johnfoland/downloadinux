@@ -563,12 +563,47 @@ def refresh_user_agent(
     major = useragent.major(version) if version is not None else None
     if major is None:
         return result
-    value = useragent.user_agent(major)
+    written = _write_user_agent(effective, overrides, host, useragent.user_agent(major))
+    return UserAgentResult(plist, effective.file, version, major, written=written)
+
+
+@dataclass(frozen=True)
+class UserAgentWrite:
+    settings_file: Path
+    written: bool  # False: the file already held the value
+
+
+def set_user_agent(
+    value: str,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+) -> UserAgentWrite:
+    """`config user-agent VALUE` (*Named cookie sources* §4, DEC-37): write an
+    explicit `downloads.user_agent` literal through the same edit as the
+    Chrome lookup, which it never reads. VALUE must be nonempty and a single
+    line, else a usage error."""
+    if not value or "\r" in value or "\n" in value:
+        raise ConfigError(
+            "config user-agent: VALUE must be nonempty and contain no CR or LF"
+        )
+    effective = settings.load(config, overrides, host)  # rejects a bad file or --set
+    written = _write_user_agent(effective, overrides, host, value)
+    return UserAgentWrite(effective.file, written)
+
+
+def _write_user_agent(
+    effective: settings.Settings, overrides: Sequence[str], host: Host, value: str
+) -> bool:
+    """Set `downloads.user_agent` to `value`: edit an existing file in place
+    (comments and permission bits kept) unless it already holds the value, or
+    write `init`'s starter file, `--set` values included and `value` winning.
+    Returns whether the file was written."""
     path = effective.file
     if effective.file_exists:
         text = path.read_text(encoding="utf-8")
         if tomllib.loads(text).get("downloads", {}).get("user_agent") == value:
-            return UserAgentResult(plist, path, version, major, written=False)
+            return False
         files.write_atomic(
             path,
             files.setting_text(text, USER_AGENT_KEY, value),
@@ -580,4 +615,4 @@ def refresh_user_agent(
             path, files.starter_text(values, host), files.default_file_mode(),
             replace=False,
         )
-    return UserAgentResult(plist, path, version, major, written=True)
+    return True

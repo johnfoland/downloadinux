@@ -112,9 +112,9 @@ cookies profile="":
     # resync the UA whenever the cookies are refreshed.
     just useragent
 
-# Pin downloads.user_agent to your host Chrome version (settings, not the checkout)
-useragent:
-    @uv run downloadinux config user-agent
+# Set downloads.user_agent: just useragent "<literal>", or no argument for your host Chrome version
+useragent *args:
+    @uv run downloadinux config user-agent "$@"
 
 # ---------------------------------------------------------------------------
 # Daily use
