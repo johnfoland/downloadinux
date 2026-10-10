@@ -292,7 +292,7 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 | `config show [--json]` | Effective settings, the source of each, and host→container mappings; secrets shown only as `set`/`unset` |
 | `config import-env` | Migrate an existing `.env` (DEC-13) |
 | `config set-token` | Validate and store the NordVPN token; log in if the container runs |
-| `config user-agent` | Refresh the user-agent setting (DEC-10) |
+| `config user-agent [VALUE]` | Write an explicit user-agent literal, or refresh it from the host Chrome (DEC-10; *Named cookie sources* §4) |
 | `build`, `up`, `down`, `restart`, `update` | Image and container lifecycle |
 | `compose -- <args>` | Pass-through to `docker compose` with the computed project, files, and environment |
 | `shell` | Interactive zsh in the container as `dl` (a convenience, not an execution path) |
@@ -944,7 +944,7 @@ yt-dlp's input-before-output cookie lifecycle.
 ## Named cookie sources
 
 Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
-(DEC-28 to DEC-36). PR #39 implements §1's internal reader/publication
+(DEC-28 to DEC-37). PR #39 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
@@ -1200,6 +1200,22 @@ cannot be established, preserve residue and report it rather than promising
 impossible cleanup (DEC-27). Cleanup ignores symlinks and unexpected entries
 and never traverses outside its invocation root.
 
+The host front (DEC-37) loads settings only: it reads no registry and never
+migrates. When Compose reports the service not running it runs nothing and
+fails, exit 1, with `the container is not running; start it with dlx up, then
+rerun dlx cookies cleanup`. Otherwise it runs, as `dl` with captured output,
+`downloadinux-runner cleanup --state /state`; the runner's and Compose's
+standard error reach the terminal unchanged. Status 0 with standard output of
+exactly one JSON object holding non-negative integers (not booleans) `removed`
+and `skipped` and no other field prints `Removed N abandoned cookie snapshots; skipped M in
+use or unverifiable.` and exits 0. Status 0 with any other output fails with
+`downloadinux-runner cleanup printed unexpected output`, without echoing it.
+Status 126 or 127 means the running image predates the runner: fail with
+`the running container has no downloadinux-runner; rebuild and recreate it
+with dlx build and dlx restart`. Any other status fails with
+`downloadinux-runner cleanup failed in the container (exit N)`. Every failure
+exits 1.
+
 #### Snapshot storage format and interrupted allocation
 
 The following storage details pin the shared producer/cleanup contract
@@ -1380,7 +1396,14 @@ No implicit source switch or refresh changes the user-agent.
 comment/mode/no-change preservation as Stage 1; validate it as above. With no
 argument, retain DEC-21's optional macOS Chrome lookup for compatibility,
 including warn/no-write/exit-0 on unavailable Chrome. `just useragent` forwards
-optional arguments. Cookie refresh and setup never invoke this lookup.
+optional arguments. An explicit write prints `downloads.user_agent set in
+<settings file>.`, or `downloads.user_agent already has that value in
+<settings file>.` when the file already held it (DEC-37). It reads the value back
+exactly through TOML, whatever quotes, backslashes, tabs or non-ASCII text it
+holds. A value beginning with `-` follows `--` (`config user-agent -- -VALUE`);
+more than one value is a usage error. `just useragent` forwards its arguments
+unchanged, each word one argument, so `just useragent "Mozilla/5.0 (X11) …"`
+writes that whole literal. Cookie refresh and setup never invoke this lookup.
 `doctor` reports the configured literal's presence/header suitability and
 never compares it to an installed browser or asserts a Chrome version is
 required. This is Stage 2's replacement for the Stage 1 health heuristic.
