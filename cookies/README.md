@@ -14,8 +14,13 @@ keep it: it may be world-readable.
 `just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
 this source-store default, even when it is anonymous.** File/browser registration
 and explicit refresh are implemented. Private execution jars (PR #45) and the
-container runner that creates them (PR #49) are shipped but unused: no
-download, recipe, or `cookies cleanup` command creates or removes them yet.
+container runner that creates them (PR #49) are shipped, and the public
+cleanup front is implemented (PR #52), but no download or recipe creates
+snapshots until the pending download cutover. `dlx cookies cleanup` asks the running
+container's runner to remove abandoned ones (a hard-killed download's, once
+downloads use them), skipping any still in use or unverifiable, and prints
+both counts. It needs the running container from an image built with the
+runner, and never reads the source store or migrates.
 
 On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
 is copied into immutable source `legacy` and selected as the future default.
@@ -178,7 +183,9 @@ the setting; no file in the checkout changes. Run `just useragent` on its own
 after a Chrome update; `just doctor` warns if the setting falls behind the
 host version or stops being Chrome. Without Chrome in `/Applications` (any
 Linux host) it warns and leaves the setting alone, so the export still
-succeeds.
+succeeds. To pin an exact literal instead (on Linux, say), pass it as one
+argument: `just useragent "Mozilla/5.0 …"` (`dlx config user-agent "…"`).
+That form never reads Chrome; see the main README.
 
 `just setup` attempts the same refresh exactly once before its build when it
 keeps an existing Instagram session or publishes a usable export. The existing

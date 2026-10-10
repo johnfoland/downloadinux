@@ -252,7 +252,9 @@ allocates, tears down, and cleans up lease-held snapshots, with credential-free
 Docker Linux evidence. [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner on that library,
 `downloadinux-runner` in the image, which wraps a downloader or the batch loop
 in a private snapshot and is tested inside the built image by the gate's smoke
-test. No host route, public `cookies cleanup`, or download calls it yet; the
-rest of D3 (public cleanup and user-agent operations) and coordinated cutover
-(D4) remain pending.
+test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) completes D3's operations: public `cookies cleanup`
+runs that runner's cleanup in the running container, and `config user-agent
+VALUE` writes an explicit literal, with in-image cleanup evidence in the smoke
+test. No download calls the runner yet; the coordinated cutover (D4) remains
+pending.
 The dated review and Stage 1 outcomes above remain historical observations.

@@ -15,7 +15,12 @@ shared jar. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds in
 jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup),
 and [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner, `downloadinux-runner`, that wraps one
 download or batch loop in such a jar, tested inside the built image by the
-gate's smoke test. No host command calls either yet. The [planning documents](docs/README.md) describe the remaining
+gate's smoke test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) adds the Stage 2 commands
+that can ship before the download cutover: `dlx cookies cleanup` asks the running container's
+runner to remove abandoned snapshots, and `dlx config user-agent VALUE` sets an
+explicit user-agent literal. No download calls the runner yet; switching
+downloads, `just cookies`, setup, and doctor to named sources together is the
+pending cutover. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 
@@ -180,6 +185,18 @@ warns when the setting falls behind the host Chrome. Without Chrome in
 `/Applications` (any Linux host) it warns and changes nothing, so `just
 cookies` still succeeds; with no settings file yet it writes the starter file
 `dlx init` would, holding the new value.
+
+To set an exact literal instead, give it as one argument:
+`just useragent "Mozilla/5.0 (X11; Linux x86_64) …"` or
+`dlx config user-agent "…"` (a value beginning with `-` goes after `--`:
+`dlx config user-agent -- -VALUE`). The value must be nonempty and a single
+line. It is written the same way, comments and permissions kept, reads back
+exactly whatever quotes, backslashes, tabs or non-ASCII text it holds, and the
+command prints `downloads.user_agent set in <file>.` or, when the file already
+held it, `downloads.user_agent already has that value in <file>.` It never
+reads Chrome. Like the lookup it changes settings only: `dlx dl` and
+`dlx batch` read the new value on their next run, while the container's shell
+helpers need a `dlx restart` ([Inside the container](#inside-the-container)).
 
 > **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
 > only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
@@ -421,6 +438,25 @@ failed extraction/decryption/parsing/publication leave the last managed copy
 inspectable and preserve the default. Check the file/profile and keychain/keyring
 access, or explicitly replace the origin with `cookies import` / `add-browser`
 `--replace`. Refresh neither infers nor changes `downloads.user_agent` or settings.
+
+Private cookie snapshots are the per-download working copies the container
+runner makes under `paths.state/cookie-invocations/` and removes when the
+download ends. A hard kill or a stopped container can leave one behind;
+`dlx cookies cleanup` asks the running container's `downloadinux-runner` to
+remove those:
+
+```sh
+dlx cookies cleanup
+# Removed 1 abandoned cookie snapshots; skipped 0 in use or unverifiable.
+```
+
+It removes only well-formed snapshots whose lease no process holds; one still
+in use, or one it cannot verify, is skipped and counted. It never touches the
+source store, reads no registry, and never migrates. It needs the container
+running (`dlx up`; a stopped one is an error that says so) from an image built
+with the runner: an older image fails with a hint to run `dlx build` and
+`dlx restart`. No download creates snapshots yet: they arrive with the
+download cutover, so until then there is normally nothing to remove.
 
 
 ---
@@ -724,8 +760,10 @@ dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, w
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy
                                cookies/cookies.txt into the managed cookies directory
                                (--env PATH, --force; .env and the old jar stay put)
-dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
-                               (macOS); without a readable Chrome, warn and change nothing
+dlx config user-agent [VALUE] Set downloads.user_agent to the literal VALUE (nonempty, one
+                               line; -- before a VALUE starting with -), or without VALUE
+                               from the host Chrome's major version (macOS); without a
+                               readable Chrome, warn and change nothing
 dlx cookies browsers [--json] Supported browser selectors, without installation/store access
 dlx cookies import NAME FILE Register a managed file copy; --replace explicitly replaces a name
 dlx cookies add-browser NAME --browser BROWSER
@@ -736,6 +774,8 @@ dlx cookies list [--json]    Migrate once and list source metadata (preparatory 
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
                                (NAME and --anonymous conflict; current downloads ignore it)
+dlx cookies cleanup          Remove abandoned private cookie snapshots in the running
+                               container and report removed/skipped counts
 dlx build / up / down        Build, start in the background, or stop the configured project
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
@@ -787,7 +827,8 @@ just env             Write a legacy .env with your real UID/GID, for
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
 just cookies [prof]  Export Firefox cookies to the managed jar
-just useragent       Pin downloads.user_agent to your host Chrome version
+just useragent [ua]  Set downloads.user_agent to a literal (quote it), or
+                       with no argument to your host Chrome version
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries

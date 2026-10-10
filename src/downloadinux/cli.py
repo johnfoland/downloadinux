@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(parser, 0)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    cookies = commands.add_parser('cookies', help='register and inspect cookie sources; select their future default')
+    cookies = commands.add_parser('cookies', help='register and inspect cookie sources; select their future default; clean up snapshots')
     _add_global_options(cookies, 1)
     cookie_commands = cookies.add_subparsers(dest='cookie_command', metavar='SUBCOMMAND', required=True)
     cookie_browsers = cookie_commands.add_parser('browsers', help='report supported browser selectors without probing installation')
@@ -114,6 +114,13 @@ def build_parser() -> argparse.ArgumentParser:
     selectors.add_argument('name', nargs='?', metavar='NAME', type=_source_name)
     selectors.add_argument('--anonymous', action='store_true', help='select anonymous as the future default')
     cookie_default.set_defaults(handler=_cookies_default)
+    cookie_cleanup = cookie_commands.add_parser(
+        'cleanup', help='remove abandoned cookie snapshots in the running container',
+        description='Ask the running container to remove abandoned private cookie '
+        'snapshots (those no process holds) and report the counts. Needs the '
+        'container running, from an image that ships downloadinux-runner.')
+    _add_global_options(cookie_cleanup, 2)
+    cookie_cleanup.set_defaults(handler=_cookies_cleanup)
 
     config = commands.add_parser(
         "config", help="inspect and migrate configuration"
@@ -163,12 +170,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     user_agent = config_commands.add_parser(
         "user-agent",
-        help="pin downloads.user_agent to the host Chrome's major version",
-        description="Read the host Chrome's version (macOS, /Applications) and "
-        "write the matching Chrome user-agent into the settings file. Without "
-        "a readable Chrome it warns and changes nothing.",
+        help="set downloads.user_agent to VALUE, or to the host Chrome's major version",
+        description="With VALUE, write that literal as downloads.user_agent in "
+        "the settings file (nonempty, one line; put a VALUE beginning with - "
+        "after --). Without VALUE, read the host Chrome's version (macOS, "
+        "/Applications) and write the matching Chrome user-agent; without a "
+        "readable Chrome it warns and changes nothing.",
     )
     _add_global_options(user_agent, 2)
+    user_agent.add_argument("value", nargs="?", metavar="VALUE")
     user_agent.set_defaults(handler=_config_user_agent)
 
     init = commands.add_parser(
@@ -351,6 +361,13 @@ def _cookies_default(args: argparse.Namespace, options: GlobalOptions) -> int:
     return 0
 
 
+def _cookies_cleanup(args: argparse.Namespace, options: GlobalOptions) -> int:
+    counts = operations.cookie_cleanup(options.config, options.overrides)
+    print(f"Removed {counts.removed} abandoned cookie snapshots; "
+          f"skipped {counts.skipped} in use or unverifiable.")
+    return 0
+
+
 def render_cookie_source(source: dict) -> str:
     """Render the same metadata fields as JSON, without individual cookies."""
     origin = {key: source[key] for key in ('path', 'browser', 'profile', 'keyring', 'container') if key in source}
@@ -476,6 +493,14 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
 
 
 def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
+    if args.value is not None:
+        # DEC-37: name the file, never echo the value.
+        write = operations.set_user_agent(args.value, options.config, options.overrides)
+        if write.written:
+            print(f"downloads.user_agent set in {write.settings_file}.")
+        else:
+            print(f"downloads.user_agent already has that value in {write.settings_file}.")
+        return 0
     result = operations.refresh_user_agent(options.config, options.overrides)
     if result.major is None:
         # DEC-21: `just cookies` runs this after every export, so a host

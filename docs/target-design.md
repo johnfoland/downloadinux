@@ -7,7 +7,9 @@ safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
 operations. PR #41 implements accepted browser/file registration and explicit refresh.
 PR #49 ships the container runner for private execution, tested in the image;
-no host route calls it yet.
+PR #52 adds public `cookies cleanup` and `config user-agent VALUE`. `cookies
+setup`, the download selection and user-agent options, and the runner's use by
+downloads arrive together at D4's cutover.
 Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
@@ -282,7 +284,9 @@ Downloads, pinned for P0001-C04:
   `downloads.user_agent`. When the version cannot be read
   it prints `downloadinux: warning: cannot read Chrome's version from
   <plist path>; downloads.user_agent is unchanged`, writes nothing, and
-  exits 0 (DEC-21).
+  exits 0 (DEC-21). With a `VALUE` argument it writes that literal through
+  the same edit instead and never reads the plist (*Named cookie sources*
+  §4, DEC-37; implemented).
 
 Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
@@ -557,8 +561,9 @@ Instagram-only. The overrides go in as downloader arguments or as a generated
 file under `/state`; shipped preset files are never written.
 
 The Stage 2 *Named cookie sources / User-agent policy* contract replaces these
-Stage 1 fixed-cookie arguments with private jars, and adds explicit literals;
-it is not yet implemented.
+Stage 1 fixed-cookie arguments with private jars, and adds explicit literals.
+Only `config user-agent VALUE` is implemented (PR #52); the download arguments
+change at D4's cutover.
 
 `config user-agent` writes `downloads.user_agent` into the settings file. In
 Stage 1 it keeps today's source, the host Chrome major version on macOS, and
@@ -855,7 +860,8 @@ Pinned for P0001-C04, D3's wrappers:
 
 - `dl`, `batch`, and `watch` run the CLI commands of the same names
   (`batch` passes the queue only when one is given); `useragent` runs
-  `config user-agent`; `cookies` keeps its export and still ends with
+  `config user-agent`, forwarding any arguments unchanged (*Named cookie
+  sources* §4); `cookies` keeps its export and still ends with
   `just useragent`. No recipe names `/home/dl` any more, so the `chome`
   variable goes.
 - `doctor` changes only where the retired paths reach it: its user-agent
@@ -955,8 +961,9 @@ standard-library library that allocates private snapshots under a held lease,
 tears them down, and cleans up abandoned ones, with credential-free Docker
 Linux evidence. PR #49 ships §3's container runner ("Runner interface and
 process lifetime") as `downloadinux-runner` in the image, with in-image evidence
-from the gate's smoke test. No host route, public `cookies cleanup`, or download
-calls it yet.
+from the gate's smoke test. PR #52 implements §3's public `cookies cleanup` host
+front, with in-image evidence, and §4's explicit `config user-agent VALUE`.
+No download calls the runner yet: that is D4's cutover.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
@@ -1298,7 +1305,8 @@ and cleanup would remove an active snapshot.
 #### Runner interface and process lifetime
 
 These details pin the container runner (DEC-36). The runner is shipped and
-tested before D4 activates it; until then no host route calls it. Implemented
+tested before D4 activates it; until then no download route calls it, and
+only the host `cookies cleanup` front (PR #52) runs its `cleanup`. Implemented
 in PR #49 (`src/downloadinux/cookie_runner.py`, `scripts/downloadinux-runner`,
 and the gate's smoke test).
 

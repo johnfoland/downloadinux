@@ -729,6 +729,9 @@ def test_killed_owner_leaves_lease_busy_only_while_inheritor_lives(tmp_path, wit
             wait_for(lambda: not lease_busy(Path(path) / 'lease'))
         parent.kill()
         parent.wait()
+        # Issue #50: close both pipes, so no ResourceWarning outlives the test.
+        parent.stdin.close()
+        parent.stdout.close()
     assert not lease_busy(Path(path) / 'lease')
     assert sorted(os.listdir(path)) == ['cookies.txt', 'lease', 'metadata.json']
 

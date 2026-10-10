@@ -1,6 +1,11 @@
 """The justfile's recipes, read as text: what each one runs and reads."""
 
 import ast
+import os
+import shutil
+import subprocess
+
+import pytest
 
 from downloadinux import checkout
 from test_doctor import CONTAINER_IDS
@@ -73,11 +78,45 @@ def test_gate_has_seven_steps_and_no_servers_script():
 
 
 def test_useragent_wraps_the_cli():
-    # Target design, Migration, "Pinned for P0001-C04" (DEC-10).
+    # Target design, Migration, "Pinned for P0001-C04" (DEC-10); Named
+    # cookie sources §4 forwards optional arguments.
     body = recipe("useragent")
-    assert body[-1].strip() == "@uv run downloadinux config user-agent"
+    assert body[-1].strip() == '@uv run downloadinux config user-agent "$@"'
     assert "python3" not in "\n".join(body)
     assert recipe("cookies")[-1].strip() == "just useragent"
+    assert "just useragent" in [line.strip() for line in recipe("setup")]
+
+
+ARGV_STUB = """#!/bin/sh
+for arg in "$@"; do printf '%s\\0' "$arg"; done >"$ARGV_LOG"
+"""
+
+
+@pytest.mark.parametrize("args", [
+    [],
+    ["Mozilla/5.0 (X11; Linux x86_64) A B"],
+])
+def test_useragent_forwards_each_word_unchanged(tmp_path, args):
+    # The real `just`, with a stub `uv` first on PATH; the gate needs `just`,
+    # so its absence fails rather than skips.
+    just = shutil.which("just")
+    assert just is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "uv"
+    stub.write_text(ARGV_STUB)
+    stub.chmod(0o755)
+    log = tmp_path / "argv"
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+           "ARGV_LOG": str(log)}
+    subprocess.run(
+        [just, "--justfile", str(checkout.asset_path("justfile")), "useragent", *args],
+        cwd=checkout.checkout_root(), env=env, check=True, timeout=60,
+    )
+    argv = log.read_bytes().split(b"\0")[:-1]
+    assert [arg.decode() for arg in argv] == [
+        "run", "downloadinux", "config", "user-agent", *args,
+    ]
 
 
 def test_doctor_is_only_the_cli_wrapper():
