@@ -3,6 +3,7 @@ application*, "pinned for P0001-C04"; DEC-10, DEC-20), with fake runners: no
 test starts Docker."""
 
 import json
+import os
 import re
 
 import pytest
@@ -143,3 +144,26 @@ def test_the_presets_keep_their_media_settings():
 
 def test_the_old_config_directory_is_gone():
     assert not (checkout.checkout_root() / "config").exists()
+
+
+@pytest.mark.parametrize("registry", ["default", "damaged"])
+def test_dl_still_uses_the_stage1_jar_and_ignores_sources(calls, capsys, tmp_path, registry):
+    """Pinning and snapshots are unused groundwork until the coordinated
+    cutover (target design, Named cookie sources §5): `dl` neither reads the
+    registry nor allocates a private jar."""
+    cookies, state = tmp_path / "cookies", tmp_path / "state"
+    sources = cookies / "sources" / "alpha"
+    sources.mkdir(parents=True)
+    state.mkdir()
+    (sources / ("1" * 32 + ".txt")).write_text("# Netscape HTTP Cookie File\n")
+    record = {"version": 1, "default": "alpha", "sources": {"alpha": {
+        "kind": "file", "path": "/external.txt", "revision": "1" * 32,
+        "refreshed_at": "2026-10-10T12:00:00Z"}}}
+    (cookies / "sources.json").write_text(json.dumps(record) if registry == "default" else "{")
+    before = (cookies / "sources.json").read_bytes()
+    status, _, _ = run(capsys, "--set", f"paths.cookies={cookies}", "--set", f"paths.state={state}",
+                       "--set", f"downloads.user_agent={AGENT}", "dl", "video", URLS[0])
+    assert status == 0
+    assert compose_args(calls[0][1]) == [*EXEC, *VIDEO, URLS[0]]
+    assert (cookies / "sources.json").read_bytes() == before
+    assert os.listdir(state) == []

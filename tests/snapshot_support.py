@@ -94,7 +94,7 @@ class Faults:
     def __init__(self, monkeypatch):
         self.rules, self.names = [], {}
         real = {name: getattr(os, name) for name in ('open', 'mkdir', 'rename', 'unlink', 'rmdir', 'stat',
-                                                     'fstat', 'fsync', 'write', 'close', 'fchmod')}
+                                                     'fstat', 'fsync', 'write', 'close', 'fchmod', 'read', 'listdir')}
         real_flock = fcntl.flock
 
         def opener(path, flags, mode=0o777, *, dir_fd=None):
@@ -123,7 +123,7 @@ class Faults:
                     raise
                 return real[op](fd, *args, **kwargs)
             return call
-        for op in ('fstat', 'fsync', 'write', 'close', 'fchmod'):
+        for op in ('fstat', 'fsync', 'write', 'close', 'fchmod', 'read', 'listdir'):
             monkeypatch.setattr(os, op, by_fd(op))
 
         def flock(fd, operation):
@@ -189,3 +189,59 @@ def wait_for(condition, timeout=30):
         if time.monotonic() > deadline:
             raise AssertionError('condition not reached')
         time.sleep(0.02)
+
+
+INTERRUPT = '''
+import os, signal, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from downloadinux import cookie_snapshot as cs, cookie_store
+stage = sys.argv[4]
+real_open, real_write, real_rename = os.open, os.write, os.rename
+def die():
+    os.kill(os.getpid(), signal.SIGKILL)
+def opener(path, flags, mode=0o777, *, dir_fd=None):
+    if (stage, path) in (('before-lease', cs.LEASE), ('before-jar', cs.JAR), ('before-metadata', cs.METADATA)):
+        die()
+    return real_open(path, flags, mode, dir_fd=dir_fd)
+def writer(fd, data):
+    if (stage == 'partial-jar' and bytes(data[:1]) == b'#') or (stage == 'partial-metadata' and bytes(data[:1]) == b'{'):
+        real_write(fd, bytes(data[:5]))
+        die()
+    return real_write(fd, data)
+def renamer(src, dst, **kwargs):
+    if stage == 'before-rename':
+        die()
+    return real_rename(src, dst, **kwargs)
+os.open, os.write, os.rename = opener, writer, renamer
+cs.allocate(Path(sys.argv[2]), Path(sys.argv[3]), cookie_store.Pinned('alpha', '1' * 32), 'UA',
+            id_factory=lambda: sys.argv[5])
+die()
+'''
+
+
+def interrupted(cookies, state, stage, invocation_id):
+    """A real allocator killed (SIGKILL) at ``stage``; its residue is genuine."""
+    result = subprocess.run([sys.executable, '-I', '-c', INTERRUPT, str(SRC), str(cookies), str(state), stage, invocation_id])
+    assert result.returncode == -9
+
+
+def abandon(invocation):
+    """Drop an owner's descriptors without teardown, as a crash would."""
+    for fd in (invocation.lease_fd, invocation._dir_fd, invocation._root_fd):
+        os.close(fd)
+    invocation._closed = True
+    return invocation.path
+
+
+def clean_in_process(state, attempting, done, result):
+    attempting.set()
+    outcome = cs.cleanup(Path(state))
+    done.set()
+    result.put((outcome.removed, outcome.skipped))
+
+
+def clean_together(state, start, result):
+    start.wait(60)
+    outcome = cs.cleanup(Path(state))
+    result.put((outcome.removed, outcome.skipped))

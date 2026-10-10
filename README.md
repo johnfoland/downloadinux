@@ -11,7 +11,9 @@ tested cookie parser, atomic source store, automatic legacy migration, and
 `cookies list`/`inspect`/`default` commands (P0003-C01/C02), plus browser
 capabilities, file/browser registration, and explicit refresh ([PR #41](https://github.com/johnfoland/downloadinux/pull/41)). These source commands
 are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
-shared jar. The [planning documents](docs/README.md) describe the remaining
+shared jar. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds internal groundwork for private per-download
+jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup)
+that no command uses yet. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 

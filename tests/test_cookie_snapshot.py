@@ -673,3 +673,35 @@ with cookie_snapshot.allocate(Path(sys.argv[2]), Path(sys.argv[3]), cookie_store
                             capture_output=True, env=env, check=True)
     assert result.stdout == store.revision_path(cookies, 'alpha', '1' * 32).read_bytes()
     assert listing(state / cs.DIRECTORY) == {'.lock': None}
+
+
+def test_locks_use_a_reopened_descriptor_not_the_creating_one(tmp_path, monkeypatch):
+    """Docker Desktop's macOS file sharing ignores locks taken through the
+    creating descriptor (DEC-35); native filesystems cannot show it, so pin it."""
+    cookies, state = roots(tmp_path)
+    created, opened, locked = set(), {}, []
+    real_open, real_flock = os.open, fcntl.flock
+
+    def opener(path, flags, mode=0o777, *, dir_fd=None):
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        # Descriptor numbers are reused once the creating descriptor closes.
+        if flags & os.O_CREAT:
+            created.add(fd)
+            opened.pop(fd, None)
+        else:
+            created.discard(fd)
+            opened[fd] = os.path.basename(os.fspath(path))
+        return fd
+
+    def flock(fd, operation):
+        locked.append((fd, fd in created, opened.get(fd)))
+        return real_flock(fd, operation)
+    monkeypatch.setattr(os, 'open', opener)
+    monkeypatch.setattr(fcntl, 'flock', flock)
+    invocation = allocate(cookies, state)
+    monkeypatch.undo()
+    try:
+        assert [(was_created, name) for _, was_created, name in locked] == [(False, '.lock'), (False, 'lease')]
+        assert locked[1][0] == invocation.lease_fd
+    finally:
+        invocation.close()

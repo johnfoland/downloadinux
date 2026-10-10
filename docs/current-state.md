@@ -246,5 +246,9 @@ committed source/default. Registration and refresh never infer a user-agent.
 
 These commands are preparation only: foreground/batch downloads, `just cookies`,
 setup, and doctor still use the Stage 1 shared jar and ignore the registry
-default. Private execution jars (D3) and coordinated cutover (D4) remain pending.
+default. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds D3's internal foundation only: host submission pinning,
+the settings-free exact revision reader, and a standard-library library that
+allocates, tears down, and cleans up lease-held snapshots, with credential-free
+Docker Linux evidence. No runner, image entry point, public `cookies cleanup`, or
+download uses it; the rest of D3 and coordinated cutover (D4) remain pending.
 The dated review and Stage 1 outcomes above remain historical observations.

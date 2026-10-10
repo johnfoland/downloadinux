@@ -678,3 +678,29 @@ need not preserve the original format and must not prevent structural cleanup.
 issue #34 in PR #44, following the accepted work in PR #41. This specifies
 previously unnamed storage details; DEC-31's submission pinning and process lifetime remain
 unchanged.
+
+## DEC-35: Snapshot locks are taken on a reopened descriptor (2026-10)
+
+The allocation lock and each snapshot lease are created (or found) by one
+open, then opened again without `O_CREAT`; the producer checks that both opens
+name the same regular file and takes its lock only through the second
+descriptor, which is the one a runner keeps and passes on. On Docker Desktop's
+macOS file sharing, a `flock` held through the descriptor whose open created
+the file does not exclude other opens of that file, while a lock held through
+a descriptor that opened an existing file does. Locking the creating
+descriptor therefore let cleanup acquire an active lease and delete a live
+snapshot, and let cleanup run while a first allocation held a newly created
+lock. Native Linux filesystems, named volumes and macOS host filesystems
+enforce both, which is why host and CI tests could not show it.
+
+Locking the creating descriptor was rejected because `/state` is a host bind
+mount on macOS, the supported Docker Desktop case. Keeping snapshots off bind
+mounts was rejected because the state root is a configured, shared host
+directory (§3). A different lock primitive was not adopted: POSIX and OFD
+locks behaved the same as `flock` in the probe, and `flock` keeps lease
+inheritance by descriptor.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3,
+"Snapshot storage format and interrupted allocation". Added on 2026-10-10 in
+PR #45, from its credential-free Docker Linux evidence
+(`tools/snapshot_evidence.py`).

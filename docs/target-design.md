@@ -950,8 +950,10 @@ PR #41 implements accepted direct browser extraction, the support report, browse
 registration with explicit replacement, and stored-origin refresh. PR #45 adds
 §3's internal groundwork, unused by any public route: host submission pinning,
 the settings-free reader of a pinned revision's exact bytes, and a
-standard-library library that allocates private snapshots under a held lease
-and tears them down. No runner, image entry point, or download uses them yet.
+standard-library library that allocates private snapshots under a held lease,
+tears them down, and cleans up abandoned ones, with credential-free Docker
+Linux evidence. No runner, image entry point, public `cookies cleanup`, or
+download uses them yet.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
@@ -1260,6 +1262,12 @@ known files and the directory. Owner teardown likewise verifies ownership and
 holds the lease through removal, reporting cleanup failure before release.
 Descriptor closure is attempted even on failed cleanup. No cleanup route touches
 canonical revisions, external imports or browser profiles.
+
+Take the allocation lock and every lease through a descriptor that opened the
+existing file, never the descriptor whose open created it, and check that both
+opens name the same file (DEC-35). Docker Desktop's macOS file sharing ignores
+a lock held through the creating descriptor, so a later open could acquire it
+and cleanup would remove an active snapshot.
 
 ### 4. User-agent policy
 
