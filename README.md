@@ -685,6 +685,13 @@ exports fail safely. Clean empty exports are valid. Available HttpOnly, secure,
 domain, session, and expired records are retained. The support report does not
 promise installed profiles or successful decryption.
 
+Exports also refuse duplicate domain/path/name keys before one browser record
+can overwrite another, including Firefox container and Chromium partition
+collisions. For Firefox, select `--container "container name"` or `--container
+none`, or import a Netscape file containing distinct keys. Omitting the container
+still exports all containers when their keys are distinct. Registration,
+replacement, and refresh failures preserve the committed source/default/copies.
+
 Linux GNOME keyring needs `secretstorage` in the host tool environment and an
 accessible/unlocked desktop Secret Service (`uv tool inject downloadinux
 secretstorage` for the editable tool). KWallet needs a running accessible wallet

@@ -19,10 +19,27 @@ destination. However, it mutates session expiry to zero and its `_really_save`
 omits available HttpOnly metadata. The adapter therefore passes the real jar
 through the shared Mozilla/Netscape serializer and strict parser, retaining
 session/expired/secure/domain/available HttpOnly semantics with a record-count
-check. This count check covers serialization only: upstream extraction can
-already have overwritten duplicate domain/path/name keys, including cookies
-from different Firefox containers. Rejection before that loss is still pending
-in PR #41; the present adapter must not be treated as proving lossless extraction.
+check. That check covers serialization only. Both locked Firefox and Chromium
+extractors construct `YoutubeDLCookieJar` and call `set_cookie` for each extracted
+row; its usual keyed insertion can overwrite credentials from different Firefox
+containers or Chromium partitions before returning a jar.
+
+The adapter temporarily substitutes a subclass at that constructor boundary.
+Before each insertion it rejects repeated domain/path/name keys, normalizing
+domains with the shared parser's lowercase rule while preserving case-sensitive
+paths/names and distinct host/dot-domain keys. It checks both the jar's stored
+key and the shared serializer's Netscape key (including empty names). A collision
+is recorded before raising, so even an upstream handler that catches the exception
+cannot turn it into a successful export. Errors expose only source/browser/selector
+context and container/import remedies; they never include a colliding key or value.
+Extraction, profile SQL, and decryption remain delegated to yt-dlp.
+
+The locked API has no injectable jar factory. An adapter lock serializes the
+temporary constructor override and diagnostic containment, with unconditional
+constructor/context restoration on success or failure. A context variable limits
+duplicate rejection to the active adapter call; unrelated yt-dlp threads retain
+their normal insertion behavior. This boundary must be revalidated when updating
+the dependency, together with the existing extraction and serialization contracts.
 Browser extractors do not expose HttpOnly from every database; the
 adapter preserves metadata that they provide, without adding private browser SQL.
 
@@ -35,6 +52,19 @@ on both platform selectors drive real extraction and AES decryption; only the
 OS key retrieval boundary is replaced with synthetic keys. Missing keys drive
 the real warning/partial-export paths. Network, YoutubeDL/extractor entry points,
 profile discovery outside fixtures, and real keychains are blocked.
+
+`tests/test_cookie_browser_collisions.py` drives the real extraction entry point
+with Firefox schema-15 container rows and Chrome/Chromium schema-23 partition
+rows on both macOS/Linux selectors. It rejects same-key, domain-case, and
+empty-name collisions in both row orders; distinct case-sensitive paths/names,
+host/dot-domain keys, and explicit Firefox named/none selectors succeed. Public
+add/replace/refresh tests preserve the anonymous migration baseline or existing
+registry, default, immutable material, settings, and external profiles after
+failure, and the prior copy remains inspectable. Additional boundary tests pin
+caught-insertion-error refusal, unrelated-thread behavior, simultaneous adapter
+calls, and restoration of the constructor and diagnostic streams. The old
+returned-jar collision double tests serialization only; these real profiles
+prove rejection before extraction can lose records.
 
 Linux keyring IDs, in upstream declaration order: `KWALLET`, `KWALLET5`,
 `KWALLET6`, `GNOMEKEYRING`, `BASICTEXT`. KWallet requires an accessible desktop

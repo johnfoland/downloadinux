@@ -68,6 +68,13 @@ and import paths become absolute without resolving symlinks. See the
 for the exact keyring set and Linux desktop dependencies. Netscape import is
 the browser-independent alternative; these commands do not alter user-agent.
 
+Duplicate domain/path/name keys fail before browser extraction can overwrite a
+record, including collisions between Firefox containers or Chromium partitions.
+For Firefox, choose an explicit named container or `--container none`; omitted
+container still exports all containers when their keys are distinct. Alternatively,
+import a Netscape file with distinct keys. A failed export leaves the committed
+source, default, and managed copies unchanged.
+
 Refresh is explicit, never automatic. It always publishes a fresh revision/time
 on success, including identical or valid empty material. A missing origin does
 not invalidate the last managed copy: inspect still works. Restore/export the
