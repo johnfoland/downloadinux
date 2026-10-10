@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-10 by `relay-next`.
+Last updated 2026-10-10 by `relay-execute`.
 Last review: 2026-10-10 (P0003-C02, accepted).
 
 ## Where this stands
@@ -23,7 +23,7 @@ Last review: 2026-10-10 (P0003-C02, accepted).
   immutable registry reader, atomic host writer, locked legacy migration,
   and host-only `cookies list`/`inspect`/`default` commands. C02's review
   passed all seven gate steps with 771 tests and a public-entry-point smoke.
-  [P0003-C03](chunks/P0003-C03.md) is executing D2: browser/file registration and
+  [P0003-C03](chunks/P0003-C03.md) awaits review for completed D2: browser/file registration and
   direct browser extraction and explicit stored-origin refresh are implemented
   in units a/b/c. Private execution jars remain unimplemented;
   Stage 1 download/export/setup/doctor routes are unchanged and ignore the
@@ -37,9 +37,9 @@ Last review: 2026-10-10 (P0003-C02, accepted).
 ## In flight
 
 - **Chunk:** P0003-C03
-- **State:** executing
+- **State:** awaiting review
 - **Branch:** `chunk/p0003-c03`
-- **Pull request:** `#41` (draft)
+- **Pull request:** `#41` (ready)
 - **Units committed:** a, b, c
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·

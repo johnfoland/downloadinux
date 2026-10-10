@@ -7,7 +7,7 @@ safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
 operations. P0003-C03 implements browser/file registration and explicit refresh;
 private execution remains unimplemented.
-downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
+Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
 ## Agreed decisions
