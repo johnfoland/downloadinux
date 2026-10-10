@@ -8,7 +8,8 @@ It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
 wrap it, with its settings in a file of their own outside the checkout. That
 is Stage 1 of a refactor toward a portable application. Stage 2 now has a
 tested cookie parser, atomic source store, automatic legacy migration, and
-`cookies list`/`inspect`/`default` commands (P0003-C01/C02). These source commands
+`cookies list`/`inspect`/`default` commands (P0003-C01/C02), plus browser
+capabilities, file/browser registration, and explicit refresh ([PR #41](https://github.com/johnfoland/downloadinux/pull/41)). These source commands
 are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
 shared jar. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
@@ -338,10 +339,10 @@ the old jar has live session cookies and may be world-readable: check with
 
 **These commands prepare Stage 2. Current downloads, `just cookies`, setup,
 and doctor still use `paths.cookies/cookies.txt` and ignore the registry default,
-including `anonymous`.** Browser registration, import/refresh commands, private
-execution jars, and anonymous download flags are still pending.
+including `anonymous`.** Browser/file registration and explicit refresh are
+implemented; private execution jars and anonymous download flags remain pending.
 
-The first `cookies list`, `inspect`, or `default` reads the managed Stage 1 jar
+The first source-store operation (list, inspect, default, registration, or refresh) reads the managed Stage 1 jar
 under the host writer lock when no `sources.json` exists. A valid nonempty jar
 becomes source `legacy` and the source-store default in one atomic publication;
 a missing or valid header-only jar creates an empty anonymous store. The old
@@ -370,8 +371,53 @@ and immutable copies at `sources/<name>/<revision>.txt`. Managed directories
 are 0700; published material, registry, and lock are 0600. Selecting a default
 changes no revision or refresh timestamp. Existing registries are never remigrated
 or reset on damage. A later Stage 1 export can change the old jar, but the
-`legacy` inspection copy stays at its original revision during this transition.
-These commands need no Docker, browser, token, or user-agent lookup.
+`legacy` inspection copy stays at its original revision until explicitly
+refreshed or replaced.
+List, inspect, default, and file import need no browser. None of the source
+commands needs Docker, token access, or a user-agent lookup.
+
+Register an exported Netscape file without a browser, or export directly from
+a supported browser:
+
+```sh
+dlx cookies import imported "~/Exports/account cookies.txt"
+dlx cookies add-browser personal --browser firefox --profile "work profile" --container none
+dlx cookies add-browser work --browser chrome --profile "Default"
+# Linux, when the browser uses GNOME Keyring:
+dlx cookies add-browser linux-work --browser chromium --keyring GNOMEKEYRING
+dlx cookies inspect imported
+dlx cookies default imported  # explicit future account selection
+```
+
+Names match `[a-z0-9][a-z0-9_-]{0,63}`. Registration prints the same safe
+summary as inspection and never changes the anonymous or existing default.
+Import copies and validates complete material, leaves the external bytes/mode
+untouched, and stores its absolute origin for later refresh. An existing name
+refuses unless `--replace` is explicit; replacement may change browser/profile
+or file origin/kind while retaining the ID and current default selection.
+Success creates a fresh revision/time, retaining all old immutable revisions.
+Failed reads, exports, parsing, or publication retain committed state; a
+successful prerequisite legacy migration remains committed. A source changed
+during extraction refuses with retry guidance; unrelated sources and the latest
+default survive. See [browser capabilities](#browser-capabilities-preparatory-stage-2)
+for selectors and keyring prerequisites.
+
+Refresh explicitly after exporting a new file or updating a browser session:
+
+```sh
+dlx cookies refresh imported
+dlx cookies refresh personal
+dlx cookies refresh legacy  # reread the retained Stage 1 managed jar
+```
+
+Refresh reuses the stored absolute file origin or browser/profile/keyring/container
+selectors. Even identical or valid empty output gets a fresh immutable revision
+and UTC timestamp; there is no automatic refresh. Missing/deleted origins and
+failed extraction/decryption/parsing/publication leave the last managed copy
+inspectable and preserve the default. Check the file/profile and keychain/keyring
+access, or explicitly replace the origin with `cookies import` / `add-browser`
+`--replace`. Refresh neither infers nor changes `downloads.user_agent` or settings.
+
 
 ---
 
@@ -623,6 +669,40 @@ exit IP.
 
 # Command reference
 
+## Browser capabilities (preparatory Stage 2)
+
+`dlx cookies browsers [--json]` reports supported selectors without probing an
+installation or accessing/migrating cookies. Firefox, Chrome, and Chromium are
+supported on macOS and Linux. Profiles can be names or paths (including spaces);
+path selectors expand `~` and become absolute without resolving symlinks.
+Firefox accepts containers, with `none` meaning outside containers and an omitted
+container meaning all. Chromium browsers accept Linux keyrings only:
+`KWALLET`, `KWALLET5`, `KWALLET6`, `GNOMEKEYRING`, `BASICTEXT`.
+
+The host adapter is locked to **yt-dlp 2026.08.19**. It extracts directly without
+a URL/site probe; warnings, denied keychains, unsupported schemas, and partial
+exports fail safely. Clean empty exports are valid. Available HttpOnly, secure,
+domain, session, and expired records are retained. The support report does not
+promise installed profiles or successful decryption.
+
+Exports also refuse duplicate domain/path/name keys before one browser record
+can overwrite another, including Firefox container and Chromium partition
+collisions. For Firefox, select `--container "container name"` or `--container
+none`, or import a Netscape file containing distinct keys. Omitting the container
+still exports all containers when their keys are distinct. Registration,
+replacement, and refresh failures preserve the committed source/default/copies.
+
+Linux GNOME keyring needs `secretstorage` in the host tool environment and an
+accessible/unlocked desktop Secret Service (`uv tool inject downloadinux
+secretstorage` for the editable tool). KWallet needs a running accessible wallet
+and `dbus-send` on `PATH`. `BASICTEXT` only fits a browser using the basic password
+store; it does not bypass another keyring's encryption. macOS Chromium needs
+keychain access. Netscape file import provides a browser-independent
+alternative through `dlx cookies import NAME FILE`. Registration is implemented;
+refresh rereads the stored origin only when explicitly requested.
+[Adapter validation evidence](docs/browser-adapter.md) records the API and tests.
+Current downloads, export, setup, and doctor still use the Stage 1 jar.
+
 ## The host CLI
 
 The host application is a Python package in `src/downloadinux/`, installed as
@@ -642,6 +722,12 @@ dlx config import-env        Turn the checkout's .env into the new files (VPN on
                                (--env PATH, --force; .env and the old jar stay put)
 dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
                                (macOS); without a readable Chrome, warn and change nothing
+dlx cookies browsers [--json] Supported browser selectors, without installation/store access
+dlx cookies import NAME FILE Register a managed file copy; --replace explicitly replaces a name
+dlx cookies add-browser NAME --browser BROWSER
+                               Export/register Firefox, Chrome, or Chromium; optional
+                               --profile, --keyring, --container, --replace
+dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
@@ -747,6 +833,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   ├── cookie_browser.py         # lazy direct host browser extraction, no site probe
+│   ├── cookie_selectors.py       # supported capabilities and selector normalization
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
 │   ├── cookie_writer.py          # atomic publication and locked legacy migration

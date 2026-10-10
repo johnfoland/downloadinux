@@ -5,8 +5,9 @@ hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
 safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
-operations. Registration, refresh, and private execution remain unimplemented;
-downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
+operations. PR #41 implements accepted browser/file registration and explicit refresh;
+private execution remains unimplemented.
+Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
 ## Agreed decisions
@@ -99,8 +100,11 @@ Package details, pinned for P0001-C01:
 
 - Python 3.11 or later (`requires-python = ">=3.11"`, for `tomllib`), with
   `.python-version` naming 3.13 and `uv.lock` committed. The one runtime
-  dependency is `tomlkit`, used only to write and edit the settings and
-  credentials files so a user's comments survive; reading uses `tomllib`.
+  dependency in Stage 1 was `tomlkit`, used only to write and edit settings
+  and credentials so comments survive; reading uses `tomllib`. Stage 2 adds
+  `yt-dlp==2026.8.19` for host-only direct browser cookie extraction
+  (DEC-29, PR #41); its browser code is loaded only for browser operations.
+  No host media dependency is added.
   pytest is a dev dependency. `python -m downloadinux` runs the same
   function as the entry points.
 - The checkout root is the directory that holds `src/downloadinux/`. A
@@ -937,12 +941,14 @@ yt-dlp's input-before-output cookie lifecycle.
 
 ## Named cookie sources
 
-Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
+Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
 (DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
 implements §5's locked migration and §2's public list/inspect/default operations.
-Browser/file registration, refresh, and private execution jars remain
-unimplemented. The new source commands are preparatory: downloads, export,
+PR #41 implements accepted direct browser extraction, the support report, browser/file
+registration with explicit replacement, and stored-origin refresh. Private
+execution jars remain unimplemented.
+The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
 shared-jar execution and required Firefox/probe/user-agent recipe chain.

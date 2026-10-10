@@ -4,11 +4,12 @@ These documents capture the repository review of 2026-09-27 and the refactor
 it set in motion. Stage 1, portable configuration and shared operations
 (project P0001), is implemented: a host CLI, a settings file outside the
 checkout, and the `just` recipes as wrappers over it. Stage 2, named cookie
-sources, is settled in active project [P0003](projects/P0003-named-cookie-sources.md)
+sources, is settled under [issue #34](https://github.com/johnfoland/downloadinux/issues/34)
 with its internal parser and atomic source-store foundation implemented in
 P0003-C01 and locked legacy migration plus public list/inspect/default operations
-implemented in P0003-C02. Registration, refresh, and private execution jars
-remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
+implemented in P0003-C02. [PR #41](https://github.com/johnfoland/downloadinux/pull/41) adds direct host browser extraction,
+support reporting, file/browser registration/replacement, and explicit refresh.
+Private execution jars and D4 cutover remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
 and ignore the preparatory registry default. Stages 3–4 (a persistent worker in place of tmux
 and the Python + Textual TUI) remain proposals; batch runs still use tmux.
 
@@ -25,11 +26,14 @@ implementation, keeping proposals distinguishable from completed work.
 
 ## Process files
 
-The [relay workflow](../AGENTS.md#relay-workflow) keeps these alongside the
-planning documents. They record how work is done, not how the product behaves:
+The [decision log](decisions.md) holds settled questions, cited as `(DEC-n)`.
 
-- [Decision log](decisions.md): settled questions, cited as `(DEC-n)`.
-- [Status](status.md): what is in flight and what to do next.
-- [Projects](projects/index.md) and [chunk briefs](chunks/).
-- [Review checklist](review-checklist.md) and
-  [brief checklist](brief-checklist.md).
+The [relay workflow](../AGENTS.md#relay-workflow) keeps its process files in
+the git-ignored `.relay/` directory in the main working tree. They record how
+work is done, not how the product behaves, and are not available in a clone:
+
+- `.relay/status.md`: what is in flight and what to do next.
+- `.relay/projects/` and `.relay/chunks/`: local projects and chunk briefs.
+- `.relay/review-checklist.md` and `.relay/brief-checklist.md`.
+
+Pull requests carry executor reports and review comments as the remote record.

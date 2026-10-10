@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import cookie_store, health, migrate, operations, presets, servers
+from downloadinux import cookie_selectors, cookie_store, health, migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -73,9 +73,32 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(parser, 0)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    cookies = commands.add_parser('cookies', help='inspect cookie sources and select their future default')
+    cookies = commands.add_parser('cookies', help='register and inspect cookie sources; select their future default')
     _add_global_options(cookies, 1)
     cookie_commands = cookies.add_subparsers(dest='cookie_command', metavar='SUBCOMMAND', required=True)
+    cookie_browsers = cookie_commands.add_parser('browsers', help='report supported browser selectors without probing installation')
+    _add_global_options(cookie_browsers, 2)
+    cookie_browsers.add_argument('--json', action='store_true', help='print JSON')
+    cookie_browsers.set_defaults(handler=_cookies_browsers)
+    cookie_import = cookie_commands.add_parser('import', help='register a managed copy of a Netscape file')
+    _add_global_options(cookie_import, 2)
+    cookie_import.add_argument('name', metavar='NAME', type=_source_name)
+    cookie_import.add_argument('file', metavar='FILE')
+    cookie_import.add_argument('--replace', action='store_true', help='explicitly replace an existing source')
+    cookie_import.set_defaults(handler=_cookies_import)
+    cookie_browser = cookie_commands.add_parser('add-browser', help='directly export and register browser cookies')
+    _add_global_options(cookie_browser, 2)
+    cookie_browser.add_argument('name', metavar='NAME', type=_source_name)
+    cookie_browser.add_argument('--browser', required=True, choices=cookie_selectors.BROWSERS)
+    cookie_browser.add_argument('--profile', metavar='PROFILE')
+    cookie_browser.add_argument('--keyring', metavar='KEYRING')
+    cookie_browser.add_argument('--container', metavar='CONTAINER')
+    cookie_browser.add_argument('--replace', action='store_true', help='explicitly replace an existing source')
+    cookie_browser.set_defaults(handler=_cookies_add_browser)
+    cookie_refresh = cookie_commands.add_parser('refresh', help='reread a stored origin and publish a fresh immutable revision')
+    _add_global_options(cookie_refresh, 2)
+    cookie_refresh.add_argument('name', metavar='NAME', type=_source_name)
+    cookie_refresh.set_defaults(handler=_cookies_refresh)
     cookie_list = cookie_commands.add_parser('list', help='list source metadata')
     _add_global_options(cookie_list, 2)
     cookie_list.add_argument('--json', action='store_true', help='print JSON')
@@ -271,17 +294,54 @@ def _cookies_list(args: argparse.Namespace, options: GlobalOptions) -> int:
     return 0
 
 
+def _cookies_browsers(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.cookie_browsers()
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"Platform: {report['platform']}; capabilities only, no installation/decryption probe")
+        for browser in report['browsers']:
+            print(f"{browser['id']}: profile: yes; container: {'yes' if browser['container'] else 'no'}; "
+                  f"keyrings: {', '.join(browser['keyrings']) or 'none'}")
+    return 0
+
+
 def _cookies_inspect(args: argparse.Namespace, options: GlobalOptions) -> int:
     report = operations.inspect_cookies(args.name, options.config, options.overrides)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        lines = [render_cookie_source(report['source']), render_cookie_counts(report)]
-        for domain in report['domains']:
-            presence = 'present' if domain['session_cookie_present'] else 'absent'
-            lines.append(f"  {domain['domain']}: {render_cookie_counts(domain)}; recognized session cookie {presence}")
-        print('\n'.join(lines))
+        print(render_cookie_inspection(report))
     return 0
+
+
+def _cookies_import(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.import_cookies(args.name, args.file, replace=args.replace,
+                                       config=options.config, overrides=options.overrides)
+    print(render_cookie_inspection(report))
+    return 0
+
+
+def _cookies_add_browser(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.add_browser_cookies(args.name, args.browser, profile=args.profile,
+                                            keyring=args.keyring, container=args.container,
+                                            replace=args.replace, config=options.config, overrides=options.overrides)
+    print(render_cookie_inspection(report))
+    return 0
+
+
+def _cookies_refresh(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.refresh_cookies(args.name, options.config, options.overrides)
+    print(render_cookie_inspection(report))
+    return 0
+
+
+def render_cookie_inspection(report: dict) -> str:
+    lines = [render_cookie_source(report['source']), render_cookie_counts(report)]
+    for domain in report['domains']:
+        presence = 'present' if domain['session_cookie_present'] else 'absent'
+        lines.append(f"  {domain['domain']}: {render_cookie_counts(domain)}; recognized session cookie {presence}")
+    return '\n'.join(lines)
 
 
 def _cookies_default(args: argparse.Namespace, options: GlobalOptions) -> int:

@@ -109,11 +109,11 @@ def _publish_locked(root: Path, name: str, source: store.Source, path: Path,
     return _commit(root, record, replace=exists)
 
 
-def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
+def publish_snapshot(root: Path, name: str, material: cookiejar.Material, origin: dict,
             *, expected: store.Source | None, select: bool = False,
             revision_factory: Callable[[], str] = lambda: uuid4().hex,
-            clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Source:
-    """Publish a fresh immutable copy, then origin/revision/default atomically.
+            clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Snapshot:
+    """Publish and return the snapshot at the commit point, without a reread.
 
     Safe unreferenced revisions may remain on failure. Never remove immutable
     material or guess at reservation ownership; DEC-27 cleanup lives in files.
@@ -123,8 +123,16 @@ def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
         current, exists = _current(root)
         if current.sources.get(name) != expected:
             raise DownloadinuxError(f'{root / "sources.json"}: source {name} changed; retry the operation')
-        _publish_locked(root, name, source, path, text, current, exists, select=select)
-        return source
+        return _publish_locked(root, name, source, path, text, current, exists, select=select)
+
+
+def publish(root: Path, name: str, material: cookiejar.Material, origin: dict,
+            *, expected: store.Source | None, select: bool = False,
+            revision_factory: Callable[[], str] = lambda: uuid4().hex,
+            clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> store.Source:
+    """Existing source-only front over the same locked transaction (§1)."""
+    return publish_snapshot(root, name, material, origin, expected=expected, select=select,
+                            revision_factory=revision_factory, clock=clock).sources[name]
 
 
 def ensure_store(root: Path, *,
