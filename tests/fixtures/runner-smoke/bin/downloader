@@ -1,0 +1,32 @@
+#!/bin/sh
+# Stub yt-dlp / gallery-dl for the gate's in-image runner evidence: records
+# what it received, never prints cookie material. STUB_LOG is a directory;
+# STUB_MODE=wait waits for $STUB_LOG/release (polled; no fixed sleep).
+set -eu
+record="$STUB_LOG/$(basename "$0")-$$"
+jar=
+previous=
+for argument in "$@"; do
+    if [ "$previous" = --cookies ]; then
+        jar=$argument
+    fi
+    case $argument in
+        extractor.instagram.cookies=*) jar=${argument#extractor.instagram.cookies=} ;;
+    esac
+    previous=$argument
+done
+printf '%s\n' "$@" >"$record.argv"
+printf '%s\n' "$jar" >"$record.jar"
+if [ -n "$jar" ]; then
+    # Compared with cmp by the checker, never printed.
+    cp "$jar" "$record.bytes"
+fi
+ls -l /proc/self/fd >"$record.fds"
+printf '%s %s\n' "$$" "$(ps -o pgid= -p "$$" | tr -d ' ')" >"$record.ids"
+touch "$record.ready"
+if [ "${STUB_MODE:-}" = wait ]; then
+    while [ ! -e "$STUB_LOG/release" ]; do
+        /bin/sleep 0.05
+    done
+fi
+exit "${STUB_EXIT:-0}"

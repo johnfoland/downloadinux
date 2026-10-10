@@ -209,4 +209,35 @@ if "${cli[@]}" --set container.uid=0 compose -- run --rm -T downloadinux true \
   exit 1
 fi
 grep -q 'UID 0 is already used by root' "$smoke_dir/uid-clash.log"
+
+# Named cookie sources §3, "Runner interface and process lifetime" (DEC-36):
+# the shipped runner in the built image, around stub downloaders and the real
+# zsh batch loop. Synthetic sources come from the host CLI; alpha is refreshed
+# after its pinned revision is read, so the runner must copy the older bytes.
+# The checker prints step names only, never cookie material.
+runner_fixture="$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/runner-smoke"
+origins="$smoke_dir/origins"
+mkdir -p "$origins"
+synthetic_jar() {
+  printf '# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tsessionid\t%s\n' "$1"
+}
+revision_of() {
+  "${cli[@]}" cookies list --json | python3 -c '
+import json, sys
+print(next(s["revision"] for s in json.load(sys.stdin)["sources"] if s["name"] == sys.argv[1]))
+' "$1"
+}
+synthetic_jar synthetic-alpha-one >"$origins/alpha.txt"
+synthetic_jar synthetic-beta >"$origins/beta.txt"
+"${cli[@]}" cookies import alpha "$origins/alpha.txt" >/dev/null
+"${cli[@]}" cookies import beta "$origins/beta.txt" >/dev/null
+alpha_pinned=$(revision_of alpha)
+synthetic_jar synthetic-alpha-two >"$origins/alpha.txt"
+"${cli[@]}" cookies refresh alpha >/dev/null
+alpha_refreshed=$(revision_of alpha)
+test "$alpha_pinned" != "$alpha_refreshed"
+"${cli[@]}" compose -- run --rm -T --volume "$runner_fixture:/runner-smoke:ro" downloadinux \
+  /usr/bin/python3 -I /runner-smoke/check.py "$alpha_pinned" "$alpha_refreshed" "$(revision_of beta)"
+# The result is visible through the mount: only the persistent lock remains.
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
 printf 'Container smoke test passed (uid %s, gid %s).\n' "$(id -u)" "$(id -g)"

@@ -31,6 +31,14 @@ def tmux(preset, container_queue):
     ]
 
 
+def test_batch_script_is_the_shared_loop_plus_the_pause():
+    # The runner reuses the loop text; the host keeps its pause (DEC-36).
+    from downloadinux import operations
+    assert presets.LOOP == 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
+    assert operations.BATCH_SCRIPT == presets.LOOP + '; echo; echo "[done — press a key]"; read -k1'
+    assert operations.BATCH_SCRIPT == SCRIPT
+
+
 @pytest.fixture
 def downloads(tmp_path):
     path = tmp_path / "My Downloads"

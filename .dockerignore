@@ -7,3 +7,4 @@ cookies/*
 README.md
 Makefile
 .venv
+**/__pycache__

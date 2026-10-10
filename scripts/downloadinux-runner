@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+"""downloadinux-runner: the container cookie runner.
+
+Target design, Named cookie sources §3, "Runner interface and process
+lifetime" (DEC-36): the system interpreter in isolated mode, the image's
+read-only package first on sys.path, never /opt/venv.
+"""
+import sys
+
+sys.path.insert(0, '/opt/downloadinux')
+
+from downloadinux.cookie_runner import main  # noqa: E402
+
+sys.exit(main())

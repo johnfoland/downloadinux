@@ -13,9 +13,9 @@ keep it: it may be world-readable.
 `dlx cookies default [NAME] [--anonymous]` are implemented. **Downloads,
 `just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
 this source-store default, even when it is anonymous.** File/browser registration
-and explicit refresh are implemented. Private execution jars exist only as
-unused internal groundwork (PR #45): no download, recipe, or `cookies cleanup`
-command creates or removes them yet.
+and explicit refresh are implemented. Private execution jars (PR #45) and the
+container runner that creates them (PR #49) are shipped but unused: no
+download, recipe, or `cookies cleanup` command creates or removes them yet.
 
 On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
 is copied into immutable source `legacy` and selected as the future default.

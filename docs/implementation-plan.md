@@ -60,8 +60,10 @@ remain pending. Internal pinned reads and snapshot storage/cleanup land in
 PR #45, ahead of the process-tree runner and image integration; the storage
 boundary is pinned in Named cookie sources §3 / DEC-34, and its locks follow
 DEC-35. The container runner's packaging, argument lists, and process
-lifetime are pinned in §3 / DEC-36. Neither preparation activates public
-download routes before the coordinated cutover.
+lifetime are pinned in §3 / DEC-36 and implemented in PR #49: the image ships
+`downloadinux-runner`, proven in the built image by the gate's smoke test.
+Neither preparation activates public download routes before the coordinated
+cutover.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
@@ -185,6 +187,7 @@ Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, and D2, browser/file registration and
 explicit refresh, are implemented and accepted. The next
 delivery task is D3, private execution jars and explicit user-agent operations;
-PR #45 adds its internal pinning/snapshot foundation, and the runner, image
-integration, public cleanup, and user-agent operations remain. Worker/job rules
+PR #45 adds its internal pinning/snapshot foundation and PR #49 the container
+runner and its image integration; public cleanup and user-agent operations
+remain. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

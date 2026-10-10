@@ -5,8 +5,9 @@ hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
 safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
-operations. PR #41 implements accepted browser/file registration and explicit refresh;
-private execution remains unimplemented.
+operations. PR #41 implements accepted browser/file registration and explicit refresh.
+PR #49 ships the container runner for private execution, tested in the image;
+no host route calls it yet.
 Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
@@ -952,8 +953,10 @@ registration with explicit replacement, and stored-origin refresh. PR #45 adds
 the settings-free reader of a pinned revision's exact bytes, and a
 standard-library library that allocates private snapshots under a held lease,
 tears them down, and cleans up abandoned ones, with credential-free Docker
-Linux evidence. No runner, image entry point, public `cookies cleanup`, or
-download uses them yet.
+Linux evidence. PR #49 ships §3's container runner ("Runner interface and
+process lifetime") as `downloadinux-runner` in the image, with in-image evidence
+from the gate's smoke test. No host route, public `cookies cleanup`, or download
+calls it yet.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
@@ -1279,7 +1282,9 @@ and cleanup would remove an active snapshot.
 #### Runner interface and process lifetime
 
 These details pin the container runner (DEC-36). The runner is shipped and
-tested before D4 activates it; until then no host route calls it.
+tested before D4 activates it; until then no host route calls it. Implemented
+in PR #49 (`src/downloadinux/cookie_runner.py`, `scripts/downloadinux-runner`,
+and the gate's smoke test).
 
 *Packaging.* The image copies the checkout's `src/downloadinux/` package to
 `/opt/downloadinux/downloadinux/`, owned by root and not writable by `dl`, and
@@ -1307,6 +1312,11 @@ and is refused if it contains CR/LF. `PRESET` is a canonical preset name
 (`video` or `gallery`); the host resolves aliases. `download` takes at least one
 URL; `batch` takes one queue path as the container sees it. Invalid, missing,
 or conflicting arguments are usage errors: exit 2 before any filesystem access.
+Options precede `PRESET` in any order, each value the next list element taken
+verbatim (a user-agent may be empty or begin with `-`), and every element after
+`PRESET` is an operand. A repeated or unknown option, the `--opt=value`
+spelling, an empty `--cookies` or `--state`, an empty URL or queue path, and an
+operand after `cleanup` are usage errors too.
 Errors use the host's `downloadinux: error: <message>` form on stderr, naming
 paths and never cookie contents.
 
@@ -1344,7 +1354,11 @@ background process from being stopped by a terminal read.
 N returns 128 plus N. Allocation, launch (an absent or non-executable
 downloader), and teardown failures exit 1 with the path-bearing error, after
 attempting teardown; a teardown failure exits 1 even when the child succeeded
-(DEC-27). On success `download` and `batch` print nothing of their own.
+(DEC-27). If the lifetime pipe cannot be read, the runner cannot confirm that
+its consumers have exited: it closes its own descriptors without removing the
+snapshot and exits 1 with an error that names the snapshot and says residue may
+remain (DEC-27); `cleanup` removes it once the lease is free. On success
+`download` and `batch` print nothing of their own.
 `cleanup` prints one JSON object, `{"removed": N, "skipped": M}`, and a newline
 on standard output and exits 0; its operation failures exit 1. `cleanup` never
 reads `/cookies` or migrates.

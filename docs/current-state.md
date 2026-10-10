@@ -249,6 +249,10 @@ setup, and doctor still use the Stage 1 shared jar and ignore the registry
 default. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds D3's internal foundation only: host submission pinning,
 the settings-free exact revision reader, and a standard-library library that
 allocates, tears down, and cleans up lease-held snapshots, with credential-free
-Docker Linux evidence. No runner, image entry point, public `cookies cleanup`, or
-download uses it; the rest of D3 and coordinated cutover (D4) remain pending.
+Docker Linux evidence. [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner on that library,
+`downloadinux-runner` in the image, which wraps a downloader or the batch loop
+in a private snapshot and is tested inside the built image by the gate's smoke
+test. No host route, public `cookies cleanup`, or download calls it yet; the
+rest of D3 (public cleanup and user-agent operations) and coordinated cutover
+(D4) remain pending.
 The dated review and Stage 1 outcomes above remain historical observations.

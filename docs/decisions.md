@@ -737,4 +737,7 @@ stopped by a terminal read, and the presets read no input.
 *Where:* [target design](target-design.md), *Named cookie sources* §3,
 "Runner interface and process lifetime". Added on 2026-10-10 for issue #34,
 after the snapshot library landed in PR #45; it specifies what DEC-31 left to
-the runner and changes no decided behavior.
+the runner and changes no decided behavior. *Amended 2026-10-10, in the review
+of PR #49, with the argument shapes the interface left implicit (option order,
+verbatim values, and the further usage errors) and the residue rule for an
+unreadable lifetime pipe, both as implemented there.*
