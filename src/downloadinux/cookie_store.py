@@ -37,6 +37,17 @@ def validate_revision(revision: str, path: Path) -> None:
         raise invalid(path, 'revision')
 
 
+def valid_timestamp(timestamp: object) -> bool:
+    """A real UTC instant in YYYY-MM-DDTHH:MM:SSZ form (§1)."""
+    if type(timestamp) is not str or not TIMESTAMP.fullmatch(timestamp):
+        return False
+    try:
+        datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ')
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class Source:
     kind: str
@@ -76,13 +87,8 @@ def source_record(record: object, path: Path) -> Source:
     if set(record) != fields:
         raise invalid(path, 'source fields')
     validate_revision(record['revision'], path)
-    timestamp = record['refreshed_at']
-    if type(timestamp) is not str or not TIMESTAMP.fullmatch(timestamp):
+    if not valid_timestamp(record['refreshed_at']):
         raise invalid(path, 'refresh timestamp')
-    try:
-        datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ')
-    except ValueError:
-        raise invalid(path, 'refresh timestamp') from None
     if kind == 'file':
         origin = record['path']
         if type(origin) is not str or not Path(origin).is_absolute() or '\x00' in origin:
@@ -113,7 +119,7 @@ def validate_record(record: object, path: Path) -> Snapshot:
     return Snapshot(default, MappingProxyType(sources))
 
 
-def _unique_object(pairs):
+def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
@@ -195,7 +201,7 @@ def read(root: Path) -> Snapshot | None:
     except OSError as error:
         raise DownloadinuxError(f'{path}: {error.strerror or "cannot read registry"}') from None
     try:
-        record = json.loads(data.decode('utf-8'), object_pairs_hook=_unique_object)
+        record = json.loads(data.decode('utf-8'), object_pairs_hook=unique_object)
     except Exception:
         raise invalid(path, 'registry JSON') from None
     snapshot = validate_record(record, path)

@@ -948,9 +948,10 @@ foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
 registration with explicit replacement, and stored-origin refresh. PR #45 adds
-§3's internal groundwork, unused by any public route: host submission pinning
-and the settings-free reader of a pinned revision's exact bytes. Private
-execution jars remain unimplemented.
+§3's internal groundwork, unused by any public route: host submission pinning,
+the settings-free reader of a pinned revision's exact bytes, and a
+standard-library library that allocates private snapshots under a held lease
+and tears them down. No runner, image entry point, or download uses them yet.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
