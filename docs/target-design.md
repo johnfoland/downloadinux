@@ -7,8 +7,9 @@ safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
 operations. PR #41 implements accepted browser/file registration and explicit refresh.
 PR #49 ships the container runner for private execution, tested in the image;
-PR #52 adds public `cookies cleanup` and `config user-agent VALUE`, completing
-Stage 2's operations. No download calls the runner until D4's cutover.
+PR #52 adds public `cookies cleanup` and `config user-agent VALUE`. `cookies
+setup`, the download selection and user-agent options, and the runner's use by
+downloads arrive together at D4's cutover.
 Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
 
