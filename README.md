@@ -9,7 +9,7 @@ wrap it, with its settings in a file of their own outside the checkout. That
 is Stage 1 of a refactor toward a portable application. Stage 2 now has a
 tested cookie parser, atomic source store, automatic legacy migration, and
 `cookies list`/`inspect`/`default` commands (P0003-C01/C02), plus browser
-capabilities and file/browser registration (P0003-C03-a/b). These source commands
+capabilities, file/browser registration, and explicit refresh (P0003-C03). These source commands
 are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
 shared jar. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
@@ -339,10 +339,10 @@ the old jar has live session cookies and may be world-readable: check with
 
 **These commands prepare Stage 2. Current downloads, `just cookies`, setup,
 and doctor still use `paths.cookies/cookies.txt` and ignore the registry default,
-including `anonymous`.** Browser/file registration is implemented; refresh, private
-execution jars, and anonymous download flags are still pending.
+including `anonymous`.** Browser/file registration and explicit refresh are
+implemented; private execution jars and anonymous download flags remain pending.
 
-The first source-store operation (list, inspect, default, or registration) reads the managed Stage 1 jar
+The first source-store operation (list, inspect, default, registration, or refresh) reads the managed Stage 1 jar
 under the host writer lock when no `sources.json` exists. A valid nonempty jar
 becomes source `legacy` and the source-store default in one atomic publication;
 a missing or valid header-only jar creates an empty anonymous store. The old
@@ -371,7 +371,8 @@ and immutable copies at `sources/<name>/<revision>.txt`. Managed directories
 are 0700; published material, registry, and lock are 0600. Selecting a default
 changes no revision or refresh timestamp. Existing registries are never remigrated
 or reset on damage. A later Stage 1 export can change the old jar, but the
-`legacy` inspection copy stays at its original revision during this transition.
+`legacy` inspection copy stays at its original revision until explicitly
+refreshed or replaced.
 List, inspect, default, and file import need no browser. None of the source
 commands needs Docker, token access, or a user-agent lookup.
 
@@ -400,6 +401,23 @@ successful prerequisite legacy migration remains committed. A source changed
 during extraction refuses with retry guidance; unrelated sources and the latest
 default survive. See [browser capabilities](#browser-capabilities-preparatory-stage-2)
 for selectors and keyring prerequisites.
+
+Refresh explicitly after exporting a new file or updating a browser session:
+
+```sh
+dlx cookies refresh imported
+dlx cookies refresh personal
+dlx cookies refresh legacy  # reread the retained Stage 1 managed jar
+```
+
+Refresh reuses the stored absolute file origin or browser/profile/keyring/container
+selectors. Even identical or valid empty output gets a fresh immutable revision
+and UTC timestamp; there is no automatic refresh. Missing/deleted origins and
+failed extraction/decryption/parsing/publication leave the last managed copy
+inspectable and preserve the default. Check the file/profile and keychain/keyring
+access, or explicitly replace the origin with `cookies import` / `add-browser`
+`--replace`. Refresh neither infers nor changes `downloads.user_agent` or settings.
+
 
 ---
 
@@ -674,7 +692,7 @@ and `dbus-send` on `PATH`. `BASICTEXT` only fits a browser using the basic passw
 store; it does not bypass another keyring's encryption. macOS Chromium needs
 keychain access. Netscape file import provides a browser-independent
 alternative through `dlx cookies import NAME FILE`. Registration is implemented;
-explicit refresh remains pending at this unit.
+refresh rereads the stored origin only when explicitly requested.
 [Adapter validation evidence](docs/browser-adapter.md) records the API and tests.
 Current downloads, export, setup, and doctor still use the Stage 1 jar.
 
@@ -702,6 +720,7 @@ dlx cookies import NAME FILE Register a managed file copy; --replace explicitly 
 dlx cookies add-browser NAME --browser BROWSER
                                Export/register Firefox, Chrome, or Chromium; optional
                                --profile, --keyring, --container, --replace
+dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null

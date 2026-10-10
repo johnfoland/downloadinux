@@ -232,3 +232,19 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 | The mount health check tests only that a directory exists | Resolved: `doctor` checks each mount with `mountpoint` and a create-and-remove probe as `dl`, skipping the probe when the path is not a mount (DEC-12, DEC-22) | target design *Health checks*; P0001-C05, P0001-C06 |
 | `doctor`'s "logged in" wording overstates a cookie check | Resolved: cookie checks report a session cookie as *present*, and neither README claims a login is valid; Stage 2's inspection adds expiry, still without claiming validity | target design *Health checks*; README.md *Step 3*; P0001-C05, P0001-C06 |
 | No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` and every push to it, with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
+
+
+## Since this review: Stage 2 preparation
+
+P0003-C01/C02 added the strict parser/summaries, atomic source registry and
+immutable revisions, locked legacy migration, and public list/inspect/default
+operations. P0003-C03 adds Firefox/Chrome/Chromium host extraction on macOS/Linux,
+selector capabilities, browser-independent Netscape imports, explicit replacement,
+and stored-origin refresh. The host adapter is locked to yt-dlp 2026.08.19 and
+uses no URL/site probe; failed extraction/parsing/publication preserves the last
+committed source/default. Registration and refresh never infer a user-agent.
+
+These commands are preparation only: foreground/batch downloads, `just cookies`,
+setup, and doctor still use the Stage 1 shared jar and ignore the registry
+default. Private execution jars (D3) and coordinated cutover (D4) remain pending.
+The dated review and Stage 1 outcomes above remain historical observations.

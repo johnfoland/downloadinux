@@ -159,6 +159,12 @@ from the still-shared Stage 1 execution path.
 
 ### D2 — Browser and file registration with explicit refresh
 
+Implemented in P0003-C03, pending planner acceptance: locked direct adapter and
+selector report, managed file/browser registration with explicit replacement,
+and stored-origin refresh. [The chunk report](../chunks/P0003-C03.md#report)
+maps the acceptance cases to tests and locked-install/gate evidence. Execution
+jars and the coordinated D4 cutover remain pending.
+
 **Build:** Add `cookies browsers`, `add-browser`, `import`, and `refresh`, the
 injectable host yt-dlp adapter, selector validation, no-clobber/replacement
 behavior, and atomic origin/revision/default preservation per *Registration,
@@ -332,6 +338,6 @@ unstarted. The next planner commit fills C02's squash SHA after PR #40 merges.
 
 ## 8. Closeout
 
-Not complete or abandoned. D1 is accepted through C01/C02; D2–D5 still
-require implementation and accepted evidence. No
+Not complete or abandoned. D1 is accepted through C01/C02; D2 is implemented
+in C03 pending accepted evidence. D3–D5 still require implementation and review. No
 release effect has been recorded; the repository has no release system.

@@ -13,7 +13,8 @@ are in the [target design](target-design.md). Stage 2 is settled for project
 [P0003](projects/P0003-named-cookie-sources.md). P0003-C01 implements its internal
 parser and atomic source-store foundation; P0003-C02 implements locked legacy
 migration and host-only list/inspect/default commands, finishing D1's build.
-Registration, refresh, and private execution remain unimplemented; downloads,
+P0003-C03 implements browser/file registration and explicit refresh (D2).
+Private execution remains unimplemented; downloads,
 export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
@@ -53,8 +54,9 @@ and atomic host publication foundation. P0003-C02 implements automatic locked
 legacy migration and public `cookies list`, `inspect`, and `default` operations.
 These commands prepare the source workflow; current downloads/export/setup/doctor
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
-registration is implemented in P0003-C03-a/b, including direct browser
-extraction and the support report. Refresh and snapshot execution remain pending.
+registration/explicit refresh are implemented in P0003-C03 (D2), including direct
+browser extraction and the support report. Snapshot execution and D4 cutover
+remain pending.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
@@ -176,5 +178,6 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 
 Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, is implemented and accepted. The next
-delivery task is D2, browser/file registration and explicit refresh. Worker/job rules
+delivery task is D3, private execution jars and explicit user-agent operations,
+after accepting D2 registration/refresh evidence from P0003-C03. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

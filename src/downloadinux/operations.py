@@ -38,6 +38,33 @@ def _browser_export(selector: cookie_selectors.Selector, exporter=None) -> cooki
     return exporter(selector)
 
 
+def _cookie_origin_material(origin: dict, exporter=None) -> cookiejar.Material:
+    """Registration and explicit refresh share the same origin boundary (§2)."""
+    if origin['kind'] == 'file':
+        try:
+            return cookiejar.read(Path(origin['path']))
+        except DownloadinuxError as error:
+            raise DownloadinuxError(f'{error}; check the origin file or replace this source with cookies import NAME FILE --replace') from None
+    try:
+        selector = cookie_selectors.normalize(origin['browser'], origin['profile'],
+                                               origin['keyring'], origin['container'])
+    except ConfigError as error:
+        # Keep §2's exit-2 selector contract even when refreshing a stored
+        # origin on a different platform; extraction failures still exit 1.
+        raise ConfigError(f'{error}; replace the origin with cookies add-browser NAME --browser BROWSER --replace, or use Netscape import') from None
+    return _browser_export(selector, exporter)
+
+
+def _publish_cookie_report(root: Path, name: str, material: cookiejar.Material,
+                           origin: dict, expected: cookie_store.Source | None,
+                           now: float | None) -> dict:
+    # Return committed metadata without fallible I/O after publication or
+    # letting a subsequent refresh substitute its revision in our summary.
+    snapshot = cookie_writer.publish_snapshot(root, name, material, origin, expected=expected)
+    return dict(source=cookie_store.source_metadata(snapshot, name),
+                **cookiejar.summary(material, now=now))
+
+
 def _register_cookie_source(name: str, origin: dict, read_material, *, replace: bool,
                             config: str | None, overrides: Sequence[str], host: Host,
                             now: float | None) -> dict:
@@ -49,11 +76,9 @@ def _register_cookie_source(name: str, origin: dict, read_material, *, replace: 
         if expected is not None and not replace:
             raise DownloadinuxError(f'{root / "sources.json"}: already registered; use --replace to replace its origin/material')
         material = read_material()
-        # Return committed metadata without fallible I/O after publication or
-        # letting a subsequent refresh substitute its revision in our summary.
-        report_snapshot = cookie_writer.publish_snapshot(root, name, material, origin, expected=expected)
-        return dict(source=cookie_store.source_metadata(report_snapshot, name),
-                    **cookiejar.summary(material, now=now))
+        return _publish_cookie_report(root, name, material, origin, expected, now)
+    except ConfigError:
+        raise
     except DownloadinuxError as error:
         raise DownloadinuxError(f'source {name}: {error}') from None
 
@@ -68,9 +93,10 @@ def import_cookies(name: str, file: str, *, replace: bool = False,
     try:
         path = settings.user_path(file)
     except OSError as error:
-        raise DownloadinuxError(f'source {name}: {file}: {error.strerror or "cannot normalize file path"}') from None
-    return _register_cookie_source(name, dict(kind='file', path=str(path)),
-                                   lambda: cookiejar.read(path), replace=replace,
+        raise DownloadinuxError(f'source {name}: {file}: {error.strerror or "cannot normalize file path"}; check the file path') from None
+    origin = dict(kind='file', path=str(path))
+    return _register_cookie_source(name, origin,
+                                   lambda: _cookie_origin_material(origin), replace=replace,
                                    config=config, overrides=overrides, host=host, now=now)
 
 
@@ -82,9 +108,31 @@ def add_browser_cookies(name: str, browser: str, *, profile: str | None = None,
     """Export before publishing; registration never changes the default (§2)."""
     _cookie_name(name)
     selector = cookie_selectors.normalize(browser, profile, keyring, container)
-    return _register_cookie_source(name, selector.origin(),
-                                   lambda: _browser_export(selector, exporter), replace=replace,
+    origin = selector.origin()
+    return _register_cookie_source(name, origin,
+                                   lambda: _cookie_origin_material(origin, exporter), replace=replace,
                                    config=config, overrides=overrides, host=host, now=now)
+
+
+def refresh_cookies(name: str, config: str | None = None,
+                     overrides: Sequence[str] = (), host: Host = Host(),
+                     *, exporter=None, now: float | None = None) -> dict:
+    """Reread the stored origin; preserve default and reject stale refresh (§2)."""
+    _cookie_name(name)
+    root = settings.load(config, overrides, host)['paths.cookies']
+    try:
+        snapshot = cookie_writer.ensure_store(root)
+        if name not in snapshot.sources:
+            raise DownloadinuxError(f'{root / "sources.json"}: not registered; choose a listed source')
+        expected = snapshot.sources[name]
+        origin = {key: value for key, value in expected.record().items()
+                  if key not in ('revision', 'refreshed_at')}
+        material = _cookie_origin_material(origin, exporter)
+        return _publish_cookie_report(root, name, material, origin, expected, now)
+    except ConfigError:
+        raise
+    except DownloadinuxError as error:
+        raise DownloadinuxError(f'source {name}: {error}') from None
 
 
 def list_cookies(config: str | None = None, overrides: Sequence[str] = (),

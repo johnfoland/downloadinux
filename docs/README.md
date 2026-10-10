@@ -7,8 +7,9 @@ checkout, and the `just` recipes as wrappers over it. Stage 2, named cookie
 sources, is settled in active project [P0003](projects/P0003-named-cookie-sources.md)
 with its internal parser and atomic source-store foundation implemented in
 P0003-C01 and locked legacy migration plus public list/inspect/default operations
-implemented in P0003-C02. Registration, refresh, and private execution jars
-remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
+implemented in P0003-C02. P0003-C03 implements direct host browser extraction,
+support reporting, file/browser registration/replacement, and explicit refresh.
+Private execution jars and D4 cutover remain pending; downloads/export/setup/doctor still use the Stage 1 shared jar
 and ignore the preparatory registry default. Stages 3–4 (a persistent worker in place of tmux
 and the Python + Textual TUI) remain proposals; batch runs still use tmux.
 
