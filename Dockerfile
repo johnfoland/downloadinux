@@ -83,6 +83,15 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 COPY --chown=1000:1000 zsh/ /home/dl/.zsh-custom/
 
 USER root
+# --- Cookie runner (Named cookie sources §3, "Packaging"; DEC-36) -------------
+# The package, root-owned and read-only to dl, for the system interpreter
+# only: the runner imports nothing from /opt/venv.
+COPY src/downloadinux/ /opt/downloadinux/downloadinux/
+COPY scripts/downloadinux-runner /usr/local/bin/downloadinux-runner
+RUN chmod -R go-w /opt/downloadinux \
+    && chmod 755 /usr/local/bin/downloadinux-runner \
+    && /usr/bin/python3 -m compileall -q /opt/downloadinux
+
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/vpn.sh        /usr/local/bin/vpn
 # `exec` without -u lands as root; make that obvious instead of silently wrong.

@@ -12,8 +12,10 @@ tested cookie parser, atomic source store, automatic legacy migration, and
 capabilities, file/browser registration, and explicit refresh ([PR #41](https://github.com/johnfoland/downloadinux/pull/41)). These source commands
 are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
 shared jar. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds internal groundwork for private per-download
-jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup)
-that no command uses yet. The [planning documents](docs/README.md) describe the remaining
+jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup),
+and [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner, `downloadinux-runner`, that wraps one
+download or batch loop in such a jar, tested inside the built image by the
+gate's smoke test. No host command calls either yet. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 
@@ -830,12 +832,14 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── config-value.sh           # recipes read config show --json
+│   ├── downloadinux-runner       # the image's cookie runner entry point (not yet called)
 │   ├── setup.sh                  # `just setup`'s settings and token steps
 │   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
 │   ├── cookie_browser.py         # lazy direct host browser extraction, no site probe
+│   ├── cookie_runner.py          # container runner: private jar around one download or batch
 │   ├── cookie_selectors.py       # supported capabilities and selector normalization
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
@@ -843,6 +847,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
+│   └── fixtures/runner-smoke/    # stub downloaders and the in-image runner check
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # old jar, retained only for migration
 ```
