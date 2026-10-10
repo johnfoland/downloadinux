@@ -2,6 +2,8 @@
 
 The root is supplied explicitly. Reading never migrates, creates directories,
 loads settings, or changes state; immutable revisions outlive snapshots.
+``read_pinned`` is the startup path for a submitted pair: it reads one exact
+retained revision without the registry (Named cookie sources §3, DEC-34).
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -126,7 +128,31 @@ def revision_path(root: Path, name: str, revision: str) -> Path:
     return root / 'sources' / name / f'{revision}.txt'
 
 
-def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
+@dataclass(frozen=True)
+class Pinned:
+    """A submitted source identity: stable IDs only, never cookie contents (DEC-31)."""
+    source: str
+    revision: str
+
+
+@dataclass(frozen=True)
+class Anonymous:
+    """An explicit anonymous result: no source, revision, or snapshot (§3)."""
+
+
+ANONYMOUS = Anonymous()
+
+
+@dataclass(frozen=True, repr=False)
+class Revision:
+    """Exact bytes of one retained revision, validated as read (DEC-34)."""
+    path: Path
+    data: bytes
+    material: cookiejar.Material
+
+
+def read_revision(root: Path, name: str, revision: str) -> Revision:
+    """Read and validate the bytes of one safely opened regular file."""
     path = revision_path(root, name, revision)
     try:
         # A configured root can be a symlink; managed children must not be.
@@ -140,7 +166,23 @@ def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
             data = handle.read()
     except OSError as error:
         raise DownloadinuxError(f'{path}: {error.strerror or "cannot read managed revision"}') from None
-    return cookiejar.parse(data, path)
+    return Revision(path, data, cookiejar.parse(data, path))
+
+
+def load_revision(root: Path, name: str, revision: str) -> cookiejar.Material:
+    return read_revision(root, name, revision).material
+
+
+def read_pinned(root: Path, pinned: Pinned) -> Revision:
+    """Startup read of a submitted pair (§3, DEC-31, DEC-34).
+
+    Only the explicit root and pinned IDs are used: no registry, default,
+    migration, lock, or host settings. A retained revision stays usable after
+    replacement or a damaged registry; a missing or invalid one fails.
+    """
+    if type(pinned) is not Pinned:
+        raise invalid(root, 'pinned source')
+    return read_revision(root, pinned.source, pinned.revision)
 
 
 def read(root: Path) -> Snapshot | None:

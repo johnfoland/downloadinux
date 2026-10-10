@@ -947,7 +947,9 @@ Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/do
 foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
-registration with explicit replacement, and stored-origin refresh. Private
+registration with explicit replacement, and stored-origin refresh. PR #45 adds
+§3's internal groundwork, unused by any public route: host submission pinning
+and the settings-free reader of a pinned revision's exact bytes. Private
 execution jars remain unimplemented.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
