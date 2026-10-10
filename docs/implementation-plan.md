@@ -13,7 +13,7 @@ are in the [target design](target-design.md). Stage 2 is settled for project
 P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34)). P0003-C01 implements its internal
 parser and atomic source-store foundation; P0003-C02 implements locked legacy
 migration and host-only list/inspect/default commands, finishing D1's build.
-[PR #41](https://github.com/johnfoland/downloadinux/pull/41) adds browser/file registration and explicit refresh (D2), pending acceptance.
+[PR #41](https://github.com/johnfoland/downloadinux/pull/41) implements accepted browser/file registration and explicit refresh (D2).
 Private execution remains unimplemented; downloads,
 export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
 
@@ -54,7 +54,7 @@ and atomic host publication foundation. P0003-C02 implements automatic locked
 legacy migration and public `cookies list`, `inspect`, and `default` operations.
 These commands prepare the source workflow; current downloads/export/setup/doctor
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
-registration/explicit refresh are added in PR #41 (D2), pending acceptance, including direct
+registration/explicit refresh are implemented and accepted in PR #41 (D2), including direct
 browser extraction and the support report. Snapshot execution and D4 cutover
 remain pending.
 
@@ -177,7 +177,8 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
 Configuration and cookie-source contracts are settled. P0003 D1, the source
-store, parser, and legacy migration, is implemented and accepted. The next
+store, parser, and legacy migration, and D2, browser/file registration and
+explicit refresh, are implemented and accepted. The next
 delivery task is D3, private execution jars and explicit user-agent operations,
-after accepting D2 registration/refresh evidence from PR #41. Worker/job rules
+following the accepted evidence from PR #41. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

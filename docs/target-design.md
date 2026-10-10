@@ -5,7 +5,7 @@ hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
 safe summaries, immutable registry reader, and locked atomic host writer;
 P0003-C02 implements locked legacy migration and public list/inspect/default
-operations. PR #41 adds browser/file registration and explicit refresh, pending acceptance;
+operations. PR #41 implements accepted browser/file registration and explicit refresh;
 private execution remains unimplemented.
 Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
 Stages 3–4 remain proposed.
@@ -945,9 +945,9 @@ Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/do
 (DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
 implements §5's locked migration and §2's public list/inspect/default operations.
-PR #41 adds direct browser extraction, the support report, browser/file
+PR #41 implements accepted direct browser extraction, the support report, browser/file
 registration with explicit replacement, and stored-origin refresh. Private
-execution jars remain unimplemented; registration/refresh acceptance is pending.
+execution jars remain unimplemented.
 The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
