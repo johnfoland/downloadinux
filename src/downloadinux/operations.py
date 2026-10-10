@@ -58,17 +58,18 @@ def _cookie_origin_material(origin: dict, exporter=None) -> cookiejar.Material:
 
 def _publish_cookie_report(root: Path, name: str, material: cookiejar.Material,
                            origin: dict, expected: cookie_store.Source | None,
-                           now: float | None) -> dict:
+                           now: float | None, *, select: bool = False) -> dict:
     # Return committed metadata without fallible I/O after publication or
     # letting a subsequent refresh substitute its revision in our summary.
-    snapshot = cookie_writer.publish_snapshot(root, name, material, origin, expected=expected)
+    snapshot = cookie_writer.publish_snapshot(root, name, material, origin,
+                                              expected=expected, select=select)
     return dict(source=cookie_store.source_metadata(snapshot, name),
                 **cookiejar.summary(material, now=now))
 
 
 def _register_cookie_source(name: str, origin: dict, read_material, *, replace: bool,
                             config: str | None, overrides: Sequence[str], host: Host,
-                            now: float | None) -> dict:
+                            now: float | None, select: bool = False) -> dict:
     """Capture before extraction; compare under the real writer lock (§1–§2)."""
     root = settings.load(config, overrides, host)['paths.cookies']
     try:
@@ -77,7 +78,7 @@ def _register_cookie_source(name: str, origin: dict, read_material, *, replace: 
         if expected is not None and not replace:
             raise DownloadinuxError(f'{root / "sources.json"}: already registered; use --replace to replace its origin/material')
         material = read_material()
-        return _publish_cookie_report(root, name, material, origin, expected, now)
+        return _publish_cookie_report(root, name, material, origin, expected, now, select=select)
     except ConfigError:
         raise
     except DownloadinuxError as error:
@@ -113,6 +114,27 @@ def add_browser_cookies(name: str, browser: str, *, profile: str | None = None,
     return _register_cookie_source(name, origin,
                                    lambda: _cookie_origin_material(origin, exporter), replace=replace,
                                    config=config, overrides=overrides, host=host, now=now)
+
+
+FIREFOX_SOURCE = 'firefox'
+
+
+def firefox_cookies(profile: str | None = None, config: str | None = None,
+                    overrides: Sequence[str] = (), host: Host = Host(),
+                    *, exporter=None, now: float | None = None) -> dict:
+    """The account switch `just cookies` calls from the cutover: create or
+    replace the source firefox, whatever its kind, and select it in the same
+    publication (§5, DEC-38).
+
+    No keyring or container, so the export covers all Firefox containers.
+    Errors and the summary are add-browser's; no site or user-agent lookup.
+    """
+    selector = cookie_selectors.normalize('firefox', profile, None, None)
+    origin = selector.origin()
+    return _register_cookie_source(FIREFOX_SOURCE, origin,
+                                   lambda: _cookie_origin_material(origin, exporter),
+                                   replace=True, select=True, config=config,
+                                   overrides=overrides, host=host, now=now)
 
 
 def refresh_cookies(name: str, config: str | None = None,

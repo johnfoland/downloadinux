@@ -67,6 +67,13 @@ Warnings, partial exports, parser/publication errors, and concurrent changes to
 the original source fail safely. If legacy migration succeeded first, that
 committed baseline remains. Clean empty files/exports are valid.
 
+`dlx cookies firefox [PROFILE]` creates or replaces the source `firefox`, of
+any kind, from a Firefox profile export (all containers) and selects it as the
+default in the same publication; a failure changes nothing, default included.
+It is the account switch `just cookies` will call from the download cutover.
+Until then it is preparatory, like the other `cookies` commands, and `just
+cookies` still writes the Stage 1 jar.
+
 The browser adapter uses locked yt-dlp 2026.08.19 directly without a URL/probe.
 Firefox accepts containers (`none` = outside, omitted = all); Chrome/Chromium
 accept Linux keyrings only. Profile names stay names; path-like/tilde profiles

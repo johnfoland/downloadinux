@@ -95,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     cookie_browser.add_argument('--container', metavar='CONTAINER')
     cookie_browser.add_argument('--replace', action='store_true', help='explicitly replace an existing source')
     cookie_browser.set_defaults(handler=_cookies_add_browser)
+    cookie_firefox = cookie_commands.add_parser(
+        'firefox', help='create or replace the source firefox from a Firefox profile and make it the default')
+    _add_global_options(cookie_firefox, 2)
+    cookie_firefox.add_argument('profile', nargs='?', metavar='PROFILE',
+                                help='Firefox profile name or path (default: Firefox default discovery)')
+    cookie_firefox.set_defaults(handler=_cookies_firefox)
     cookie_refresh = cookie_commands.add_parser('refresh', help='reread a stored origin and publish a fresh immutable revision')
     _add_global_options(cookie_refresh, 2)
     cookie_refresh.add_argument('name', metavar='NAME', type=_source_name)
@@ -336,6 +342,12 @@ def _cookies_add_browser(args: argparse.Namespace, options: GlobalOptions) -> in
     report = operations.add_browser_cookies(args.name, args.browser, profile=args.profile,
                                             keyring=args.keyring, container=args.container,
                                             replace=args.replace, config=options.config, overrides=options.overrides)
+    print(render_cookie_inspection(report))
+    return 0
+
+
+def _cookies_firefox(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.firefox_cookies(args.profile, options.config, options.overrides)
     print(render_cookie_inspection(report))
     return 0
 

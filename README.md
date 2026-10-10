@@ -423,6 +423,22 @@ during extraction refuses with retry guidance; unrelated sources and the latest
 default survive. See [browser capabilities](#browser-capabilities-preparatory-stage-2)
 for selectors and keyring prerequisites.
 
+`dlx cookies firefox [PROFILE]` is the Firefox account switch that `just
+cookies` will call from the download cutover; until then it is preparatory, and
+`just cookies` still writes the Stage 1 jar. It is `add-browser` for the fixed
+name `firefox`: it creates or replaces that source, whatever its kind, with an
+export of the Firefox profile (default discovery with no `PROFILE`, all
+containers, no `--replace` needed), and makes it the default in the same
+atomic publication. It prints the same summary as `add-browser`; a failed
+export or parse, or a `firefox` record changed meanwhile, exits 1 with
+`source firefox: …` and leaves the store, default included, unchanged. It
+never reads Chrome or changes settings or the user-agent.
+
+```sh
+dlx cookies firefox                          # Firefox's default profile
+dlx cookies firefox widfsx0p.default-release
+```
+
 Refresh explicitly after exporting a new file or updating a browser session:
 
 ```sh
@@ -769,6 +785,8 @@ dlx cookies import NAME FILE Register a managed file copy; --replace explicitly 
 dlx cookies add-browser NAME --browser BROWSER
                                Export/register Firefox, Chrome, or Chromium; optional
                                --profile, --keyring, --container, --replace
+dlx cookies firefox [PROFILE] Create or replace the source firefox from a Firefox profile
+                               and make it the default in one publication (preparatory)
 dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
