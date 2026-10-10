@@ -92,6 +92,45 @@ def test_batch_lists_add_quiet_only_to_gallery():
     assert presets.argv("gallery", AGENT, batch=True) == [GALLERY[0], "-q", *GALLERY[1:]]
 
 
+# Named cookie sources §3, "Child argument lists" (DEC-6, DEC-20, DEC-36): the
+# runner names its private jar, or passes no cookie argument when anonymous.
+JAR = "/state/cookie-invocations/0123456789abcdef0123456789abcdef/cookies.txt"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_default_cookie_argument_is_the_stage1_jar(batch):
+    for name in ("video", "gallery"):
+        assert presets.argv(name, AGENT, batch=batch) == presets.argv(
+            name, AGENT, batch=batch, cookies="/cookies/cookies.txt")
+    assert presets.COOKIES == "/cookies/cookies.txt"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_named_jar_replaces_only_the_cookie_path(batch):
+    assert presets.argv("video", AGENT, batch=batch, cookies=JAR) == [
+        item.replace("/cookies/cookies.txt", JAR) for item in VIDEO
+    ]
+    quiet = ["-q"] if batch else []
+    assert presets.argv("gallery", AGENT, batch=batch, cookies=JAR) == [
+        GALLERY[0], *quiet, *(item.replace("/cookies/cookies.txt", JAR) for item in GALLERY[1:])
+    ]
+    # Gallery cookies stay Instagram-only (DEC-6).
+    gallery = presets.argv("gallery", AGENT, batch=batch, cookies=JAR)
+    assert [item for item in gallery if JAR in item] == [f"extractor.instagram.cookies={JAR}"]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_anonymous_lists_have_no_cookie_argument(batch):
+    video = presets.argv("video", AGENT, batch=batch, cookies=None)
+    assert video == [item for item in VIDEO if item not in ("--cookies", "/cookies/cookies.txt")]
+    gallery = presets.argv("gallery", AGENT, batch=batch, cookies=None)
+    quiet = ["-q"] if batch else []
+    assert gallery == [GALLERY[0], *quiet, *GALLERY[1:-2]]
+    assert GALLERY[-2:] == ["-o", "extractor.instagram.cookies=/cookies/cookies.txt"]
+    for listed in (video, gallery):
+        assert not [item for item in listed if "cookie" in item.lower()]
+
+
 def test_aliases_and_the_batch_table():
     assert {word: presets.resolve(word).name for word in presets.ALIASES} == {
         "video": "video", "v": "video", "gallery": "gallery", "gal": "gallery", "g": "gallery",

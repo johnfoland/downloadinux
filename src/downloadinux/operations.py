@@ -240,12 +240,9 @@ def download(
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
-# `zsh -f` reads none of dl's startup files: only the loop's own file
-# (Host application, "Downloads, pinned for P0001-C04"; DEC-13).
-BATCH_SCRIPT = (
-    'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"; '
-    'echo; echo "[done — press a key]"; read -k1'
-)
+# The shared loop, then the pause the runner leaves to its caller (Host
+# application, "Downloads, pinned for P0001-C04"; DEC-13, DEC-36).
+BATCH_SCRIPT = presets.LOOP + '; echo; echo "[done — press a key]"; read -k1'
 
 
 @dataclass(frozen=True)

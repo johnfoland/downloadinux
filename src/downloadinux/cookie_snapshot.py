@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
-from typing import Callable
+from typing import Callable, TypeVar
 
 from . import cookie_store as store
 from .errors import DownloadinuxError
@@ -34,6 +34,7 @@ FIELDS = ('version', 'invocation_id', 'source', 'revision', 'created_at', 'user_
 ATTEMPTS = 8
 METADATA_LIMIT = 64 * 1024
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+T = TypeVar('T')
 
 
 def _failure(path: Path, error: OSError, suffix: str = '') -> DownloadinuxError:
@@ -244,11 +245,9 @@ class Invocation:
         if self._closed:
             return
         self._closed = True
-        try:
-            _remove_owned(self._root_fd, self.path.parent, self._name, self._dir_fd,
-                          self._identity, self._lease_identity)
-        finally:
-            _close_all(self.path, (self.lease_fd, self._dir_fd, self._root_fd))
+        _release(self.path, (self.lease_fd, self._dir_fd, self._root_fd),
+                 lambda: _remove_owned(self._root_fd, self.path.parent, self._name, self._dir_fd,
+                                       self._identity, self._lease_identity))
 
 
 def _close_all(path: Path, fds) -> None:
@@ -262,6 +261,29 @@ def _close_all(path: Path, fds) -> None:
             failure = failure or error
     if failure is not None:
         raise _failure(path, failure)
+
+
+def _release(path: Path, fds, action: Callable[[], T]) -> T:
+    """Run ``action``, then close every descriptor in ``fds`` (read after it).
+
+    A failure of ``action`` wins over a close failure: it names the entry and
+    any residue left behind (DEC-27, issue #47). The close failure stays
+    reachable as its cause. A close failure alone is reported as before.
+    """
+    failure = None
+    try:
+        result = action()
+    except BaseException as error:
+        failure = error
+    try:
+        _close_all(path, fds)
+    except DownloadinuxError as closing:
+        if failure is None:
+            raise
+        raise failure from closing
+    if failure is not None:
+        raise failure
+    return result
 
 
 def _remove_owned(root_fd: int, directory: Path, name: str, dir_fd: int | None,
@@ -371,10 +393,8 @@ def _publish(root_fd: int, directory: Path, data: bytes, pinned: store.Pinned,
             error = DownloadinuxError(f'{path}: lease replaced during allocation')
         # Failure cleanup reports residue it cannot prove or remove; that
         # report takes precedence over the original failure (DEC-27).
-        try:
-            _remove_owned(root_fd, directory, name, dir_fd, identity, lease_identity)
-        finally:
-            _close_all(path, (lease_fd, dir_fd))
+        _release(path, (lease_fd, dir_fd),
+                 lambda: _remove_owned(root_fd, directory, name, dir_fd, identity, lease_identity))
         if isinstance(error, OSError):
             raise _failure(path, error) from None
         if isinstance(error, DownloadinuxError):
@@ -466,8 +486,16 @@ def _clean(root_fd: int, directory: Path, name: str, invocation_id: str, staging
     empty, regular lease. Cookie contents are never read: downloader
     writeback may have changed them.
     """
+    held = []
+    # The lease is released only after removal has finished.
+    return _release(directory / name, held,
+                    lambda: _inspect_and_remove(root_fd, directory, name, invocation_id, staging, held))
+
+
+def _inspect_and_remove(root_fd: int, directory: Path, name: str, invocation_id: str, staging: bool,
+                        held: list) -> bool:
+    """``_clean``'s body; ``held`` gathers its descriptors for the caller to close."""
     path = directory / name
-    dir_fd = lease_fd = None
     try:
         try:
             dir_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=root_fd)
@@ -477,6 +505,7 @@ def _clean(root_fd: int, directory: Path, name: str, invocation_id: str, staging
             if error.errno in (errno.ELOOP, errno.ENOTDIR):
                 return False
             raise
+        held.append(dir_fd)
         identity = _identity(os.fstat(dir_fd))
         children = set(os.listdir(dir_fd))
         if LEASE not in children or not children <= set(FILES) or (not staging and children != set(FILES)):
@@ -492,6 +521,7 @@ def _clean(root_fd: int, directory: Path, name: str, invocation_id: str, staging
             if error.errno == errno.ELOOP:
                 return False
             raise
+        held.insert(0, lease_fd)
         lease = os.fstat(lease_fd)
         if not stat.S_ISREG(lease.st_mode) or lease.st_size != 0:
             return False
@@ -512,9 +542,6 @@ def _clean(root_fd: int, directory: Path, name: str, invocation_id: str, staging
         return False
     except OSError as error:
         raise _failure(path, error) from None
-    finally:
-        # The lease is released only after removal has finished.
-        _close_all(path, (lease_fd, dir_fd))
 
 
 def _valid_metadata(dir_fd: int, path: Path, invocation_id: str) -> bool:

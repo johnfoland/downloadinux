@@ -484,6 +484,64 @@ def test_teardown_close_failure_is_reported_after_removal(tmp_path, monkeypatch)
     assert_closed(invocation)
 
 
+def test_teardown_residue_report_survives_a_close_failure(tmp_path, monkeypatch):
+    # Issue #47: removal and close both fail; the residue report wins (DEC-27).
+    cookies, state = roots(tmp_path)
+    invocation = allocate(cookies, state, id_factory=ids(ID))
+    fds = open_fds()
+    faults = Faults(monkeypatch)
+    faults.names[invocation.lease_fd] = 'lease'
+    faults.fail('unlink', 'cookies.txt')
+    faults.fail('close', 'lease')
+    with pytest.raises(DownloadinuxError) as error:
+        invocation.close()
+    monkeypatch.undo()
+    eio = os.strerror(errno.EIO)
+    assert str(error.value) == f'{invocation.path}/cookies.txt: {eio}{RESIDUE}'
+    assert error.value.exit_status == 1
+    assert isinstance(error.value.__cause__, DownloadinuxError)
+    assert str(error.value.__cause__) == f'{invocation.path}: {eio}'
+    assert sorted(os.listdir(invocation.path)) == ['cookies.txt', 'lease', 'metadata.json']
+    assert_closed(invocation)
+    assert open_fds() == fds - 3
+    assert not lease_busy(invocation.path / 'lease')
+
+
+def test_failed_allocation_residue_report_survives_a_close_failure(tmp_path, monkeypatch):
+    cookies, state = roots(tmp_path)
+    directory = state / cs.DIRECTORY
+    fds = open_fds()
+    faults = Faults(monkeypatch)
+    faults.fail('fsync', 'metadata.json')
+    faults.fail('unlink', 'metadata.json')
+    # The first lease close is the creating open's (DEC-35); fail the held one.
+    faults.fail('close', 'lease', skip=1)
+    with pytest.raises(DownloadinuxError) as error:
+        allocate(cookies, state, id_factory=ids(ID))
+    monkeypatch.undo()
+    eio = os.strerror(errno.EIO)
+    assert str(error.value) == f'{directory}/{STAGING}/metadata.json: {eio}{RESIDUE}'
+    assert str(error.value.__cause__) == f'{directory}/{ID}: {eio}'
+    assert listing(directory) == {'.lock': None, STAGING: ['lease', 'metadata.json']}
+    assert open_fds() == fds
+    assert not lease_busy(directory / STAGING / 'lease')
+
+
+def test_failed_allocation_close_failure_alone_is_reported(tmp_path, monkeypatch):
+    cookies, state = roots(tmp_path)
+    directory = state / cs.DIRECTORY
+    fds = open_fds()
+    faults = Faults(monkeypatch)
+    faults.fail('fsync', 'metadata.json')
+    faults.fail('close', 'lease', skip=1)
+    with pytest.raises(DownloadinuxError) as error:
+        allocate(cookies, state, id_factory=ids(ID))
+    monkeypatch.undo()
+    assert str(error.value) == f'{directory}/{ID}: {os.strerror(errno.EIO)}'
+    assert listing(directory) == {'.lock': None}
+    assert open_fds() == fds
+
+
 def test_teardown_refuses_foreign_replacement(tmp_path):
     cookies, state = roots(tmp_path)
     invocation = allocate(cookies, state)

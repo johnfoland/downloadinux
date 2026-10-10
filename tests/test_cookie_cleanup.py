@@ -350,6 +350,37 @@ def test_genuine_failures_stop_cleanup_and_preserve_residue(tmp_path, monkeypatc
     assert not lease_busy(directory / ID / 'lease') if (directory / ID / 'lease').exists() else True
 
 
+@pytest.mark.parametrize('op,pattern,where,residue', [
+    ('unlink', 'cookies.txt', f'/{ID}/cookies.txt', RESIDUE),
+    ('rmdir', ID, f'/{ID}', RESIDUE),
+    (None, None, f'/{ID}', ''),
+])
+def test_close_failure_keeps_the_residue_report(tmp_path, monkeypatch, op, pattern, where, residue):
+    # Issue #47: with removal and close both failing, the residue report wins
+    # (DEC-27); a close failure alone is still reported as one.
+    cookies, state = roots(tmp_path)
+    directory = state / cs.DIRECTORY
+    abandoned(cookies, state)
+    fds = len(os.listdir('/dev/fd'))
+    faults = Faults(monkeypatch)
+    if op:
+        faults.fail(op, pattern)
+    faults.fail('close', 'lease')
+    with pytest.raises(DownloadinuxError) as error:
+        cs.cleanup(state)
+    monkeypatch.undo()
+    eio = os.strerror(errno.EIO)
+    assert str(error.value) == f'{directory}{where}: {eio}{residue}'
+    assert error.value.exit_status == 1
+    assert len(os.listdir('/dev/fd')) == fds
+    if op:
+        assert str(error.value.__cause__) == f'{directory / ID}: {eio}'
+        assert ID in os.listdir(directory)
+    else:
+        assert error.value.__cause__ is None
+        assert listing(directory) == {'.lock': None}
+
+
 def test_identity_recheck_failure_is_reported(tmp_path, monkeypatch):
     cookies, state = roots(tmp_path)
     directory = state / cs.DIRECTORY
