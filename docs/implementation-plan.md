@@ -47,7 +47,7 @@ Acceptance criteria:
 
 ## Stage 2 — Named cookie sources
 
-Settled contract: target design *Named cookie sources*, DEC-28 to DEC-33.
+Settled contract: target design *Named cookie sources*, DEC-28 to DEC-34.
 P0003 owns the ordered delivery; `/relay-next` sizes its items into chunks.
 P0003-C01 implements the strict parser/summaries, immutable registry reader,
 and atomic host publication foundation. P0003-C02 implements automatic locked
@@ -56,7 +56,10 @@ These commands prepare the source workflow; current downloads/export/setup/docto
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
 registration/explicit refresh are implemented and accepted in PR #41 (D2), including direct
 browser extraction and the support report. Snapshot execution and D4 cutover
-remain pending.
+remain pending. Internal pinned reads and snapshot storage/cleanup can land
+before the process-tree runner and image integration; the storage boundary is
+pinned in Named cookie sources §3 / DEC-34. Neither preparation activates public
+download routes before the coordinated cutover.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.

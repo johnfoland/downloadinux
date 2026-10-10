@@ -645,3 +645,36 @@ the host commands; docs give the corresponding host command for each shortcut.
 and migration*; [implementation plan](implementation-plan.md), *Stage 2* and
 *Migration checklist*. Added during project P0003 (issue #34); amended in
 place during that project's shaping follow-up, with the maintainer's choice.
+
+## DEC-34: Snapshot metadata and interrupted staging have explicit formats (2026-10)
+
+Private snapshots copy the exact bytes of the supplied immutable revision after
+shared validation from the same opened regular file. Their version-1 metadata
+has exactly `version`, `invocation_id`, `source`, `revision`, `created_at`, and
+`user_agent`, with the strict types and identifiers stated in Named cookie
+sources §3. Anonymous execution writes no snapshot. These details make the
+producer and cleanup agree without looking up a later registry/default or
+rewriting an accepted jar representation.
+
+The allocation lock protects `.staging-<invocation_id>` creation, lease locking,
+complete file writes/syncs, and publication as `<invocation_id>`. Published
+directories require complete valid metadata and the three known regular files.
+Interrupted staging may have missing/partial jar or metadata, but removal still
+requires a safely identified regular lease and no unknown/symlink/nonregular
+children. Missing/busy/unprovable leases preserve the candidate. Removed/skipped
+counts cover named candidates only, with unrelated entries ignored. Genuine
+OS/lock/identity/removal failures retain DEC-27's path-bearing error and residue
+qualification. Neither producer nor cleanup follows managed child symlinks or
+touches canonical revisions; owner teardown holds its lease through removal.
+
+Requiring complete staging metadata was rejected because interruption may occur
+before it exists or while it is written. Deleting lease-less staging by age or
+its name was rejected because cleanup cannot prove inactive ownership. Parsing
+private cookie contents during cleanup was rejected because downloader writeback
+need not preserve the original format and must not prevent structural cleanup.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3,
+“Snapshot storage format and interrupted allocation”. Added on 2026-10-10 for
+issue #34 in PR #44, following the accepted work in PR #41. This specifies
+previously unnamed storage details; DEC-31's submission pinning and process lifetime remain
+unchanged.
