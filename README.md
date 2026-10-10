@@ -18,7 +18,9 @@ download or batch loop in such a jar, tested inside the built image by the
 gate's smoke test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) adds the Stage 2 commands
 that can ship before the download cutover: `dlx cookies cleanup` asks the running container's
 runner to remove abandoned snapshots, and `dlx config user-agent VALUE` sets an
-explicit user-agent literal. No download calls the runner yet; switching
+explicit user-agent literal. `dlx cookies firefox [PROFILE]` and `dlx cookies
+setup` are the fronts `just cookies` and setup's cookie step will call. No
+download calls the runner yet; switching
 downloads, `just cookies`, setup, and doctor to named sources together is the
 pending cutover. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
@@ -423,6 +425,35 @@ during extraction refuses with retry guidance; unrelated sources and the latest
 default survive. See [browser capabilities](#browser-capabilities-preparatory-stage-2)
 for selectors and keyring prerequisites.
 
+`dlx cookies firefox [PROFILE]` is the Firefox account switch that `just
+cookies` will call from the download cutover; until then it is preparatory, and
+`just cookies` still writes the Stage 1 jar. It is `add-browser` for the fixed
+name `firefox`: it creates or replaces that source, whatever its kind, with an
+export of the Firefox profile (default discovery with no `PROFILE`, all
+containers, no `--replace` needed), and makes it the default in the same
+atomic publication. It prints the same summary as `add-browser`; a failed
+export or parse, or a `firefox` record changed meanwhile, exits 1 with
+`source firefox: …` and leaves the store, default included, unchanged. It
+never reads Chrome or changes settings or the user-agent.
+
+```sh
+dlx cookies firefox                          # Firefox's default profile
+dlx cookies firefox widfsx0p.default-release
+```
+
+`dlx cookies setup` is setup's cookie step from the cutover; until then `just
+setup` still runs its Stage 1 export step. It takes no operand and migrates
+first (a migration failure exits 1 with that error). With a named default it
+prints `Keeping the default cookie source NAME; it was not refreshed.` and that
+source's summary, without reading input, exporting, or refreshing; a missing or
+invalid revision exits 1 and changes nothing. With an anonymous default it asks
+`Export Firefox cookies now? [y/N] `: `y` or `yes`, in any case and with
+surrounding whitespace ignored, runs `cookies firefox` with default discovery
+(its summary, or exit 1 with its error and the default still anonymous).
+Anything else, an empty line, or end of input prints `The cookie default stays
+anonymous; add a source later with dlx cookies firefox, add-browser, or
+import.` and exits 0. It never changes settings or the user-agent.
+
 Refresh explicitly after exporting a new file or updating a browser session:
 
 ```sh
@@ -769,6 +800,10 @@ dlx cookies import NAME FILE Register a managed file copy; --replace explicitly 
 dlx cookies add-browser NAME --browser BROWSER
                                Export/register Firefox, Chrome, or Chromium; optional
                                --profile, --keyring, --container, --replace
+dlx cookies firefox [PROFILE] Create or replace the source firefox from a Firefox profile
+                               and make it the default in one publication (preparatory)
+dlx cookies setup            Setup's cookie step: keep a named default, or with an anonymous
+                               default offer a Firefox export (preparatory)
 dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
