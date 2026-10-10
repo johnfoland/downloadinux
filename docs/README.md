@@ -26,11 +26,12 @@ implementation, keeping proposals distinguishable from completed work.
 
 ## Process files
 
+The [decision log](decisions.md) holds settled questions, cited as `(DEC-n)`.
+
 The [relay workflow](../AGENTS.md#relay-workflow) keeps its process files in
 the git-ignored `.relay/` directory in the main working tree. They record how
 work is done, not how the product behaves, and are not available in a clone:
 
-- [Decision log](decisions.md): settled questions, cited as `(DEC-n)`.
 - `.relay/status.md`: what is in flight and what to do next.
 - `.relay/projects/` and `.relay/chunks/`: local projects and chunk briefs.
 - `.relay/review-checklist.md` and `.relay/brief-checklist.md`.
