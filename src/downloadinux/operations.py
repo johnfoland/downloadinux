@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
+from downloadinux import compose, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -24,6 +24,11 @@ from downloadinux.settings import Host
 def _cookie_name(name: str) -> None:
     if type(name) is not str or not cookie_store.NAME.fullmatch(name):
         raise ConfigError('source name must match [a-z0-9][a-z0-9_-]{0,63}')
+
+
+def cookie_browsers(*, platform: str | None = None) -> dict:
+    """Capabilities only; no installation probe, settings, or migration (§2)."""
+    return cookie_selectors.support(platform=platform)
 
 
 def list_cookies(config: str | None = None, overrides: Sequence[str] = (),

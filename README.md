@@ -623,6 +623,32 @@ exit IP.
 
 # Command reference
 
+## Browser capabilities (preparatory Stage 2)
+
+`dlx cookies browsers [--json]` reports supported selectors without probing an
+installation or accessing/migrating cookies. Firefox, Chrome, and Chromium are
+supported on macOS and Linux. Profiles can be names or paths (including spaces);
+path selectors expand `~` and become absolute without resolving symlinks.
+Firefox accepts containers, with `none` meaning outside containers and an omitted
+container meaning all. Chromium browsers accept Linux keyrings only:
+`KWALLET`, `KWALLET5`, `KWALLET6`, `GNOMEKEYRING`, `BASICTEXT`.
+
+The host adapter is locked to **yt-dlp 2026.08.19**. It extracts directly without
+a URL/site probe; warnings, denied keychains, unsupported schemas, and partial
+exports fail safely. Clean empty exports are valid. Available HttpOnly, secure,
+domain, session, and expired records are retained. The support report does not
+promise installed profiles or successful decryption.
+
+Linux GNOME keyring needs `secretstorage` in the host tool environment and an
+accessible/unlocked desktop Secret Service (`uv tool inject downloadinux
+secretstorage` for the editable tool). KWallet needs a running accessible wallet
+and `dbus-send` on `PATH`. `BASICTEXT` only fits a browser using the basic password
+store; it does not bypass another keyring's encryption. macOS Chromium needs
+keychain access. Netscape file import will provide a browser-independent
+alternative in this chunk; registration/refresh are still pending at this unit.
+[Adapter validation evidence](docs/browser-adapter.md) records the API and tests.
+Current downloads, export, setup, and doctor still use the Stage 1 jar.
+
 ## The host CLI
 
 The host application is a Python package in `src/downloadinux/`, installed as
@@ -642,6 +668,7 @@ dlx config import-env        Turn the checkout's .env into the new files (VPN on
                                (--env PATH, --force; .env and the old jar stay put)
 dlx config user-agent        Set downloads.user_agent from the host Chrome's major version
                                (macOS); without a readable Chrome, warn and change nothing
+dlx cookies browsers [--json] Supported browser selectors, without installation/store access
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
@@ -747,6 +774,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── vpn.sh                    # the `vpn` helper
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
+│   ├── cookie_browser.py         # lazy direct host browser extraction, no site probe
+│   ├── cookie_selectors.py       # supported capabilities and selector normalization
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
 │   ├── cookie_writer.py          # atomic publication and locked legacy migration

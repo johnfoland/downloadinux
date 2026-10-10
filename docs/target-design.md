@@ -99,8 +99,11 @@ Package details, pinned for P0001-C01:
 
 - Python 3.11 or later (`requires-python = ">=3.11"`, for `tomllib`), with
   `.python-version` naming 3.13 and `uv.lock` committed. The one runtime
-  dependency is `tomlkit`, used only to write and edit the settings and
-  credentials files so a user's comments survive; reading uses `tomllib`.
+  dependency in Stage 1 was `tomlkit`, used only to write and edit settings
+  and credentials so comments survive; reading uses `tomllib`. Stage 2 adds
+  `yt-dlp==2026.8.19` for host-only direct browser cookie extraction
+  (P0003-C03-a); its browser code is loaded only for browser operations.
+  No host media dependency is added.
   pytest is a dev dependency. `python -m downloadinux` runs the same
   function as the entry points.
 - The checkout root is the directory that holds `src/downloadinux/`. A
@@ -941,8 +944,8 @@ Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
 (DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
 implements §5's locked migration and §2's public list/inspect/default operations.
-Browser/file registration, refresh, and private execution jars remain
-unimplemented. The new source commands are preparatory: downloads, export,
+P0003-C03-a implements direct browser extraction and the support report.
+Browser/file registration, refresh, and private execution jars remain unimplemented. The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
 shared-jar execution and required Firefox/probe/user-agent recipe chain.

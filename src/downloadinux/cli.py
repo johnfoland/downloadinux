@@ -76,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     cookies = commands.add_parser('cookies', help='inspect cookie sources and select their future default')
     _add_global_options(cookies, 1)
     cookie_commands = cookies.add_subparsers(dest='cookie_command', metavar='SUBCOMMAND', required=True)
+    cookie_browsers = cookie_commands.add_parser('browsers', help='report supported browser selectors without probing installation')
+    _add_global_options(cookie_browsers, 2)
+    cookie_browsers.add_argument('--json', action='store_true', help='print JSON')
+    cookie_browsers.set_defaults(handler=_cookies_browsers)
     cookie_list = cookie_commands.add_parser('list', help='list source metadata')
     _add_global_options(cookie_list, 2)
     cookie_list.add_argument('--json', action='store_true', help='print JSON')
@@ -268,6 +272,18 @@ def _cookies_list(args: argparse.Namespace, options: GlobalOptions) -> int:
         lines = [f"Default: {report['default'] or 'anonymous'}"]
         lines.extend(render_cookie_source(source) for source in report['sources'])
         print('\n'.join(lines))
+    return 0
+
+
+def _cookies_browsers(args: argparse.Namespace, options: GlobalOptions) -> int:
+    report = operations.cookie_browsers()
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"Platform: {report['platform']}; capabilities only, no installation/decryption probe")
+        for browser in report['browsers']:
+            print(f"{browser['id']}: profile: yes; container: {'yes' if browser['container'] else 'no'}; "
+                  f"keyrings: {', '.join(browser['keyrings']) or 'none'}")
     return 0
 
 
