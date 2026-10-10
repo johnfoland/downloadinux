@@ -944,8 +944,9 @@ Settled for Stage 2, project [P0003](projects/P0003-named-cookie-sources.md)
 (DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
 implements §5's locked migration and §2's public list/inspect/default operations.
-P0003-C03-a implements direct browser extraction and the support report.
-Browser/file registration, refresh, and private execution jars remain unimplemented. The new source commands are preparatory: downloads, export,
+P0003-C03-a/b implement direct browser extraction, the support report, and
+browser/file registration with explicit replacement. Refresh and private execution
+jars remain unimplemented. The new source commands are preparatory: downloads, export,
 setup, and doctor retain the Stage 1 shared jar and ignore the registry default
 until D4's coordinated cutover. These rules replace its
 shared-jar execution and required Firefox/probe/user-agent recipe chain.

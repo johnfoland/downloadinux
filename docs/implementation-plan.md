@@ -53,7 +53,8 @@ and atomic host publication foundation. P0003-C02 implements automatic locked
 legacy migration and public `cookies list`, `inspect`, and `default` operations.
 These commands prepare the source workflow; current downloads/export/setup/doctor
 still use the Stage 1 shared jar and ignore the registry default. Browser/file
-registration, refresh, and snapshot execution remain pending in D2–D5.
+registration is implemented in P0003-C03-a/b, including direct browser
+extraction and the support report. Refresh and snapshot execution remain pending.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.

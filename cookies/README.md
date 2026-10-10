@@ -7,13 +7,13 @@ in place. Cookie files hold live session credentials; treat them like passwords.
 Once the import has run, delete the old jar here, or `chmod 600` it if you
 keep it: it may be world-readable.
 
-## Preparatory source inspection
+## Preparatory named sources
 
 `dlx cookies list [--json]`, `dlx cookies inspect NAME [--json]`, and
 `dlx cookies default [NAME] [--anonymous]` are implemented. **Downloads,
 `just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
-this source-store default, even when it is anonymous.** Import/refresh commands
-and private execution jars remain pending.
+this source-store default, even when it is anonymous.** File/browser registration
+is implemented; refresh and private execution jars remain pending.
 
 On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
 is copied into immutable source `legacy` and selected as the future default.
@@ -36,9 +36,36 @@ dlx cookies default --anonymous
 0600. List shows origin/revision/time/default metadata; inspect adds expiry
 counts and domain/session-cookie presence without individual cookie names or
 values, and never asserts login validity. Default changes retain revisions and
-timestamps. No browser, Docker, token, or user-agent operation is needed.
+timestamps. List/inspect/default/import need no browser. Source operations need no Docker,
+token, or user-agent operation.
 A later `just cookies` export changes the old Stage 1 jar; the immutable
-`legacy` inspection copy remains unchanged until the future refresh/cutover work.
+`legacy` inspection copy remains unchanged until an explicit replacement or the
+future refresh work.
+
+```sh
+dlx cookies browsers --json
+dlx cookies import imported "~/Exports/account cookies.txt"
+dlx cookies add-browser personal --browser firefox --profile "work profile" --container none
+dlx cookies add-browser work --browser chrome --profile "Default"
+dlx cookies default imported  # explicit selection for the future cutover
+# Explicit replacement may change origin or kind without switching defaults:
+dlx cookies import personal "~/Exports/replacement.txt" --replace
+```
+
+Registration validates before atomic publication, retaining old revisions and
+the current anonymous/named default. Imports are immutable managed copies, never
+links to the external origin; imports/profiles are never chmodded or overwritten.
+Warnings, partial exports, parser/publication errors, and concurrent changes to
+the original source fail safely. If legacy migration succeeded first, that
+committed baseline remains. Clean empty files/exports are valid.
+
+The browser adapter uses locked yt-dlp 2026.08.19 directly without a URL/probe.
+Firefox accepts containers (`none` = outside, omitted = all); Chrome/Chromium
+accept Linux keyrings only. Profile names stay names; path-like/tilde profiles
+and import paths become absolute without resolving symlinks. See the
+[capabilities/prerequisites](../README.md#browser-capabilities-preparatory-stage-2)
+for the exact keyring set and Linux desktop dependencies. Netscape import is
+the browser-independent alternative; these commands do not alter user-agent.
 
 ## Just use the recipe
 

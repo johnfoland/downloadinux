@@ -1,4 +1,5 @@
 """Real locked extraction/serialization boundaries; synthetic profiles only."""
+from contextlib import closing
 import inspect
 from io import StringIO
 from pathlib import Path
@@ -74,7 +75,7 @@ def test_invalid_selector(kwargs):
 
 def firefox_profile(path, *, schema=15):
     path.mkdir()
-    with sqlite3.connect(path / 'cookies.sqlite') as db:
+    with closing(sqlite3.connect(path / 'cookies.sqlite')) as db, db:
         db.execute(f'PRAGMA user_version={schema}')
         db.execute('CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, originAttributes TEXT)')
         db.executemany('INSERT INTO moz_cookies VALUES (?,?,?,?,?,?,?)', [
@@ -100,7 +101,7 @@ def test_real_firefox_extraction(tmp_path, container, count, capsys):
 def test_real_firefox_empty_and_unsupported_schema(tmp_path):
     profile = firefox_profile(tmp_path / 'Firefox profile', schema=18)
     with pytest.raises(DownloadinuxError): adapter.extract(selectors.normalize('firefox', profile))
-    with sqlite3.connect(Path(profile) / 'cookies.sqlite') as db:
+    with closing(sqlite3.connect(Path(profile) / 'cookies.sqlite')) as db, db:
         db.execute('PRAGMA user_version=17')
         db.execute('DELETE FROM moz_cookies')
     assert len(adapter.extract(selectors.normalize('firefox', profile)).jar) == 0
@@ -115,7 +116,7 @@ def test_real_chromium_extraction_and_decryption(tmp_path, monkeypatch, platform
     encrypted = b'v10' + aes_cbc_encrypt_bytes(CANARY.encode(), decryptor_type.derive_key(password), b' ' * 16, padding_mode='pkcs7')
     profile = tmp_path / 'synthetic Chromium profile'
     profile.mkdir()
-    with sqlite3.connect(profile / 'Cookies') as db:
+    with closing(sqlite3.connect(profile / 'Cookies')) as db, db:
         db.execute('CREATE TABLE meta (key TEXT,value TEXT)')
         db.execute("INSERT INTO meta VALUES ('version','23')")
         db.execute('CREATE TABLE cookies (host_key TEXT,name TEXT,value TEXT,encrypted_value BLOB,path TEXT,expires_utc INTEGER,is_secure INTEGER)')
@@ -200,7 +201,7 @@ def test_support_cli_does_not_migrate_or_extract(tmp_path, monkeypatch, capsys):
 def test_real_denied_keyring_fails_safely(tmp_path, monkeypatch, platform, capsys):
     profile = tmp_path / 'locked profile'
     profile.mkdir()
-    with sqlite3.connect(profile / 'Cookies') as db:
+    with closing(sqlite3.connect(profile / 'Cookies')) as db, db:
         db.execute('CREATE TABLE meta (key TEXT,value TEXT)')
         db.execute("INSERT INTO meta VALUES ('version','23')")
         db.execute('CREATE TABLE cookies (host_key TEXT,name TEXT,value TEXT,encrypted_value BLOB,path TEXT,expires_utc INTEGER,is_secure INTEGER)')

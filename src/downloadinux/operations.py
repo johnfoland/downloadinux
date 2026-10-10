@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
+from downloadinux import compose, cookiejar, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -29,6 +29,62 @@ def _cookie_name(name: str) -> None:
 def cookie_browsers(*, platform: str | None = None) -> dict:
     """Capabilities only; no installation probe, settings, or migration (§2)."""
     return cookie_selectors.support(platform=platform)
+
+
+def _browser_export(selector: cookie_selectors.Selector, exporter=None) -> cookiejar.Material:
+    if exporter is None:
+        from downloadinux.cookie_browser import extract
+        exporter = extract
+    return exporter(selector)
+
+
+def _register_cookie_source(name: str, origin: dict, read_material, *, replace: bool,
+                            config: str | None, overrides: Sequence[str], host: Host,
+                            now: float | None) -> dict:
+    """Capture before extraction; compare under the real writer lock (§1–§2)."""
+    root = settings.load(config, overrides, host)['paths.cookies']
+    try:
+        snapshot = cookie_writer.ensure_store(root)
+        expected = snapshot.sources.get(name)
+        if expected is not None and not replace:
+            raise DownloadinuxError(f'{root / "sources.json"}: already registered; use --replace to replace its origin/material')
+        material = read_material()
+        # Return committed metadata without fallible I/O after publication or
+        # letting a subsequent refresh substitute its revision in our summary.
+        report_snapshot = cookie_writer.publish_snapshot(root, name, material, origin, expected=expected)
+        return dict(source=cookie_store.source_metadata(report_snapshot, name),
+                    **cookiejar.summary(material, now=now))
+    except DownloadinuxError as error:
+        raise DownloadinuxError(f'source {name}: {error}') from None
+
+
+def import_cookies(name: str, file: str, *, replace: bool = False,
+                   config: str | None = None, overrides: Sequence[str] = (),
+                   host: Host = Host(), now: float | None = None) -> dict:
+    """Register a managed Netscape copy; external origins stay untouched (§2)."""
+    _cookie_name(name)
+    if type(file) is not str or not file or '\x00' in file:
+        raise ConfigError('cookie file must be a nonempty path without NUL')
+    try:
+        path = settings.user_path(file)
+    except OSError as error:
+        raise DownloadinuxError(f'source {name}: {file}: {error.strerror or "cannot normalize file path"}') from None
+    return _register_cookie_source(name, dict(kind='file', path=str(path)),
+                                   lambda: cookiejar.read(path), replace=replace,
+                                   config=config, overrides=overrides, host=host, now=now)
+
+
+def add_browser_cookies(name: str, browser: str, *, profile: str | None = None,
+                        keyring: str | None = None, container: str | None = None,
+                        replace: bool = False, config: str | None = None,
+                        overrides: Sequence[str] = (), host: Host = Host(),
+                        exporter=None, now: float | None = None) -> dict:
+    """Export before publishing; registration never changes the default (§2)."""
+    _cookie_name(name)
+    selector = cookie_selectors.normalize(browser, profile, keyring, container)
+    return _register_cookie_source(name, selector.origin(),
+                                   lambda: _browser_export(selector, exporter), replace=replace,
+                                   config=config, overrides=overrides, host=host, now=now)
 
 
 def list_cookies(config: str | None = None, overrides: Sequence[str] = (),

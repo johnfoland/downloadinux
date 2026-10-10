@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import sys
 
-from .errors import ConfigError
+from .errors import ConfigError, DownloadinuxError
 from .settings import user_path
 
 BROWSERS = ('firefox', 'chrome', 'chromium')
@@ -53,5 +53,8 @@ def normalize(browser: str, profile: str | None = None, keyring: str | None = No
     if container is not None and browser != 'firefox':
         raise ConfigError(f'{browser}: --container is supported only by Firefox')
     if profile is not None and ('/' in profile or profile.startswith('~')):
-        profile = str(user_path(profile))
+        try:
+            profile = str(user_path(profile))
+        except OSError as error:
+            raise DownloadinuxError(f'{browser}: profile {profile!r}: {error.strerror or "cannot normalize profile path"}; use Netscape import instead') from None
     return Selector(browser, profile, keyring, container)

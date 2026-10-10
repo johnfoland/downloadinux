@@ -23,9 +23,9 @@ Last review: 2026-10-10 (P0003-C02, accepted).
   immutable registry reader, atomic host writer, locked legacy migration,
   and host-only `cookies list`/`inspect`/`default` commands. C02's review
   passed all seven gate steps with 771 tests and a public-entry-point smoke.
-  [P0003-C03](chunks/P0003-C03.md) is ready for D2: browser/file registration,
-  direct browser extraction, and explicit refresh, in three units.
-  Registration, refresh, and private execution jars remain unimplemented;
+  [P0003-C03](chunks/P0003-C03.md) is executing D2: browser/file registration and
+  direct browser extraction are implemented in units a/b; explicit refresh is next.
+  Refresh and private execution jars remain unimplemented;
   Stage 1 download/export/setup/doctor routes are unchanged and ignore the
   preparatory source-store default. D3–D5 remain unstarted.
   The next project ID is P0004. Source lifecycle and canonical revision pruning
@@ -40,7 +40,7 @@ Last review: 2026-10-10 (P0003-C02, accepted).
 - **State:** executing
 - **Branch:** `chunk/p0003-c03`
 - **Pull request:** `#41` (draft)
-- **Units committed:** a
+- **Units committed:** a, b
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
