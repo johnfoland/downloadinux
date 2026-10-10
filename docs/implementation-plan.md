@@ -173,6 +173,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | Archive/state migration locations | Avoids losing deduplication history. Stage 1 leaves the gallery archive in place (DEC-13); Stage 3 decides. |
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
-Configuration and cookie-source contracts are settled. The next delivery task
-is P0003 D1, the source store, parser, and legacy migration. Worker/job rules
+Configuration and cookie-source contracts are settled. P0003 D1, the source
+store, parser, and legacy migration, is implemented and accepted. The next
+delivery task is D2, browser/file registration and explicit refresh. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.

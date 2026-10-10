@@ -1,7 +1,7 @@
 # Status
 
-Last updated 2026-10-10 by `relay-execute`.
-Last review: 2026-10-10 (P0003-C01, accepted).
+Last updated 2026-10-10 by `relay-next`.
+Last review: 2026-10-10 (P0003-C02, accepted).
 
 ## Where this stands
 
@@ -18,15 +18,16 @@ Last review: 2026-10-10 (P0003-C01, accepted).
   revisions/private startup jars, independent user-agent policy, and host-command
   migration. DEC-31 and DEC-33 were amended on 2026-10-09 to the maintainer's
   answers: pin revisions at submission and retire container download shortcuts.
-  [P0003-C01](chunks/P0003-C01.md) implements D1's strict parser/summaries,
-  immutable registry reader, and atomic host writer, accepted through PR #39
-  after normalized-domain duplicate and BOM/UTF-8 diagnostic rework (649 tests
-  and all seven gate steps green).
-  [P0003-C02](chunks/P0003-C02.md) implements locked legacy migration and
-  host-only `cookies list`/`inspect`/`default` commands, finishing D1's build.
+  D1 is accepted through [P0003-C01](chunks/P0003-C01.md) and
+  [P0003-C02](chunks/P0003-C02.md) (PRs #39–#40): strict parser/summaries,
+  immutable registry reader, atomic host writer, locked legacy migration,
+  and host-only `cookies list`/`inspect`/`default` commands. C02's review
+  passed all seven gate steps with 771 tests and a public-entry-point smoke.
+  [P0003-C03](chunks/P0003-C03.md) is ready for D2: browser/file registration,
+  direct browser extraction, and explicit refresh, in three units.
   Registration, refresh, and private execution jars remain unimplemented;
   Stage 1 download/export/setup/doctor routes are unchanged and ignore the
-  preparatory source-store default. D2–D5 remain unstarted.
+  preparatory source-store default. D3–D5 remain unstarted.
   The next project ID is P0004. Source lifecycle and canonical revision pruning
   remain deliberately outside Stage 2 (issue #35).
 - **F20261005-01** (maintenance, issue #3): accepted 2026-10-05, pull
@@ -35,11 +36,11 @@ Last review: 2026-10-10 (P0003-C01, accepted).
 
 ## In flight
 
-- **Chunk:** P0003-C02
-- **State:** awaiting review
-- **Branch:** `chunk/p0003-c02`
-- **Pull request:** `#40` (ready)
-- **Units committed:** a, b
+- **Chunk:** P0003-C03
+- **State:** ready for an executor
+- **Branch:** —
+- **Pull request:** —
+- **Units committed:** —
 
 (Fixed shape. `State` ∈ `ready for an executor` · `executing` ·
 `awaiting review` · `none`; `Branch`, `Pull request`, and `Units committed` are
