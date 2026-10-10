@@ -6,6 +6,7 @@ CLI (and later the TUI) only parses and presents.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import tomllib
@@ -238,6 +239,75 @@ def download(
         *urls,
     ]
     return _invocation(effective, host).run(compose.exec_args(program), runner)
+
+
+# Named cookie sources §3, the host front (DEC-37): exact messages.
+CLEANUP_PROGRAM = ("downloadinux-runner", "cleanup", "--state", "/state")
+CLEANUP_NOT_RUNNING = (
+    "the container is not running; start it with dlx up, then rerun dlx cookies cleanup"
+)
+CLEANUP_UNEXPECTED = "downloadinux-runner cleanup printed unexpected output"
+CLEANUP_NO_RUNNER = (
+    "the running container has no downloadinux-runner; rebuild and recreate it "
+    "with dlx build and dlx restart"
+)
+
+
+@dataclass(frozen=True)
+class CleanupCounts:
+    removed: int
+    skipped: int
+
+
+def _cleanup_counts(output: str) -> CleanupCounts | None:
+    """The runner's one JSON object, `{"removed": N, "skipped": M}` with
+    non-negative integers (not booleans), or None for anything else. Any
+    exception from parsing means the output was unexpected (review-checklist
+    §3)."""
+    def unique(pairs):
+        keys = [key for key, _ in pairs]
+        if len(set(keys)) != len(keys):
+            raise ValueError("duplicate key")
+        return dict(pairs)
+
+    try:
+        record = json.loads(output, object_pairs_hook=unique)
+    except Exception:
+        return None
+    if type(record) is not dict or set(record) != {"removed", "skipped"}:
+        return None
+    if any(type(record[key]) is not int or record[key] < 0 for key in record):
+        return None
+    return CleanupCounts(record["removed"], record["skipped"])
+
+
+def cookie_cleanup(
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    capture: compose.Capture | None = None,
+) -> CleanupCounts:
+    """`cookies cleanup` (Named cookie sources §3, host front; DEC-37): ask
+    the running container's runner to remove abandoned snapshots. Settings
+    only: no registry read and no migration (§5). Standard error, the
+    runner's and Compose's, stays on the terminal."""
+    effective = settings.load(config, overrides, host)
+    invocation = _invocation(effective, host)
+    if not invocation.running(capture):
+        raise DownloadinuxError(CLEANUP_NOT_RUNNING)
+    status, output = invocation.capture(
+        compose.exec_args(CLEANUP_PROGRAM, captured=True), capture
+    )
+    if status in (126, 127):  # Compose's "cannot run" and "not found"
+        raise DownloadinuxError(CLEANUP_NO_RUNNER)
+    if status != 0:
+        raise DownloadinuxError(
+            f"downloadinux-runner cleanup failed in the container (exit {status})"
+        )
+    counts = _cleanup_counts(output)
+    if counts is None:
+        raise DownloadinuxError(CLEANUP_UNEXPECTED)
+    return counts
 
 
 # The shared loop, then the pause the runner leaves to its caller (Host

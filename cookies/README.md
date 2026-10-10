@@ -15,7 +15,11 @@ keep it: it may be world-readable.
 this source-store default, even when it is anonymous.** File/browser registration
 and explicit refresh are implemented. Private execution jars (PR #45) and the
 container runner that creates them (PR #49) are shipped but unused: no
-download, recipe, or `cookies cleanup` command creates or removes them yet.
+download or recipe creates them yet. `dlx cookies cleanup` asks the running
+container's runner to remove abandoned ones (a hard-killed download's, once
+downloads use them), skipping any still in use or unverifiable, and prints
+both counts. It needs the running container from an image built with the
+runner, and never reads the source store or migrates.
 
 On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
 is copied into immutable source `legacy` and selected as the future default.

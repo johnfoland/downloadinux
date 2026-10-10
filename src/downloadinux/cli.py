@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(parser, 0)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    cookies = commands.add_parser('cookies', help='register and inspect cookie sources; select their future default')
+    cookies = commands.add_parser('cookies', help='register and inspect cookie sources; select their future default; clean up snapshots')
     _add_global_options(cookies, 1)
     cookie_commands = cookies.add_subparsers(dest='cookie_command', metavar='SUBCOMMAND', required=True)
     cookie_browsers = cookie_commands.add_parser('browsers', help='report supported browser selectors without probing installation')
@@ -114,6 +114,13 @@ def build_parser() -> argparse.ArgumentParser:
     selectors.add_argument('name', nargs='?', metavar='NAME', type=_source_name)
     selectors.add_argument('--anonymous', action='store_true', help='select anonymous as the future default')
     cookie_default.set_defaults(handler=_cookies_default)
+    cookie_cleanup = cookie_commands.add_parser(
+        'cleanup', help='remove abandoned cookie snapshots in the running container',
+        description='Ask the running container to remove abandoned private cookie '
+        'snapshots (those no process holds) and report the counts. Needs the '
+        'container running, from an image that ships downloadinux-runner.')
+    _add_global_options(cookie_cleanup, 2)
+    cookie_cleanup.set_defaults(handler=_cookies_cleanup)
 
     config = commands.add_parser(
         "config", help="inspect and migrate configuration"
@@ -351,6 +358,13 @@ def _cookies_default(args: argparse.Namespace, options: GlobalOptions) -> int:
     default = operations.cookie_default(args.name, anonymous=args.anonymous,
                                         config=options.config, overrides=options.overrides)
     print(default or 'anonymous')
+    return 0
+
+
+def _cookies_cleanup(args: argparse.Namespace, options: GlobalOptions) -> int:
+    counts = operations.cookie_cleanup(options.config, options.overrides)
+    print(f"Removed {counts.removed} abandoned cookie snapshots; "
+          f"skipped {counts.skipped} in use or unverifiable.")
     return 0
 
 

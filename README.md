@@ -434,6 +434,25 @@ inspectable and preserve the default. Check the file/profile and keychain/keyrin
 access, or explicitly replace the origin with `cookies import` / `add-browser`
 `--replace`. Refresh neither infers nor changes `downloads.user_agent` or settings.
 
+Private cookie snapshots are the per-download working copies the container
+runner makes under `paths.state/cookie-invocations/` and removes when the
+download ends. A hard kill or a stopped container can leave one behind;
+`dlx cookies cleanup` asks the running container's `downloadinux-runner` to
+remove those:
+
+```sh
+dlx cookies cleanup
+# Removed 1 abandoned cookie snapshots; skipped 0 in use or unverifiable.
+```
+
+It removes only well-formed snapshots whose lease no process holds; one still
+in use, or one it cannot verify, is skipped and counted. It never touches the
+source store, reads no registry, and never migrates. It needs the container
+running (`dlx up`; a stopped one is an error that says so) from an image built
+with the runner: an older image fails with a hint to run `dlx build` and
+`dlx restart`. No download creates snapshots yet: they arrive with the
+download cutover, so until then there is normally nothing to remove.
+
 
 ---
 
@@ -750,6 +769,8 @@ dlx cookies list [--json]    Migrate once and list source metadata (preparatory 
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
                                (NAME and --anonymous conflict; current downloads ignore it)
+dlx cookies cleanup          Remove abandoned private cookie snapshots in the running
+                               container and report removed/skipped counts
 dlx build / up / down        Build, start in the background, or stop the configured project
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
