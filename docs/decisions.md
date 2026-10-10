@@ -741,3 +741,27 @@ the runner and changes no decided behavior. *Amended 2026-10-10, in the review
 of PR #49, with the argument shapes the interface left implicit (option order,
 verbatim values, and the further usage errors) and the residue rule for an
 unreadable lifetime pipe, both as implemented there.*
+
+## DEC-37: The host cleanup and explicit user-agent fronts have fixed reports (2026-10)
+
+`cookies cleanup` checks that the configured service is running and refuses
+with a `dlx up` hint when it is not, rather than starting the container or
+running a one-off `compose run`. It runs `downloadinux-runner cleanup --state
+/state` through `compose exec` as `dl`, lets the runner's standard error through
+unchanged, validates the runner's exact JSON object, and prints one human line
+with both counts. Compose's 126/127 (the command cannot be found or run) is
+reported as an image that predates the runner, with the rebuild-and-recreate
+remedy. Any other non-zero status is exit 1 naming the status. `config
+user-agent VALUE` prints whether it wrote the settings file or found the value
+already there, naming the file and not echoing the value.
+
+A `compose run` fallback for a stopped container was rejected: cleanup must
+share the running container's `/state` view and locks, and §3 already says to
+report how to start it. Passing the runner's JSON through as the host's output
+was rejected because no other `cookies` command prints raw container output
+and the table gives `cookies cleanup` no `--json`. Echoing the user-agent was
+rejected as noise for a value the user just typed; `config show` reports it.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3 (the host
+front paragraph) and §4; *Host application* command table. Added on 2026-10-10
+for issue #34, before the remaining Stage 2 private-execution work (D3) was cut.
