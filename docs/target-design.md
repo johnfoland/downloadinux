@@ -39,7 +39,8 @@ P0002-C03 implements runtime-home ownership (D3, DEC-26).
 Project P0003 settles Stage 2 with DEC-28 to DEC-33: a managed source store,
 browser/file operations, strict parsing, submission-pinned cookie revisions,
 private startup jars, independent user-agent policy, and host-command migration.
-See *Named cookie sources*.
+DEC-34 pins snapshot metadata and interrupted staging details for the shared
+producer/cleanup boundary. See *Named cookie sources*.
 
 Native downloader execution and a remote-server control protocol are not required
 by the agreed scope. The exact worker interface remains open; host packaging
@@ -942,7 +943,7 @@ yt-dlp's input-before-output cookie lifecycle.
 ## Named cookie sources
 
 Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
-(DEC-28 to DEC-33). P0003-C01 implements §1's internal reader/publication
+(DEC-28 to DEC-34). P0003-C01 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. P0003-C02
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
@@ -1186,6 +1187,76 @@ cleanup errors retain that same exit-1 contract. If lease identity or removal
 cannot be established, preserve residue and report it rather than promising
 impossible cleanup (DEC-27). Cleanup ignores symlinks and unexpected entries
 and never traverses outside its invocation root.
+
+#### Snapshot storage format and interrupted allocation
+
+The following storage details pin the shared producer/cleanup contract
+(DEC-34); they are preparation for the runner, not public download cutover.
+The private jar is a byte-for-byte copy of the exact pinned file after shared
+validation of those bytes; a serializer must not rewrite its comments, line
+endings, BOM or accepted cookie representation. Read and validate from the
+same opened regular file. The reusable read path has no registry/default,
+host settings, migration or browser access.
+
+Snapshot metadata is exactly this version-1 object, with no additional or
+duplicate fields:
+
+```json
+{"version": 1, "invocation_id": "0123456789abcdef0123456789abcdef",
+ "source": "personal-firefox", "revision": "abcdef0123456789abcdef0123456789",
+ "created_at": "2026-10-10T12:00:00Z", "user_agent": "explicit literal"}
+```
+
+Require exact types: integer version 1 (not boolean), a 32-character lowercase
+hex invocation ID equal to the published directory name, a valid source name
+and revision using §1's rules, a real UTC timestamp in §1's format, and a string
+user-agent containing no CR/LF. Empty configured user-agent remains allowed by
+§4. Anonymous execution produces no snapshot or metadata; there are no nullable
+source/revision records. Metadata is diagnostic context, never authority to
+resolve or change the submitted account. Cookie contents and origins are absent.
+
+The configured state root may retain its symlink spelling, as other configured
+roots do; `cookie-invocations` and every managed entry below it must not be a
+symlink. Create/enforce the managed invocation root at 0700 and its persistent
+regular `.lock` at 0600; never delete/replace that lock during normal use.
+Staging directories are `.staging-<invocation_id>` at 0700. Under the allocation
+lock, create the directory and an empty regular mode-0600 `lease`, acquire its
+exclusive lock, write/sync the complete mode-0600 `cookies.txt` and
+`metadata.json`, then rename staging to `<invocation_id>` without clobbering a
+foreign entry. Keep the lease open and locked after releasing the allocation
+lock. No consumer receives a staging path. A producer collision never overwrites
+an existing final or staging entry.
+
+Cleanup uses the same allocation lock and never creates a missing invocation
+root merely to clean it: absence succeeds with zero counts. Each immediate
+entry whose name matches a final ID or `.staging-<ID>` is a candidate. A published
+candidate must be a real directory containing exactly regular `cookies.txt`,
+`metadata.json`, and `lease` files, with valid metadata matching its directory
+ID and a safely opened empty lease. Cleanup validates structure/metadata and
+ownership, not cookie contents: downloader writeback may alter the private jar.
+
+An interrupted staging candidate may contain only a subset of those three
+regular files, but must have a safely identified empty regular lease before it
+can be removed. Its metadata may be absent or partially written; cleanup does
+not depend on parsing staging metadata. Unknown children, symlinks, nested
+directories or nonregular entries disqualify removal. Missing leases, busy
+leases and invalid/unprovable candidates are preserved and counted as skipped;
+entries with other names (including `.lock`) are ignored and uncounted.
+`removed` counts fully removed candidates; `skipped` counts preserved candidates,
+once per candidate. Scan candidates in lexical order for reproducible results.
+
+Open managed locks/files without following symlinks, establish the directory
+and lease identities, and verify they still identify the candidate while
+holding its nonblocking exclusive lease and the allocation lock through removal.
+Never create a missing candidate lease during cleanup, or interpret a lock
+failure as abandonment. Genuine filesystem/locking/identity/removal errors
+are path-bearing operation failures; preserve unprovable residue and report the
+failure (DEC-27). A structural mismatch is a skipped candidate, not a reason
+to traverse it. Removal attempts no recursive traversal; it removes only the
+known files and the directory. Owner teardown likewise verifies ownership and
+holds the lease through removal, reporting cleanup failure before release.
+Descriptor closure is attempted even on failed cleanup. No cleanup route touches
+canonical revisions, external imports or browser profiles.
 
 ### 4. User-agent policy
 
