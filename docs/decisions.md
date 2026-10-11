@@ -972,3 +972,34 @@ was rejected: DEC-6 preserves it, and moving it would gain nothing.
 to §8, *Host application*, *Health checks*; [implementation
 plan](implementation-plan.md), *Stage 3*. Added on 2026-10-11 for issue #64,
 with the maintainer's choices for Ctrl-C and the queue file.
+
+## DEC-45: The worker store has a versioned foundation and atomic submissions (2026-10)
+
+The job-store library uses SQLite schema version 1, with submissions, current
+job records, the two lane deadlines, and a transactional queue counter. Job
+and submission IDs use independent AUTOINCREMENT sequences: committed IDs
+are never reused, gaps are allowed, and rolled-back allocations were never
+published. A monotonic queue order makes FIFO independent of ties or changes
+in the second-resolution wall clock; retry later assigns a new order. The
+active duplicate constraint compares the exact preset/URL pair across queues.
+A valid all-duplicate submission gets its own ID but leaves the referenced
+jobs unchanged. Invalid submissions and failed transactions publish nothing.
+
+Opening the database requires worker ownership through the reopened lock
+descriptor (DEC-35), private managed paths, and verified rollback-journal,
+FULL synchronous, and foreign-key settings. Unsupported or damaged stores
+fail with a path-bearing safe error rather than being reset. The library's
+busy result lets the later service wait without opening the store. Submission
+validates identifiers and stores them without reading cookie material;
+selection remains the host's job and private jars remain the runner's (DEC-31).
+
+Timestamp-only FIFO was rejected because ties and clock adjustments can
+reorder jobs. Reassigning duplicate jobs to a new submission was rejected
+because it could change the queue or credentials of active work. Silent
+schema recovery was rejected because it could discard durable history.
+Client JSON shapes and state-transition implementation remain for later
+work; this pins the foundation without changing DEC-41 to DEC-44.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §2,
+"Store foundation: version, ownership, and submission". Added on 2026-10-11
+for issue #64.
