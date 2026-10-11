@@ -52,17 +52,6 @@ for d in /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinu
   chown -h "$uid:$gid" "$d"
 done
 
-# A missing --cookies file is a hard error in yt-dlp, so seed a valid empty
-# one. Drop a real export over it whenever you need authenticated sites.
-if [[ ! -e /cookies/cookies.txt ]]; then
-  if gosu dl sh -c 'umask 077; printf "# Netscape HTTP Cookie File\n" > /cookies/cookies.txt'; then
-    warn "No cookies exported yet: placeholder written to /cookies/cookies.txt."
-    warn "Authenticated sites need a real export; run just cookies on the host."
-  else
-    warn "Cannot create /cookies/cookies.txt as dl; check the host mount permissions."
-  fi
-fi
-
 # --- NordVPN ----------------------------------------------------------------
 start_nordvpn() {
   if [[ ! -e /dev/net/tun ]]; then

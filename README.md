@@ -16,7 +16,7 @@ Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
-presets, and your shell functions were ported over. The one thing that had to
+presets, run from the host with `just dl` and `just batch`. The one thing that had to
 change is cookie handling, which [Step 3](#step-3--cookie-source)
 walks you through.
 
@@ -612,12 +612,27 @@ they complete, and timestamped success/fail logs are written alongside.
 
 ## Inside the container
 
-`just shell` starts zsh in `/downloads`. `dlmp4`, `dlgal`, `dlmp4_batch`, and
-`dlgal_batch` keep their names and run the same argument lists as `dlx dl` and
-`dlx batch`, taking the user-agent from the container's `DL_USER_AGENT`. That
-value is fixed when the container is created, so after `just useragent` the
-helpers follow at the next `just up` or `just restart`; `dlx dl` and
-`dlx batch` read the setting on every run and need neither (DEC-20).
+`just shell` starts zsh in `/downloads`, for diagnostics and utilities
+(`exifmod`, the aliases, a look at the mounts). It is not a download route:
+the container's `dlmp4`, `dlgal`, `dlmp4_batch`, and `dlgal_batch` shortcuts
+are retired, and so is their `DL_USER_AGENT` environment variable. Managed
+downloads start on the host, where they pick a cookie source and get a
+private jar:
+
+| Retired shortcut | Run on the host instead |
+|---|---|
+| `dlmp4 <url>...` | `just dl video <url>...` or `dlx dl video <url>...` |
+| `dlgal <url>...` | `just dl gallery <url>...` or `dlx dl gallery <url>...` |
+| `dlmp4_batch <file>` | `just batch video [file]` or `dlx batch video [file]` |
+| `dlgal_batch <file>` | `just batch gallery [file]` or `dlx batch gallery [file]` |
+
+The batch loop itself (`zsh/batch.zsh`) stays, run by `downloadinux-runner`.
+
+**Upgrading from an image with the shortcuts:** finish or stop any running
+batch (`just watch video` / `just watch gallery`), then `just build` and
+`just restart`. The new `dl` and `batch` need the rebuilt image's
+`downloadinux-runner`; the image also no longer writes a placeholder
+`/cookies/cookies.txt`, and anonymous downloads need none.
 
 ---
 
@@ -673,8 +688,8 @@ The checkout's `presets/` is mounted read-only at `/config`, so host edits to
 a preset apply to the next download:
 
 - `presets/video/yt-dlp.conf` and `presets/gallery/config.json` — media
-  behavior only; the CLI adds the output root, cookie jar, user-agent, and
-  gallery archive as arguments ([`presets/README.md`](presets/README.md))
+  behavior only; the runner adds the output root, private cookie jar,
+  user-agent, and gallery archive as arguments ([`presets/README.md`](presets/README.md))
 
 The `zsh/` files are copied into the image; rebuild after editing them.
 `zsh/batch.zsh` holds the batch loop alone, for `dlx batch`; the interactive
@@ -705,7 +720,7 @@ misread as "my change didn't work" when it simply wasn't installed.
 
 The entrypoint has to stay root — nordvpnd needs `NET_ADMIN` — so a plain
 `docker compose exec downloadinux zsh` gives you a **root** shell in `/root`
-with no aliases, no configs, and downloads that land root-owned on your Mac.
+with no aliases, no configs, and files that land root-owned on your Mac.
 
 `just shell` passes `-u dl`. The root shell prints a reminder rather than
 letting you find out three downloads later.
@@ -924,7 +939,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── zshrc
 │   ├── aliases.zsh               # container extras (myip, vpns, dlupdate, ...)
 │   ├── batch.zsh                 # the batch loop, sourced alone by `dlx batch`
-│   └── functions.zsh             # dlmp4, dlgal, *_batch on the presets; exifmod
+│   └── functions.zsh             # exifmod (the download shortcuts are retired)
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice

@@ -22,7 +22,7 @@ service = json.load(sys.stdin)["services"]["downloadinux"]
 for key in ("cap_add", "devices", "security_opt"):
     assert not service.get(key), f"VPN-off service has {key}"
 assert not any(k.startswith("NORDVPN_") or k == "DL_VPN" for k in service["environment"]), "VPN environment in base service"
-assert service["environment"].get("DL_USER_AGENT"), "DL_USER_AGENT missing or empty"
+assert "DL_USER_AGENT" not in service["environment"], "DL_USER_AGENT is retired (DEC-33)"
 '
 
 # The single-quoted script expands variables inside the container.
@@ -33,8 +33,8 @@ test "$(id -u)" = "$1"
 test "$(id -g)" = "$2"
 test -d /downloads/dlmp4
 test -d /downloads/dlgal
-test -f /cookies/cookies.txt
-test "$(stat -c %a /cookies/cookies.txt)" = 600
+# Named cookie sources §5: the image no longer seeds a placeholder jar.
+test ! -e /cookies/cookies.txt
 for mount in /downloads /state /cookies; do
     touch "$mount/.downloadinux-smoke"
     rm "$mount/.downloadinux-smoke"
@@ -240,6 +240,91 @@ test "$alpha_pinned" != "$alpha_refreshed"
   /usr/bin/python3 -I /runner-smoke/check.py "$alpha_pinned" "$alpha_refreshed" "$(revision_of beta)"
 # The result is visible through the mount: only the persistent lock remains.
 test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+
+# Named cookie sources §3, "Host launch (DEC-39)": dl and batch from the host,
+# through Compose, the runner and real tmux. Stub downloaders and a holding
+# `sleep` replace the binaries in this disposable check container only;
+# /opt/venv/bin leads PATH. They log to /downloads/route-smoke, never cookie
+# material. The checker prints step names only.
+route_fixture="$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/route-smoke"
+route_log="$smoke_dir/downloads with space/route-smoke"
+route_agent="Route smoke agent/1.0 (X11)"
+route=("${cli[@]}" --set "downloads.user_agent=$route_agent")
+mkdir "$route_log"
+for stub in yt-dlp:downloader gallery-dl:downloader sleep:sleep; do
+  # shellcheck disable=SC2016
+  "${cli[@]}" compose -- exec -T -u root downloadinux \
+    sh -c 'cat >"$1" && chmod 755 "$1"' sh "/opt/venv/bin/${stub%%:*}" <"$route_fixture/${stub#*:}"
+done
+route_check() {
+  python3 -I "$route_fixture/check.py" "$1" "$route_log" "$smoke_dir/cookies" "${@:2}"
+}
+invocations() {
+  find "$smoke_dir/state/cookie-invocations" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' '
+}
+# wait_for WHAT COMMAND...: poll COMMAND for up to a minute.
+wait_for() {
+  local what=$1 tries=0
+  shift
+  until "$@"; do
+    tries=$((tries + 1))
+    if [[ $tries -gt 600 ]]; then
+      echo "Host-route smoke: timed out waiting for $what" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+calls_logged() {
+  [[ $(find "$route_log" -name 'call-*.json' | wc -l) -eq $1 ]]
+}
+batch_paused() {
+  local pane
+  pane=$("${cli[@]}" compose -- exec -T -u dl downloadinux tmux capture-pane -p -t batch-gallery 2>/dev/null) \
+    || return 1
+  [[ $pane == *"[done — press a key]"* ]]
+}
+
+# The default source, no selector: one call for both URLs, one private jar.
+"${route[@]}" cookies default alpha >/dev/null
+"${route[@]}" dl video https://example.com/one "https://example.com/two words"
+route_check named-download alpha "$(revision_of alpha)" "$route_agent" \
+  https://example.com/one "https://example.com/two words"
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+rm -f "$route_log"/call-*
+
+# Anonymous, a dash-led user-agent, and the downloader's own status.
+status=0
+"${route[@]}" dl --anonymous --user-agent=-x video https://example.com/exit7 || status=$?
+test "$status" -eq 7
+route_check anonymous-download -x
+rm -f "$route_log"/call-*
+
+# A detached batch on beta with a dash-led, spaced user-agent: it returns at
+# once and holds in the stub sleep after the first URL, keeping its jar.
+printf 'https://example.com/g1\nhttps://example.com/g2\n' >"$smoke_dir/downloads with space/dlgal_queue"
+beta_pinned=$(revision_of beta)
+test "$("${route[@]}" batch --cookie-source beta "--user-agent=-smoke agent" gallery)" = \
+  "$(printf 'Queue: /downloads/dlgal_queue\nRunning detached in tmux session batch-gallery. Watch it with: dlx watch gallery')"
+wait_for "the batch to reach its throttle" test -e "$route_log/sleep-ran"
+status=0
+"${route[@]}" batch gallery >/dev/null 2>"$smoke_dir/second-batch.err" || status=$?
+test "$status" -eq 1
+grep -Fqx 'downloadinux: error: could not start tmux session batch-gallery; if one is already running, attach with dlx watch gallery' \
+  "$smoke_dir/second-batch.err"
+test "$(invocations)" -eq 1
+test "$("${cli[@]}" cookies cleanup)" = \
+  'Removed 0 abandoned cookie snapshots; skipped 1 in use or unverifiable.'
+synthetic_jar synthetic-beta-two >"$origins/beta.txt"
+"${cli[@]}" cookies refresh beta >/dev/null
+test "$(revision_of beta)" != "$beta_pinned"
+touch "$route_log/release"
+wait_for "the batch's second URL" calls_logged 2
+route_check batch beta "$beta_pinned" "-smoke agent" https://example.com/g1 https://example.com/g2
+wait_for "the batch's pause" batch_paused
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+"${cli[@]}" compose -- exec -T -u dl downloadinux tmux kill-session -t batch-gallery
+printf 'Host-route smoke passed (dl named and anonymous, detached batch).\n'
 
 # Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
 # against the running `up` container. A one-off container allocates a

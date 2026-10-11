@@ -174,6 +174,26 @@ def test_smoke_runs_doctor_on_a_fresh_init_config():
     assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
+def test_smoke_drives_the_host_route_and_checks_the_retirements():
+    # Named cookie sources §3, "Host launch (DEC-39)", and §5 (DEC-33).
+    body = smoke()
+    lines = [line.strip() for line in body.splitlines()]
+    assert 'assert "DL_USER_AGENT" not in service["environment"], "DL_USER_AGENT is retired (DEC-33)"' in lines
+    assert "test ! -e /cookies/cookies.txt" in lines
+    assert "test -f /cookies/cookies.txt" not in lines
+    route = body.index("# Named cookie sources §3, \"Host launch (DEC-39)\"")
+    runner = body.index("/runner-smoke/check.py")
+    cleanup = body.index("# Named cookie sources §3, the host front (DEC-37)")
+    assert runner < route < cleanup
+    block = body[route:cleanup]
+    for step in ("route_check named-download", "route_check anonymous-download",
+                 "route_check batch", "cookies cleanup", "cookies refresh beta",
+                 "tmux kill-session -t batch-gallery"):
+        assert step in block, step
+    assert '"${route[@]}" dl video https://example.com/one "https://example.com/two words"' in block
+    assert '"--user-agent=-smoke agent" gallery' in block
+
+
 def test_watch_wraps_the_cli():
     # Target design, Migration, "Pinned for P0001-C04".
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'

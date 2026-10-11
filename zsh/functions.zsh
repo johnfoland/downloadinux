@@ -1,75 +1,9 @@
 # downloadinux functions
-# Ported from ~/.oh-my-zsh/custom/functions.zsh. The downloaders run the
-# presets' argument lists, the ones `dlx dl` and `dlx batch` build
-# (docs/target-design.md, Presets; DEC-20), with the user-agent from
-# DL_USER_AGENT, which is fixed when the container is created.
-
-# Each preset's argument list, without URLs, into $reply. Extra arguments go
-# right after the program (`dlgal_batch`'s -q).
-_preset_video() {
-  reply=(yt-dlp "$@" --config-locations /config/video/yt-dlp.conf
-    --paths /downloads/dlmp4 --cookies /cookies/cookies.txt
-    --add-headers "User-Agent:${DL_USER_AGENT}")
-}
-
-_preset_gallery() {
-  reply=(gallery-dl "$@" --config /config/gallery/config.json
-    -o extractor.archive=/downloads/dlgal/gallery-dl-archive.sqlite3
-    -o "extractor.user-agent=${DL_USER_AGENT}"
-    -o "extractor.instagram.user-agent=${DL_USER_AGENT}"
-    -o extractor.instagram.base-directory=/downloads/dlgal
-    -o extractor.instagram.cookies=/cookies/cookies.txt)
-}
-
-# Download best MP4 quality with yt-dlp
-dlmp4() {
-  local reply
-  _preset_video
-  "${reply[@]}" "$@"
-}
-
-# Download image gallery with gallery-dl
-dlgal() {
-  local reply
-  _preset_gallery
-  "${reply[@]}" "$@"
-}
-
-# -------------------------------------------------------------------------------------------------
-
-# Batch download videos from a file using yt-dlp
-# Usage: dlmp4_batch <input_file>
-dlmp4_batch() {
-  # 1. Graceful handling: Check if a filename was provided
-  if [[ -z "$1" ]] || [[ ! -f "$1" ]]; then
-    rich --print "[bold red]Error:[/bold red] Valid input file required." --panel rounded
-    rich --print "Usage: [bold cyan]dlmp4_batch[/bold cyan] <input_file>"
-    return 1
-  fi
-
-  local reply
-  _preset_video
-  _batch_downloader_core "$1" "dlmp4" "Batch Download" "blue" "${reply[@]}"
-}
-
-# -------------------------------------------------------------------------------------------------
-
-# Batch download image galleries from a file using gallery-dl
-# Usage: dlgal_batch <input_file>
-dlgal_batch() {
-  # 1. Graceful handling: Check if a filename was provided
-  if [[ -z "$1" ]] || [[ ! -f "$1" ]]; then
-    rich --print "[bold red]Error:[/bold red] Valid input file required." --panel rounded
-    rich --print "Usage: [bold cyan]dlgal_batch[/bold cyan] <input_file>"
-    return 1
-  fi
-
-  local reply
-  _preset_gallery -q
-  _batch_downloader_core "$1" "dlgal" "Gallery Batch Download" "magenta" "${reply[@]}"
-}
-
-# -------------------------------------------------------------------------------------------------
+# Ported from ~/.oh-my-zsh/custom/functions.zsh. The download shortcuts are
+# retired: downloads start on the host (`just dl`, `just batch`, or `dlx dl`
+# and `dlx batch`), which run them through downloadinux-runner (DEC-33,
+# docs/target-design.md, Named cookie sources §5). The batch loop lives in
+# batch.zsh.
 
 # Interactively modify all relevant dates using exiftool
 # Usage: exifmod <input_file_or_directory>

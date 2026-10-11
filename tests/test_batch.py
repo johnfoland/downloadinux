@@ -204,46 +204,28 @@ def test_watch_attaches_uncaptured_and_returns_the_status(calls, capsys, argv, s
 
 ZSH = """
 for f in "$ZSH_HELPERS"/*.zsh; do source "$f"; done
-# Stubs print their arguments NUL-separated, one call per line.
-yt-dlp() { printf '%s\\0' yt-dlp "$@"; print; }
-gallery-dl() { printf '%s\\0' gallery-dl "$@"; print; }
-_batch_downloader_core() { printf '%s\\0' _batch_downloader_core "$@"; print; }
-whence -w dlmp4 dlgal dlmp4_batch dlgal_batch _batch_downloader_core
-dlmp4 "$URL"
-dlgal "$URL"
-dlmp4_batch "$QUEUE"
-dlgal_batch "$QUEUE"
+for name in dlmp4 dlgal dlmp4_batch dlgal_batch _preset_video _preset_gallery \\
+    _batch_downloader_core exifmod; do
+  whence -w "$name" || true
+done
 """
 
 
-def test_the_shell_helpers_run_the_package_lists(tmp_path):
-    # Run under real zsh without startup files; fails, not skips, without zsh.
-    queue = tmp_path / "queue file"
-    queue.write_text("https://example.com/q\n")
-    url = "https://example.com/watch?v=1&x=2"
-    env = {
-        "PATH": os.environ["PATH"], "HOME": str(tmp_path),
-        "ZSH_HELPERS": str(checkout.asset_path("zsh")),
-        "DL_USER_AGENT": AGENT, "URL": url, "QUEUE": str(queue),
-    }
+def test_the_download_shortcuts_are_retired(tmp_path):
+    # Named cookie sources §5 (DEC-33): downloads start on the host; the
+    # batch loop and exifmod stay. Real zsh without startup files.
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
+           "ZSH_HELPERS": str(checkout.asset_path("zsh"))}
     result = subprocess.run(["zsh", "-f", "-c", ZSH], env=env, capture_output=True,
                             text=True, check=False)
     assert result.returncode == 0, result.stderr
-    lines = result.stdout.splitlines()
-    assert lines[:5] == [
-        "dlmp4: function", "dlgal: function", "dlmp4_batch: function",
-        "dlgal_batch: function", "_batch_downloader_core: function",
+    assert result.stdout.splitlines() == [
+        "dlmp4: none", "dlgal: none", "dlmp4_batch: none", "dlgal_batch: none",
+        "_preset_video: none", "_preset_gallery: none",
+        "_batch_downloader_core: function", "exifmod: function",
     ]
-    words = [line.split("\0")[:-1] for line in lines[5:]]
-    jar = "/cookies/cookies.txt"
-    assert words == [
-        [*presets.argv("video", AGENT, cookies=jar), url],
-        [*presets.argv("gallery", AGENT, cookies=jar), url],
-        ["_batch_downloader_core", str(queue), "dlmp4", "Batch Download", "blue",
-         *presets.argv("video", AGENT, batch=True, cookies=jar)],
-        ["_batch_downloader_core", str(queue), "dlgal", "Gallery Batch Download", "magenta",
-         *presets.argv("gallery", AGENT, batch=True, cookies=jar)],
-    ]
+    for name in ("functions.zsh", "aliases.zsh", "zshrc"):
+        assert "DL_USER_AGENT" not in checkout.asset_path(f"zsh/{name}").read_text()
 
 
 def test_the_shell_starts_in_downloads_and_names_no_old_path():
