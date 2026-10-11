@@ -15,8 +15,10 @@ PRs #49–#55 ship the container runner and the remaining fronts, and
 [PR #62](https://github.com/johnfoland/downloadinux/pull/62) is the D4 cutover: downloads, batches, `just cookies`, setup,
 and doctor use named sources, and the container's download shortcuts are
 retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5), so Stage 2
-is implemented. Stages 3–4 (a persistent worker in place of tmux and the
-Python + Textual TUI) remain proposals; batch runs still use tmux.
+is implemented. Stage 3, a persistent worker and jobs in place of tmux, is
+settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
+(DEC-41 to DEC-44) but not implemented: batch runs still use tmux. Stage 4,
+the Python + Textual TUI, remains a proposal.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.

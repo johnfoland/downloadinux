@@ -193,7 +193,8 @@ decides its placement.
 
 *Where:* [target design](target-design.md), *Migration*;
 [implementation plan](implementation-plan.md), *Stage 1*. Added during
-project P0001.
+project P0001. *Amended 2026-10-11:* Stage 3 keeps the archive
+where it is (DEC-44).
 
 ## DEC-14: `.env` lines the import rules leave open (2026-10)
 
@@ -377,6 +378,8 @@ left room:
   script reporting every fact in a single `exec` was rejected for Stage 1: it
   would be a second language to test, and the speed it buys matters only
   when the TUI polls, which is Stage 4's to decide.
+- *Amended 2026-10-11, for Stage 3:* `worker.running` joins the list after
+  `container.running`, skipped under the same container rules (DEC-44).
 
 *Where:* [target design](target-design.md), *Health checks* and *Migration*
 ("Pinned for P0001-C05"). Added cutting P0001-C05.
@@ -573,7 +576,11 @@ immutable canonical revisions already preserve the selected material. Per-URL
 batch refresh remains rejected because it changes an active invocation's
 credentials. Host-return cleanup remains rejected because detached batches
 outlive their launching CLI. This adds no job storage, batch concurrency,
-scheduling, or tmux removal before Stage 3.
+scheduling, or tmux removal before Stage 3. *Amended 2026-10-11, for Stage 3:*
+from its cutover the unit is a job, one URL, and each attempt gets its own
+private jar at startup from the revision pinned when it was submitted; the
+one-jar-per-invocation and per-batch rule above covers Stage 2's invocations
+(DEC-42, DEC-43).
 
 *Where:* [target design](target-design.md), *Named cookie sources / Source store
 and publication*, *Selection, private working jars, and lifetime*, and
@@ -740,7 +747,10 @@ after the snapshot library landed in PR #45; it specifies what DEC-31 left to
 the runner and changes no decided behavior. *Amended 2026-10-10, in the review
 of PR #49, with the argument shapes the interface left implicit (option order,
 verbatim values, and the further usage errors) and the residue rule for an
-unreadable lifetime pipe, both as implemented there.*
+unreadable lifetime pipe, both as implemented there.* *Amended
+2026-10-11, for Stage 3:* the `batch` subcommand retires at the Stage 3
+cutover, with the zsh loop it runs; the worker runs `download` once per job
+(DEC-44).
 
 ## DEC-37: The host cleanup and explicit user-agent fronts have fixed reports (2026-10)
 
@@ -801,7 +811,9 @@ migrates. They launch only through `downloadinux-runner` with the container
 roots `/cookies` and `/state`. A batch's tmux script is `downloadinux-runner
 "$@"; echo; echo "[done — press a key]"; read -k1`, so the pause follows the
 runner's cleanup. Every other *Host application* message and exit status stays.
-The two user-agent errors have fixed texts.
+The two user-agent errors have fixed texts. *Amended 2026-10-11, for
+Stage 3:* from its cutover the host submits jobs instead of launching the
+runner, and the batch tmux script retires (DEC-44).
 
 Doctor's cookie and user-agent rows keep their IDs and positions and read the
 default through `ensure_store` and the shared revision reader. Any store
@@ -848,3 +860,115 @@ default or stays anonymous on a no.
 *Where:* [target design](target-design.md), *Named cookie sources* §3 (the
 host-launch paragraph) and §5 (the cutover recipes paragraph). Added on
 2026-10-11 for issue #34, before the cutover chunk was cut.
+
+## DEC-41: The worker runs in the download container and is reached through `compose exec` (2026-10)
+
+Stage 3's worker is a standard-library program, packaged like the runner
+(DEC-36), that runs as the download container's main process under Docker's
+init. It shares the container's network, so the VPN covers it as it covers
+downloads today. It listens on a Unix socket inside the container's own
+filesystem, and the host reaches it only by running a client subcommand of the
+same executable through `docker compose exec`, which prints JSON replies. The
+worker is the only process that opens the job store, a SQLite database under
+`/state/jobs/` with a rollback journal, and only one worker may use a state
+root, enforced by a lock taken on a reopened descriptor (DEC-35).
+
+A published port with an HTTP API was rejected: the design needs no network
+API for local Docker, and a port is one more thing to secure and collide.
+Letting the host open the database or a socket through the bind mount was
+rejected because locks and shared memory do not cross Docker Desktop's file
+sharing reliably (DEC-35's evidence), and WAL needs that shared memory. A
+separate worker service was rejected because it would need the VPN's network
+namespace and every mount anyway, and the open VPN-packaging question stays
+separate. Running the worker beside `sleep infinity` from the entrypoint was
+rejected because nothing would restart it or forward `docker stop` to it.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1
+and §2, *Proposed boundaries*, *Container contract*. Added on 2026-10-11 for
+issue #64, with Stage 3's design.
+
+## DEC-42: Jobs are per-URL records with explicit states, retried by hand (2026-10)
+
+A job is one URL with one preset, an integer ID, the host-pinned cookie
+selection and user-agent, a state (`queued`, `running`, `succeeded`, `failed`,
+`cancelled`, `interrupted`), a wait reason while queued, an attempt count, and
+one log per attempt. A queued or running job with the same preset and URL
+blocks a duplicate; finished jobs never do. Jobs found running when the worker
+starts, or still running when it stops, become `interrupted` and wait for a
+deliberate retry; queued jobs carry on. A retry is a new submission of the
+next attempt: the host re-pins the job's own source to its current revision,
+keeps anonymous and the stored user-agent unless the retry overrides them, and
+never follows a changed default. Records and logs are kept indefinitely
+(retention is issue #65).
+
+One job per invocation was rejected because a multi-URL `dl` or a whole queue
+could then be retried, cancelled, or deduplicated only as a block. Random
+32-character IDs were rejected for a CLI where IDs are typed. Re-queuing
+interrupted jobs automatically was rejected with the maintainer: a restart
+should leave explicit, recoverable state, not repeat work unasked. Retrying
+with the originally pinned revision was rejected because the usual reason to
+retry is a refreshed login; DEC-31's guarantee covers an attempt, and a retry
+is a new one.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §2
+and §3. Added on 2026-10-11 for issue #64, with the maintainer's choice for
+interrupted jobs.
+
+## DEC-43: Batch lanes keep the throttle, `dl` starts at once, and jobs wait for the VPN (2026-10)
+
+Each preset has one batch lane that runs its jobs one at a time, in the order
+they were queued, at least 120 to 289 seconds apart (drawn whenever a lane
+job ends, stored so it survives a restart). Each `dl` is a queue of its own:
+it starts at once, unthrottled, and runs its URLs one after another; both
+lanes and any number of `dl` submissions run at the same time. With the VPN
+enabled, the worker starts no job until `nordvpn status` reports a
+connection, rechecking every 15 seconds, and shows the job as waiting for the
+VPN. Cancelling sends `SIGTERM` to the job's runner, which forwards it to the
+downloader's group (DEC-36); there is no `SIGKILL` escalation. Stopping the
+worker signals every runner, waits up to 20 seconds, and records what is
+still running as interrupted.
+
+Putting `dl` jobs at the front of a lane, or one global lane, was rejected
+with the maintainer: today a `dl` runs alongside both batches, and a long
+video in a lane would hold it for hours. Running a multi-URL `dl`'s jobs in
+parallel was rejected because one yt-dlp ran them in turn and sites throttle
+bursts. Gating on the VPN only with the killswitch on was rejected: without
+it, a disconnected VPN sends downloads out through the host's connection,
+which `vpn.enabled` exists to prevent, and with it the download would hang.
+Escalating to `SIGKILL` was deferred: the worker cannot reach the downloader's
+group except through the runner, and the presets' downloaders exit on
+`SIGTERM`.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §4
+and §5. Added on 2026-10-11 for issue #64, with the maintainer's choice of
+immediate `dl` jobs.
+
+## DEC-44: `dl` follows and detaches, `batch` consumes its queue file, and tmux goes (2026-10)
+
+`dl` submits its URLs and follows their logs; Ctrl-C, a closed terminal, or
+`SIGTERM` detaches and leaves the jobs running, and `--detach` skips following.
+`batch` reads a queue file from any host path, submits its URLs to the
+preset's lane in one all-or-nothing submission, then rewrites the file without
+the URLs it queued or found already active, keeping comments and other lines.
+`watch` follows a lane. New `jobs` commands list, show, print or follow logs,
+cancel, retry, and export failed, cancelled, and interrupted URLs as a queue
+file. `doctor` gains `worker.running`. At one cutover pull request, the image
+drops tmux and the zsh batch loop, the runner's `batch` subcommand goes, every
+job uses its preset's one argument list (the gallery batch's `-q` goes), and
+the URL-only batch logs stop. The gallery archive and output layout stay where
+they are.
+
+Cancelling on Ctrl-C was rejected with the maintainer: it would make Ctrl-C
+and a closed terminal disagree, and jobs are meant to outlive the CLI.
+Leaving the queue file untouched or renaming it was rejected with the
+maintainer: appending URLs and running `just batch` again should keep working
+as it does today, with failures kept in job history rather than the file.
+Keeping the queue under `paths.downloads` was rejected because the host now
+reads it. Keeping `-q` for batch jobs was rejected because it quieted a shared
+terminal, and each job now has its own log. Moving the archive into `/state`
+was rejected: DEC-6 preserves it, and moving it would gain nothing.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §6
+to §8, *Host application*, *Health checks*; [implementation
+plan](implementation-plan.md), *Stage 3*. Added on 2026-10-11 for issue #64,
+with the maintainer's choices for Ctrl-C and the queue file.
