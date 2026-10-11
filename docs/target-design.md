@@ -956,7 +956,7 @@ yt-dlp's input-before-output cookie lifecycle.
 ## Named cookie sources
 
 Settled for Stage 2, project P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34))
-(DEC-28 to DEC-37). PR #39 implements §1's internal reader/publication
+(DEC-28 to DEC-40). PR #39 implements §1's internal reader/publication
 foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
@@ -1159,7 +1159,14 @@ Stage 3; Stage 2 does not add same-preset batch concurrency.
 
 Host launch (DEC-39). A malformed `--cookie-source` name, both selectors
 together, or an invalid `--user-agent` (§4) is a usage error, exit 2, before
-settings are loaded. After settings load and *Host application*'s preset/URL or
+settings are loaded. The three options may appear anywhere among `dl`'s and
+`batch`'s arguments. `--cookie-source` checks its value with the `cookies`
+commands' name rule and forms one argparse mutually exclusive group with
+`--anonymous`, so a malformed name or both selectors print argparse's own
+usage message. An invalid `--user-agent` prints `downloadinux: error:
+--user-agent: VALUE must be nonempty and contain no CR or LF`, the host's
+error form, never a traceback; a value beginning with `-` is spelled
+`--user-agent=VALUE` (DEC-40). After settings load and *Host application*'s preset/URL or
 queue validation, the host refuses a configured user-agent with CR/LF (§4),
 then pins through the shared submission pinning (`cookie_pinning.pin`): a
 migration failure, an unregistered name, or a missing or invalid pinned
@@ -1523,6 +1530,18 @@ add-browser, or import.` and exits 0. Yes runs `cookies firefox` with default
 discovery: success prints its summary and exits 0, and failure exits 1 with its
 error and the default still anonymous. The setup recipe reports a non-zero
 status and continues to the build.
+
+Cutover recipes (DEC-40). `just dl +args` and `just batch +args` run `uv run
+downloadinux dl "$@"` and `uv run downloadinux batch "$@"`, so options and
+positional words reach the CLI unchanged, each word one argument, and the CLI
+validates them; `batch`'s queue stays optional. `just cookies *args` runs `uv
+run downloadinux cookies firefox "$@"`, with no host `yt-dlp` command, probe,
+or `just useragent`. Setup's third step is headed `Cookie source` and runs
+`uv run downloadinux cookies setup`; a non-zero status N prints `    The
+cookie step failed (exit N); setup continues. Retry with: dlx cookies setup`
+and setup goes on to the build. Setup's last line becomes `Ready.  Download
+with:  just dl video <url>`, styled as before, since `just shell` is no
+longer a download route.
 
 Retire the container's interactive download shortcuts `dlmp4`, `dlgal`,
 `dlmp4_batch`, and `dlgal_batch` at Stage 2 cutover (DEC-33). Users start
