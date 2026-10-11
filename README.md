@@ -11,9 +11,10 @@ sources, has cut over: downloads, batches, `just cookies`, setup, and doctor
 all use named sources with a default, each download or batch runs through the
 container's `downloadinux-runner` on its own private copy of the pinned
 source revision (or anonymously), and `--user-agent` overrides the setting
-for one run. Stage 2's completion evidence is still pending. The [planning documents](docs/README.md) describe the remaining
-Stage 2 work and proposed worker and Python + Textual TUI. This README covers
-what is implemented.
+for one run. Stage 2 is implemented, with its completion evidence in
+[PR #63](https://github.com/johnfoland/downloadinux/pull/63). The [planning documents](docs/README.md) describe the
+proposed worker and Python + Textual TUI (Stages 3–4); batch runs still use
+tmux until then. This README covers what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, run from the host with `just dl` and `just batch`. The one thing that had to

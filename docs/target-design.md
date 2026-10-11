@@ -12,8 +12,8 @@ adds the `cookies firefox` and `cookies setup` fronts (DEC-38) and TOML 1.0
 settings writes. PR #62 implements D4's cutover: `dl` and `batch` select,
 pin, and launch through the runner with `--user-agent`; `just cookies`,
 setup, and doctor use named sources; the container's download shortcuts,
-`DL_USER_AGENT`, and the placeholder jar are retired. Stage 2's completion
-evidence (D5) is pending, so Stage 2 is not yet marked implemented. Passages
+`DL_USER_AGENT`, and the placeholder jar are retired. PR #63 adds Stage 2's
+completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stages 3–4 remain proposed.
 
@@ -997,7 +997,8 @@ front, with in-image evidence, and §4's explicit `config user-agent VALUE`.
 PR #55 implements §5's `cookies firefox` and `cookies setup` fronts. PR #62
 implements D4's coordinated cutover: §3's selection options and host launch
 through the runner for `dl` and `batch`, §4's `--user-agent`, and §5's
-recipes, doctor rows, and retirements. D5's completion evidence is pending.
+recipes, doctor rows, and retirements. PR #63 adds D5's completion evidence,
+so Stage 2 is implemented.
 These rules replaced Stage 1's shared-jar execution and required
 Firefox/probe/user-agent recipe chain.
 

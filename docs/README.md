@@ -14,8 +14,9 @@ pinning, exact pinned reads, lease-held snapshot allocation, and lease-safe clea
 PRs #49–#55 ship the container runner and the remaining fronts, and
 [PR #62](https://github.com/johnfoland/downloadinux/pull/62) is the D4 cutover: downloads, batches, `just cookies`, setup,
 and doctor use named sources, and the container's download shortcuts are
-retired. Stage 2's completion evidence (D5) remains pending. Stages 3–4 (a persistent worker in place of tmux
-and the Python + Textual TUI) remain proposals; batch runs still use tmux.
+retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5), so Stage 2
+is implemented. Stages 3–4 (a persistent worker in place of tmux and the
+Python + Textual TUI) remain proposals; batch runs still use tmux.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.

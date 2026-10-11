@@ -3,6 +3,8 @@
 set -euo pipefail
 
 smoke_dir=$(mktemp -d)
+# Implementation plan, Stage 2: cookie operations dirty no tracked file.
+tracked_before=$(git -C "$(dirname "$0")/.." status --porcelain --untracked-files=no)
 sets=(--set "container.project=downloadinux-check" --set vpn.enabled=false
   --set "paths.downloads=$smoke_dir/downloads with space"
   --set "paths.state=$smoke_dir/state" --set "paths.cookies=$smoke_dir/cookies")
@@ -13,7 +15,8 @@ cleanup() {
   rm -rf "$smoke_dir"
 }
 trap cleanup EXIT
-mkdir -p "$smoke_dir/downloads with space" "$smoke_dir/state" "$smoke_dir/cookies"
+mkdir -p "$smoke_dir/downloads with space" "$smoke_dir/state" "$smoke_dir/cookies" \
+  "$smoke_dir/fresh-cookies"
 
 # Pipe resolved config straight to a checker: never print it.
 "${cli[@]}" compose -- config --format json | python3 -c '
@@ -54,6 +57,18 @@ if pgrep -x nordvpnd; then
 fi
 ' sh "$(id -u)" "$(id -g)"
 test -d "$smoke_dir/downloads with space/dlmp4"
+
+# Named cookie sources §5, migration: a synthetic Stage 1 managed jar with a
+# session, an expired and an unexpired record. The first source operation
+# (doctor, below) registers it as `legacy`; nothing may write it afterwards.
+(
+  umask 077
+  printf '# Netscape HTTP Cookie File\n'
+  printf '.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tsynthetic-legacy-session\n'
+  printf '.youtube.com\tTRUE\t/\tTRUE\t1000000000\tSAPISID\tsynthetic-legacy-expired\n'
+  printf '.example.com\tTRUE\t/\tFALSE\t4102444800\tpref\tsynthetic-legacy-pref\n'
+) >"$smoke_dir/cookies/cookies.txt"
+cp "$smoke_dir/cookies/cookies.txt" "$smoke_dir/stage1-jar.copy"
 
 # DEC-26: use real Linux ownership and the shipped entrypoint. The fixture
 # containers share the check project's retained history volume; only root
@@ -159,7 +174,8 @@ fi
 printf 'Runtime home failure diagnostics passed (mkdir and chown).\n'
 
 # D4: the running VPN-off container must satisfy every container contract
-# check, while VPN probes are skipped without credentials.
+# check, while VPN probes are skipped without credentials. Its cookie rows
+# are the migrated Stage 1 install's (Named cookie sources §5's table).
 "${cli[@]}" up
 "${cli[@]}" doctor --json | python3 -c '
 import json, sys
@@ -180,12 +196,31 @@ for name in ("docker.daemon", "container.running"):
     assert checks[name]["status"] == "ok", checks[name]
 for name in ("vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"):
     assert checks[name] == {"id": name, "status": "skip", "summary": "VPN disabled in config"}
+for name, status, summary in (
+    ("cookies.jar", "ok", "source legacy: 3 cookies (1 expired)"),
+    ("cookies.instagram", "ok", "instagram: session cookie present"),
+    ("cookies.youtube", "warn",
+     "youtube: session cookie expired (fine unless you need age-gated or members-only video)"),
+    ("downloads.user_agent", "ok", "explicit user-agent set"),
+):
+    assert (checks[name]["status"], checks[name]["summary"]) == (status, summary), name
 '
+"${cli[@]}" cookies list --json | python3 -c '
+import json, sys
+report = json.load(sys.stdin)
+[legacy] = report["sources"]
+assert report["default"] == "legacy", "default is not legacy"
+assert (legacy["name"], legacy["kind"], legacy["path"]) == ("legacy", "file", sys.argv[1]), "legacy source"
+' "$smoke_dir/cookies/cookies.txt"
 
 # Stage 1's evidence that a fresh `init` config passes doctor with the VPN
 # off: the same values written into a settings file, then only --config.
+# Its empty cookie root is a fresh anonymous install (Named cookie sources
+# §5): restart mounts that root, so doctor's mount and cookie rows agree.
 fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")
-"${fresh[@]}" "${sets[@]}" init >/dev/null
+"${fresh[@]}" "${sets[@]}" --set "paths.cookies=$smoke_dir/fresh-cookies" init >/dev/null
+cp "$smoke_dir/config.toml" "$smoke_dir/config.toml.copy"
+"${fresh[@]}" restart
 if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then
   echo "doctor failed with a fresh init settings file:" >&2
   cat "$smoke_dir/doctor-init.json" >&2
@@ -197,7 +232,22 @@ report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True, report
 assert checks["config.file"]["status"] == "ok", checks["config.file"]
+for name in ("cookies.jar", "cookies.instagram", "cookies.youtube"):
+    assert (checks[name]["status"], checks[name]["summary"]) == ("skip", "anonymous cookie default"), name
+assert (checks["downloads.user_agent"]["status"], checks["downloads.user_agent"]["summary"]) == (
+    "ok", "explicit user-agent set")
 ' <"$smoke_dir/doctor-init.json"
+"${fresh[@]}" cookies setup </dev/null >"$smoke_dir/setup.out"
+printf '%s\n%s\n' 'Export Firefox cookies now? [y/N] ' \
+  'The cookie default stays anonymous; add a source later with dlx cookies firefox, add-browser, or import.' \
+  | cmp -s - "$smoke_dir/setup.out"
+"${fresh[@]}" cookies list --json | python3 -c '
+import json, sys
+assert json.load(sys.stdin) == {"default": None, "sources": []}, "fresh install is not anonymous and empty"
+'
+cmp -s "$smoke_dir/config.toml" "$smoke_dir/config.toml.copy"
+"${cli[@]}" restart
+printf 'Fresh anonymous install passed (doctor skips, setup kept anonymous, no settings written).\n'
 
 # Also pin the unchanged image identity and the refusal of an occupied UID.
 # shellcheck disable=SC2016
@@ -285,6 +335,13 @@ batch_paused() {
   [[ $pane == *"[done — press a key]"* ]]
 }
 
+# The migrated legacy default, no selector: the Stage 1 jar's registered
+# revision reaches a real route.
+"${route[@]}" dl video https://example.com/legacy
+route_check named-download legacy "$(revision_of legacy)" "$route_agent" https://example.com/legacy
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
+rm -f "$route_log"/call-*
+
 # The default source, no selector: one call for both URLs, one private jar.
 "${route[@]}" cookies default alpha >/dev/null
 "${route[@]}" dl video https://example.com/one "https://example.com/two words"
@@ -358,4 +415,11 @@ if [[ $status -ne 1 || -s "$smoke_dir/cleanup.out" ]] || ! grep -Fqx \
   exit 1
 fi
 printf 'Cookie cleanup passed (removed 1, then 0, then refused when stopped).\n'
+
+# Nothing else moved: migration, refresh, downloads and cleanup never wrote
+# the Stage 1 jar, the absent settings file, or a tracked file.
+cmp -s "$smoke_dir/cookies/cookies.txt" "$smoke_dir/stage1-jar.copy"
+test ! -e "$smoke_dir/absent.toml"
+test "$(git -C "$(dirname "$0")/.." status --porcelain --untracked-files=no)" = "$tracked_before"
+printf 'Migrated Stage 1 install passed (legacy default, doctor rows, real route, jar and tracked files untouched).\n'
 printf 'Container smoke test passed (uid %s, gid %s).\n' "$(id -u)" "$(id -g)"

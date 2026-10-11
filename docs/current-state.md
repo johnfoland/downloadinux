@@ -262,5 +262,6 @@ source (`--cookie-source`, `--anonymous`, or the default), pin its revision,
 and launch through the runner with an optional `--user-agent`; `just cookies`
 and setup call the new fronts; doctor reads the source store; and the
 container's download shortcuts, `DL_USER_AGENT`, and the placeholder jar are
-retired. Stage 2's completion evidence (D5) remains pending.
+retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5): Stage 2 is
+implemented.
 The dated review and Stage 1 outcomes above remain historical observations.

@@ -167,9 +167,12 @@ def test_smoke_runs_doctor_on_a_fresh_init_config():
     lines = [line.strip() for line in body.splitlines()]
     assert 'cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}")' in lines
     assert 'fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")' in lines
-    init = lines.index('"${fresh[@]}" "${sets[@]}" init >/dev/null')
+    # Named cookie sources §5: the fresh install has its own empty cookie
+    # root, which restart mounts before its doctor runs.
+    init = lines.index('"${fresh[@]}" "${sets[@]}" --set "paths.cookies=$smoke_dir/fresh-cookies" init >/dev/null')
+    restart = lines.index('"${fresh[@]}" restart')
     doctor = lines.index('if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then')
-    assert lines.index('"${cli[@]}" doctor --json | python3 -c \'') < init < doctor
+    assert lines.index('"${cli[@]}" doctor --json | python3 -c \'') < init < restart < doctor
     assert 'assert report["ok"] is True, report' in lines
     assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 

@@ -15,8 +15,8 @@ parser and atomic source-store foundation; P0003-C02 implements locked legacy
 migration and host-only list/inspect/default commands, finishing D1's build.
 [PR #41](https://github.com/johnfoland/downloadinux/pull/41) implements accepted browser/file registration and explicit refresh (D2).
 PRs #45–#55 implement private execution and the remaining fronts, and PR #62
-the D4 cutover onto named sources; D5's completion evidence is pending.
-Stages 3–4 remain proposals.
+the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
+Stage 2 is implemented. Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -70,8 +70,9 @@ fronts (§5, DEC-38). PR #62 implements D4's coordinated cutover (§3–§5,
 DEC-39, DEC-40): `dl`/`batch` selection, pinning, runner launch and
 `--user-agent`; `just cookies`, setup, and doctor on named sources; and the
 retirement of the container download shortcuts, `DL_USER_AGENT`, and the
-placeholder jar. D5's completion evidence is pending, so Stage 2 is not yet
-complete.
+placeholder jar. PR #63 adds D5's completion evidence (the migrated Stage 1
+and fresh anonymous installs in the gate's smoke test, and `config
+import-env`'s join to the first cookie operation), so Stage 2 is implemented.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
@@ -168,7 +169,8 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 ## Migration checklist
 
 - Inventory settings to import from `.env` without copying secrets into docs/logs.
-- Register the existing `cookies/cookies.txt` as a named source.
+- Register the existing `cookies/cookies.txt` as a named source (done in
+  PR #40: migration registers it as `legacy`).
 - Preserve `dlmp4` and `dlgal` naming and output conventions in the presets;
   retire their container shell shortcuts in Stage 2 and document host commands
   (done in PR #62).
@@ -200,5 +202,6 @@ pinning/snapshot foundation, PR #49 the container runner and its image
 integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
-D5, Stage 2's completion evidence, is next. Worker/job rules
+D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
+implemented. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.
