@@ -360,12 +360,11 @@ the old jar has live session cookies and may be world-readable: check with
 
 ## Inspecting the preparatory source store
 
-**These commands prepare Stage 2. Current downloads, `just cookies`, setup,
-and doctor still use `paths.cookies/cookies.txt` and ignore the registry default,
-including `anonymous`.** Browser/file registration and explicit refresh are
-implemented; private execution jars and anonymous download flags remain pending.
+**`dl` and `batch` run on these sources ([Daily use](#daily-use)). `just
+cookies`, setup, and doctor still use `paths.cookies/cookies.txt` and ignore
+the registry default until they move over too.**
 
-The first source-store operation (list, inspect, default, registration, or refresh) reads the managed Stage 1 jar
+The first source-store operation (list, inspect, default, registration, refresh, or a `dl` or `batch` without `--anonymous`) reads the managed Stage 1 jar
 under the host writer lock when no `sources.json` exists. A valid nonempty jar
 becomes source `legacy` and the source-store default in one atomic publication;
 a missing or valid header-only jar creates an empty anonymous store. The old
@@ -379,8 +378,8 @@ dlx cookies list --json          # migrate once, then list metadata
 dlx cookies default              # print legacy or anonymous
 # With a nonempty migrated jar:
 dlx cookies inspect legacy --json
-dlx cookies default legacy       # select the future named-source default
-dlx cookies default --anonymous  # future default only; current downloads still use the old jar
+dlx cookies default legacy       # the default for the next dl or batch
+dlx cookies default --anonymous  # later downloads use no cookies
 ```
 
 With an empty store, list/default succeed; `inspect legacy` fails because no
@@ -409,7 +408,7 @@ dlx cookies add-browser work --browser chrome --profile "Default"
 # Linux, when the browser uses GNOME Keyring:
 dlx cookies add-browser linux-work --browser chromium --keyring GNOMEKEYRING
 dlx cookies inspect imported
-dlx cookies default imported  # explicit future account selection
+dlx cookies default imported  # explicit account selection for later downloads
 ```
 
 Names match `[a-z0-9][a-z0-9_-]{0,63}`. Registration prints the same safe
@@ -472,7 +471,7 @@ access, or explicitly replace the origin with `cookies import` / `add-browser`
 
 Private cookie snapshots are the per-download working copies the container
 runner makes under `paths.state/cookie-invocations/` and removes when the
-download ends. A hard kill or a stopped container can leave one behind;
+download or batch ends. A hard kill or a stopped container can leave one behind;
 `dlx cookies cleanup` asks the running container's `downloadinux-runner` to
 remove those:
 
@@ -486,8 +485,7 @@ in use, or one it cannot verify, is skipped and counted. It never touches the
 source store, reads no registry, and never migrates. It needs the container
 running (`dlx up`; a stopped one is an error that says so) from an image built
 with the runner: an older image fails with a hint to run `dlx build` and
-`dlx restart`. No download creates snapshots yet: they arrive with the
-download cutover, so until then there is normally nothing to remove.
+`dlx restart`.
 
 
 ---
@@ -500,6 +498,8 @@ Everything works from the host. Recipes use the selected settings file;
 ```sh
 just dl video 'https://youtube.com/watch?v=...'   # one or more URLs
 just dl gallery 'https://instagram.com/p/...'
+just dl --cookie-source work video '<url>'       # a named cookie source
+just dl --anonymous video '<url>'                # no cookies at all
 just batch video                                 # queue, detached tmux
 just watch video                                 # attach to it
 
@@ -514,11 +514,35 @@ just shell                                       # zsh inside the box
 `dl` and `batch` both take a preset as their first word: `video` runs yt-dlp
 with the `video` preset (your old `dlmp4` config), `gallery` runs gallery-dl
 with the `gallery` preset (`dlgal`'s). `v`, `gal`, and `g` work as shorthands;
-anything else is a usage error. `just dl` runs `dlx dl`, which gives the
-downloader its output root, the managed cookie jar, and `downloads.user_agent`
-as arguments and exits with the downloader's status. Video lands in
-`dlmp4/<site>/<uploader>/` under your downloads folder; Instagram galleries in
-`dlgal/`, other galleries in `gallery-dl/`.
+anything else is a usage error. `just dl` runs `dlx dl`, which hands the
+container's `downloadinux-runner` the preset, the URLs, the cookie selection,
+and the user-agent; the runner gives the downloader its output root, a private
+cookie jar, and that user-agent as arguments, and `dlx dl` exits with the
+downloader's status. Video lands in `dlmp4/<site>/<uploader>/` under your
+downloads folder; Instagram galleries in `dlgal/`, other galleries in
+`gallery-dl/`.
+
+Three options choose the cookies and the user-agent for one `dl` or `batch`:
+
+- `--cookie-source NAME` uses that registered source; `--anonymous` uses no
+  cookies and never reads the source store. They are mutually exclusive.
+  With neither, the source store's default applies (`dlx cookies default`),
+  and with no default the run is anonymous. A name that is not registered,
+  or a damaged store, stops the run before anything starts: it never falls
+  back to another account.
+- `--user-agent VALUE` replaces `downloads.user_agent` for this run only,
+  without writing the settings file. It must be nonempty and a single line.
+  Spell a value beginning with `-` as `--user-agent=-VALUE`.
+
+The options go before the preset, after it, or after the last URL, but not
+between two URLs (`just dl video URL --anonymous URL2` is a usage error). The
+host resolves the source to its current revision when you run the command.
+Each `dl` call, however many URLs, gets one private copy of that revision, and
+a batch gets one for its whole run, deleted when it ends. A refresh, a
+replacement, or a new default after you submit never changes a run already
+started or queued; the next command picks it up. `gallery` passes the
+cookies to Instagram only. Settings with a multi-line `downloads.user_agent`
+refuse to run until you set a single-line value.
 
 With `vpn.enabled = false` the container runs no NordVPN daemon, so `just vpn`
 refuses (exit 1, naming `vpn.enabled`) instead of failing inside the
@@ -556,8 +580,8 @@ city that doesn't exist and it prints the valid ones.
 
 ## Batch queues
 
-`dlmp4_batch` throttles a couple of minutes between URLs and can run for hours,
-so `just batch` (`dlx batch`) launches the same loop in a detached tmux session
+The `video` batch throttles a couple of minutes between URLs and can run for
+hours, so `just batch` (`dlx batch`) launches the batch loop in a detached tmux session
 inside the container — it survives your terminal closing, your laptop
 sleeping, and `just shell` exiting.
 
@@ -569,10 +593,12 @@ just batch gallery             # defaults to <paths.downloads>/dlgal_queue
 just watch gallery
 ```
 
-Pass a path to use a different queue file:
+Pass a path to use a different queue file, and `dl`'s options to choose the
+cookies or the user-agent:
 
 ```sh
 just batch video ~/Downloads/some-other-queue.txt
+just batch --cookie-source work gallery
 ```
 
 The queue file must live under `paths.downloads` — that's the output directory
@@ -583,10 +609,13 @@ without resolving symlinks. `dlx batch` takes a relative path against your
 working directory; `just batch` runs in the checkout, so give it an absolute
 or `~` path.
 
-The loop runs under `zsh -f`, which reads none of the shell's startup files:
-the session sources only `zsh/batch.zsh` and is handed the preset's argument
-list, the one `dlx dl` uses (plus `-q` for gallery-dl, as `dlgal_batch` always
-had). If a session of that name is already running, `dlx batch` exits 1 and
+The tmux session runs `downloadinux-runner`, which copies the pinned cookie
+revision into one private jar for the whole batch and starts the loop under
+`zsh -f`, which reads none of the shell's startup files: it sources only
+`zsh/batch.zsh` and is handed the preset's argument list, the one `dlx dl`
+uses (plus `-q` for gallery-dl: the `gallery` batch runs quiet). The runner
+deletes the jar when the loop ends, before the `[done — press a key]` pause.
+If a session of that name is already running, `dlx batch` exits 1 and
 tells you to attach with `dlx watch`. `dlx watch` takes `video` (the default),
 `gallery`, their shorthands, or any other tmux session name.
 
@@ -807,8 +836,8 @@ dlx cookies setup            Setup's cookie step: keep a named default, or with 
 dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
 dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
-dlx cookies default [NAME]   Report/select the future source default; --anonymous selects null
-                               (NAME and --anonymous conflict; current downloads ignore it)
+dlx cookies default [NAME]   Report/select the default for dl and batch; --anonymous selects
+                               null (NAME and --anonymous conflict)
 dlx cookies cleanup          Remove abandoned private cookie snapshots in the running
                                container and report removed/skipped counts
 dlx build / up / down        Build, start in the background, or stop the configured project
@@ -816,10 +845,11 @@ dlx restart                 Recreate with current settings (up -d --force-recrea
 dlx update                  Build --no-cache, then up -d; stops if the build fails
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
 dlx dl <preset> <url>...     Download with a preset: video (v) or gallery (gal, g); exits
-                               with the downloader's status
+                               with the downloader's status. --cookie-source NAME or
+                               --anonymous (else the cookie default), --user-agent VALUE
 dlx batch <preset> [queue]   Run a queue file under paths.downloads in a detached tmux
                                session (default <paths.downloads>/dlmp4_queue or
-                               dlgal_queue); exit 1 if it is missing or outside
+                               dlgal_queue); exit 1 if it is missing or outside; dl's options
 dlx watch [preset|session]   Attach to a batch session (default video); exits with
                                tmux's status
 dlx shell                    zsh inside the container as dl; exits with its status
@@ -867,9 +897,12 @@ just useragent [ua]  Set downloads.user_agent to a literal (quote it), or
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries
+                              (both take --cookie-source NAME | --anonymous,
+                              --user-agent=UA)
 just batch video [file]     Run a queue in detached tmux
                               (defaults to <paths.downloads>/dlmp4_queue)
 just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
+                              (dl's options too)
 just watch video|gallery    Attach to a running batch session
 just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand

@@ -1,20 +1,18 @@
 """`batch`, `watch`, and the container's zsh helpers (P0001-C04-d; target
 design, *Host application*, "Downloads, pinned for P0001-C04", and *Container
-contract*), with fake runners: no test starts Docker."""
+contract*), with fake runners: no test starts Docker. The batch's cookie
+selection, user-agent options and launch order are in `test_host_launch.py`
+(Named cookie sources §3, "Host launch (DEC-39)")."""
 
 import os
 import subprocess
 
 import pytest
 
-from downloadinux import checkout, presets
+from downloadinux import checkout, cookie_store, launch, presets
 from test_container_commands import calls, compose_args, run  # noqa: F401 (fixture)
 
 AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-SCRIPT = (
-    'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"; '
-    'echo; echo "[done — press a key]"; read -k1'
-)
 EXEC = ["exec", "-u", "dl", "downloadinux"]
 ROWS = {
     "video": ("batch-video", "dlmp4_queue", "dlmp4", "Batch Download", "blue"),
@@ -23,20 +21,19 @@ ROWS = {
 
 
 def tmux(preset, container_queue):
-    session, _, prefix, title, colour = ROWS[preset]
+    """An anonymous batch (the empty store's default): the runner in the
+    preset's session (Named cookie sources §3, DEC-39)."""
+    session = ROWS[preset][0]
+    runner = launch.runner_argv("batch", cookie_store.ANONYMOUS, AGENT, preset, [container_queue])
     return [
         *EXEC, "tmux", "new-session", "-d", "-s", session, "-c", "/downloads",
-        "zsh", "-f", "-c", SCRIPT, "zsh", container_queue, prefix, title, colour,
-        *presets.argv(preset, AGENT, batch=True),
+        "zsh", "-f", "-c", launch.BATCH_RUNNER_SCRIPT, "zsh", *runner[1:],
     ]
 
 
-def test_batch_script_is_the_shared_loop_plus_the_pause():
-    # The runner reuses the loop text; the host keeps its pause (DEC-36).
-    from downloadinux import operations
+def test_the_runner_keeps_the_shared_loop():
+    # The runner starts this loop text inside its lease (DEC-36).
     assert presets.LOOP == 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
-    assert operations.BATCH_SCRIPT == presets.LOOP + '; echo; echo "[done — press a key]"; read -k1'
-    assert operations.BATCH_SCRIPT == SCRIPT
 
 
 @pytest.fixture
@@ -66,14 +63,6 @@ def test_default_queue_builds_the_pinned_tmux_argv(calls, capsys, downloads, pre
     [(kind, argv, _)] = calls
     assert kind == "run"  # uncaptured: no -T
     assert compose_args(argv) == tmux(preset, f"/downloads/{queue}")
-
-
-def test_gallery_batch_has_quiet_right_after_gallery_dl(calls, capsys, downloads):
-    (downloads / "dlgal_queue").write_text("")
-    batch(capsys, downloads, "gallery")
-    program = compose_args(calls[0][1])
-    start = program.index("gallery-dl")
-    assert program[start:start + 3] == ["gallery-dl", "-q", "--config"]
 
 
 @pytest.mark.parametrize("preset", ["video", "gallery"])
@@ -246,13 +235,14 @@ def test_the_shell_helpers_run_the_package_lists(tmp_path):
         "dlgal_batch: function", "_batch_downloader_core: function",
     ]
     words = [line.split("\0")[:-1] for line in lines[5:]]
+    jar = "/cookies/cookies.txt"
     assert words == [
-        [*presets.argv("video", AGENT), url],
-        [*presets.argv("gallery", AGENT), url],
+        [*presets.argv("video", AGENT, cookies=jar), url],
+        [*presets.argv("gallery", AGENT, cookies=jar), url],
         ["_batch_downloader_core", str(queue), "dlmp4", "Batch Download", "blue",
-         *presets.argv("video", AGENT, batch=True)],
+         *presets.argv("video", AGENT, batch=True, cookies=jar)],
         ["_batch_downloader_core", str(queue), "dlgal", "Gallery Batch Download", "magenta",
-         *presets.argv("gallery", AGENT, batch=True)],
+         *presets.argv("gallery", AGENT, batch=True, cookies=jar)],
     ]
 
 

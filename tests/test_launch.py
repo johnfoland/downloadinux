@@ -3,7 +3,8 @@
 Every runner list is parsed by the runner's real parser, and the batch's tmux
 script runs under real `zsh -f` with a stub `downloadinux-runner` first on
 `PATH`: comparing lists alone proves nothing about how zsh passes `"$@"`.
-Nothing here is wired into `dl`, `batch` or the CLI yet.
+`dl` and `batch` run these lists; `test_host_launch.py` drives them through
+the CLI.
 """
 
 import os
@@ -13,8 +14,7 @@ import subprocess
 
 import pytest
 
-from downloadinux import cookie_runner, cookie_store as store, launch, operations, presets
-from test_container_commands import compose_args
+from downloadinux import cookie_runner, cookie_store as store, launch, presets
 
 PINNED = store.Pinned("firefox", "0123456789abcdef" * 2)
 AGENTS = ["", "-x", "--anonymous", "Mozilla/5.0 (X11; Linux x86_64) Chrome/150.0.0.0 Safari/537.36"]
@@ -68,12 +68,8 @@ def test_runner_argv_refuses_other_commands_and_selections():
 
 # --- batch_program ---------------------------------------------------------
 
-def test_the_script_keeps_stage_1s_pause():
-    prefix = 'downloadinux-runner "$@"'
-    assert launch.BATCH_RUNNER_SCRIPT.startswith(prefix)
-    assert operations.BATCH_SCRIPT.startswith(presets.LOOP)
-    assert (launch.BATCH_RUNNER_SCRIPT.removeprefix(prefix)
-            == operations.BATCH_SCRIPT.removeprefix(presets.LOOP))
+def test_the_script_is_dec_39s():
+    # The runner, then Stage 1's pause, so the pause follows the cleanup.
     assert launch.BATCH_RUNNER_SCRIPT == (
         'downloadinux-runner "$@"; echo; echo "[done — press a key]"; read -k1'
     )
@@ -88,23 +84,14 @@ def test_the_batch_program_is_exact(preset, word):
     ]
 
 
-@pytest.mark.parametrize("preset", ["video", "gallery"])
-def test_the_session_and_directory_match_stage_1s_batch(tmp_path, preset):
-    downloads = tmp_path / "downloads"
-    downloads.mkdir()
-    (downloads / presets.PRESETS[preset].queue).write_text("")
-    recorded = []
-
-    def runner(argv, environ):
-        recorded.append(list(argv))
-        return 0
-
-    operations.batch(preset, overrides=[f"paths.downloads={downloads}"], runner=runner)
-    [argv] = recorded
-    stage1 = compose_args(argv)[len(["exec", "-u", "dl", "downloadinux"]):]
-    assert stage1[0] == "tmux"
+@pytest.mark.parametrize("preset,session", [("video", "batch-video"), ("gallery", "batch-gallery")])
+def test_the_session_and_directory_are_the_host_application_tables(preset, session):
+    # *Host application*, "Downloads, pinned for P0001-C04": the fixed
+    # session names, started in /downloads.
     args = launch.runner_argv("batch", store.ANONYMOUS, "UA", preset, [QUEUE])
-    assert launch.batch_program(preset, args)[:10] == stage1[:10]
+    assert launch.batch_program(preset, args)[:10] == [
+        "tmux", "new-session", "-d", "-s", session, "-c", "/downloads", "zsh", "-f", "-c",
+    ]
 
 
 # --- the real zsh run ------------------------------------------------------

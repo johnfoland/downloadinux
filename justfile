@@ -124,13 +124,13 @@ useragent *args:
 shell:
     @uv run downloadinux shell
 
-# Download with a preset: just dl video <url>...  |  just dl gallery <url>...
-dl kind +urls:
+# Download with a preset: just dl [--cookie-source NAME | --anonymous] [--user-agent=UA] video|gallery <url>...
+dl +args:
     @uv run downloadinux dl "$@"
 
-# Queue in detached tmux: just batch video [file] | just batch gallery [file]
-batch kind file="":
-    @uv run downloadinux batch "$1" ${2:+"$2"}
+# Queue in detached tmux: just batch [dl's options] video|gallery [file]
+batch +args:
+    @uv run downloadinux batch "$@"
 
 # Attach to a running batch (Ctrl-b d detaches without killing it)
 watch kind="video":

@@ -214,7 +214,7 @@ def rig(tmp_path):
 def test_named_download_runs_the_preset_on_a_private_jar(rig, preset):
     code, out, err = rig.run(rig.argv('download', preset, *URLS))
     assert (code, out, err) == (0, '', '')
-    [record] = rig.records(presets.argv(preset, UA)[0])
+    [record] = rig.records(presets.argv(preset, UA, cookies=None)[0])
     jar = assert_private(rig, record)
     assert record['argv'] == presets.argv(preset, UA, cookies=str(jar))[1:] + URLS
     # Gallery cookies stay Instagram-only (DEC-6); no other element names the jar.
@@ -232,7 +232,7 @@ def test_anonymous_download_has_no_cookie_argument_or_snapshot(rig, preset):
     damaged.write_text('not a cookie root')
     code, out, err = rig.run(rig.argv('download', preset, *URLS, anonymous=True, cookies=damaged))
     assert (code, out, err) == (0, '', '')
-    [record] = rig.records(presets.argv(preset, UA)[0])
+    [record] = rig.records(presets.argv(preset, UA, cookies=None)[0])
     assert record['argv'] == presets.argv(preset, UA, cookies=None)[1:] + URLS
     assert not [item for item in record['argv'] if 'cookie' in item.lower()]
     assert [kind for _, kind, *_ in record['fds']] == ['fifo']
@@ -259,7 +259,7 @@ def test_batch_runs_the_shared_loop_with_one_jar(rig, preset):
     row = presets.PRESETS[preset]
     assert loop['argv'] == ['-f', '-c', presets.LOOP, 'zsh', str(queue), row.log_prefix, row.title, row.colour,
                             *presets.argv(preset, UA, batch=True, cookies=str(jar))]
-    downloads = rig.records(presets.argv(preset, UA)[0])
+    downloads = rig.records(presets.argv(preset, UA, cookies=None)[0])
     assert [record['argv'][-1] for record in downloads] in (URLS, URLS[::-1])
     for record in downloads:
         assert assert_private(rig, record) == jar

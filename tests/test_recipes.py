@@ -126,9 +126,19 @@ def test_doctor_is_only_the_cli_wrapper():
     assert "grep" not in body
 
 
-def test_dl_wraps_the_cli():
-    # Target design, Migration, "Pinned for P0001-C04".
-    assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
+def test_dl_and_batch_forward_every_word():
+    # Named cookie sources §5, "Cutover recipes (DEC-40)": the CLI validates.
+    assert recipe("dl") == [
+        "# Download with a preset: just dl [--cookie-source NAME | --anonymous] "
+        "[--user-agent=UA] video|gallery <url>...",
+        "dl +args:",
+        '    @uv run downloadinux dl "$@"',
+    ]
+    assert recipe("batch") == [
+        "# Queue in detached tmux: just batch [dl's options] video|gallery [file]",
+        "batch +args:",
+        '    @uv run downloadinux batch "$@"',
+    ]
 
 
 def smoke() -> str:
@@ -163,9 +173,8 @@ def test_smoke_runs_doctor_on_a_fresh_init_config():
     assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
-def test_batch_and_watch_wrap_the_cli():
-    # Target design, Migration, "Pinned for P0001-C04": the queue only when given.
-    assert recipe("batch")[-1].strip() == '@uv run downloadinux batch "$1" ${2:+"$2"}'
+def test_watch_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04".
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'
 
 
