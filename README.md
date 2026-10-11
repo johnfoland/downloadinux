@@ -6,29 +6,18 @@ folder.
 
 It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
 wrap it, with its settings in a file of their own outside the checkout. That
-is Stage 1 of a refactor toward a portable application. Stage 2 now has a
-tested cookie parser, atomic source store, automatic legacy migration, and
-`cookies list`/`inspect`/`default` commands (P0003-C01/C02), plus browser
-capabilities, file/browser registration, and explicit refresh ([PR #41](https://github.com/johnfoland/downloadinux/pull/41)). These source commands
-are preparatory: downloads, cookie export, setup, and doctor still use the Stage 1
-shared jar. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds internal groundwork for private per-download
-jars (revision pinning, snapshot allocation, and abandoned-snapshot cleanup),
-and [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner, `downloadinux-runner`, that wraps one
-download or batch loop in such a jar, tested inside the built image by the
-gate's smoke test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) adds the Stage 2 commands
-that can ship before the download cutover: `dlx cookies cleanup` asks the running container's
-runner to remove abandoned snapshots, and `dlx config user-agent VALUE` sets an
-explicit user-agent literal. `dlx cookies firefox [PROFILE]` and `dlx cookies
-setup` are the fronts `just cookies` and setup's cookie step will call. No
-download calls the runner yet; switching
-downloads, `just cookies`, setup, and doctor to named sources together is the
-pending cutover. The [planning documents](docs/README.md) describe the remaining
+is Stage 1 of a refactor toward a portable application. Stage 2, named cookie
+sources, has cut over: downloads, batches, `just cookies`, setup, and doctor
+all use named sources with a default, each download or batch runs through the
+container's `downloadinux-runner` on its own private copy of the pinned
+source revision (or anonymously), and `--user-agent` overrides the setting
+for one run. Stage 2's completion evidence is still pending. The [planning documents](docs/README.md) describe the remaining
 Stage 2 work and proposed worker and Python + Textual TUI. This README covers
 what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, and your shell functions were ported over. The one thing that had to
-change is cookie handling, which [Step 3](#step-3--export-your-browser-cookies)
+change is cookie handling, which [Step 3](#step-3--cookie-source)
 walks you through.
 
 ```sh
@@ -132,15 +121,24 @@ The login persists in a Docker volume, so rebuilds don't log you out
 > one. Old tokens keep working until they expire, so revoke it in the same
 > panel if it leaked.
 
-## Step 3 — Export your browser cookies
+## Step 3 — Cookie source
 
 **This is the one thing that genuinely behaves differently from your Mac.**
 
 Your host configs used `--cookies-from-browser firefox` (yt-dlp) and
 `"cookies": ["firefox"]` (gallery-dl). Neither can work in a container: there's
 no Firefox profile inside it, and on macOS the cookie DB is encrypted against
-your login keychain anyway. So you export on the host and hand the container a
-file.
+your login keychain anyway. So the host exports your cookies into a named
+**cookie source**, and every download gets its own private copy of one.
+
+`just setup` runs `dlx cookies setup` here. If you already have a default
+source (an imported Stage 1 jar becomes `legacy`), it keeps it, says so, and
+prints its summary without refreshing it. Otherwise it asks
+`Export Firefox cookies now? [y/N]`; anything but `y` or `yes` keeps
+downloads anonymous, which is fine for public videos. A failed step is
+reported with its exit status and setup carries on with the build.
+
+To export from Firefox yourself, at any time:
 
 1. **Open Firefox and make sure you're actually logged in** to the sites you
    care about — Instagram especially. Visit instagram.com and confirm you see
@@ -149,56 +147,43 @@ file.
    ```sh
    just cookies
    ```
-3. Read the summary it prints. It tells you how many cookies it found per site:
-   ```
-   Wrote /home/you/.local/share/downloadinux/cookies/cookies.txt — 108 cookies.
-     instagram  8 ✓
-     youtube    8 ✓
-     tiktok     23 ✓
-   ```
-   A `none` means you're not logged in to that site in Firefox — log in, then
+3. Read the summary it prints: per-domain counts and whether a recognized
+   session cookie is present, never a cookie value. No Instagram or YouTube
+   session means you're not logged in to that site in Firefox — log in, then
    rerun.
 
-If you have multiple Firefox profiles, pass the one you want:
+`just cookies` runs `dlx cookies firefox`: it creates or replaces the source
+named `firefox` from your Firefox profile and makes it the default, in one
+atomic publication; a failed export changes nothing. It never visits a site
+and never touches `downloads.user_agent`. If you have multiple Firefox
+profiles, pass the one you want:
 
 ```sh
 ls ~/Library/Application\ Support/Firefox/Profiles/
 just cookies widfsx0p.default-release
 ```
 
-The result lands at `paths.cookies`/`cookies.txt` (by default
-`~/.local/share/downloadinux/cookies/cookies.txt`), mode 0600 in a 0700
-directory. The container reads it at `/cookies/cookies.txt`, the path every
-download is given. The checkout's old jar is no longer read by the container.
+Sources live under `paths.cookies` (by default
+`~/.local/share/downloadinux/cookies/`), in 0700 directories with 0600 files.
+You can also import a Netscape file or register Chrome or Chromium, keep
+several accounts, and pick one per download ([Cookie sources](#cookie-sources)).
+Imports need no installed browser.
 
-The recipe exports to a mode-0600 temporary file beside the managed jar and
-checks for the Netscape cookie-file header before atomically replacing
-`cookies.txt`. If Firefox export produces no usable jar, the recipe fails and
-leaves the previous one untouched. The fixed YouTube request is only the probe
-that makes yt-dlp perform the export: if that request fails after a usable jar
-was written, the recipe warns, publishes the jar, prints the counts, and
-continues successfully.
-
-`just cookies` also runs `just useragent` (`dlx config user-agent`), which
-sets `downloads.user_agent` in `config.toml` to the user-agent of your host
-**Chrome** version (`Chrome/<major>.0.0.0`, as Chrome itself reports), so the
-checkout stays clean. Run it on its own after a Chrome update; `just doctor`
-warns when the setting falls behind the host Chrome. Without Chrome in
-`/Applications` (any Linux host) it warns and changes nothing, so `just
-cookies` still succeeds; with no settings file yet it writes the starter file
-`dlx init` would, holding the new value.
-
-To set an exact literal instead, give it as one argument:
-`just useragent "Mozilla/5.0 (X11; Linux x86_64) …"` or
-`dlx config user-agent "…"` (a value beginning with `-` goes after `--`:
+`downloads.user_agent` in `config.toml` holds the user-agent every download
+sends. Its built-in default is a Chrome literal. To set an exact literal,
+give it as one argument: `just useragent "Mozilla/5.0 (X11; Linux x86_64) …"`
+or `dlx config user-agent "…"` (a value beginning with `-` goes after `--`:
 `dlx config user-agent -- -VALUE`). The value must be nonempty and a single
-line. It is written the same way, comments and permissions kept, reads back
-exactly whatever quotes, backslashes, tabs or non-ASCII text it holds, and the
-command prints `downloads.user_agent set in <file>.` or, when the file already
-held it, `downloads.user_agent already has that value in <file>.` It never
-reads Chrome. Like the lookup it changes settings only: `dlx dl` and
-`dlx batch` read the new value on their next run, while the container's shell
-helpers need a `dlx restart` ([Inside the container](#inside-the-container)).
+line. It is written with comments and permissions kept, reads back exactly
+whatever quotes, backslashes, tabs or non-ASCII text it holds, and the command
+prints `downloads.user_agent set in <file>.` or, when the file already held
+it, `downloads.user_agent already has that value in <file>.` On macOS,
+`just useragent` with no argument instead sets it from your host **Chrome**
+version (`Chrome/<major>.0.0.0`, as Chrome itself reports); without Chrome in
+`/Applications` it warns and changes nothing. With no settings file yet,
+either form writes the starter file `dlx init` would, holding the new value.
+`dlx dl` and `dlx batch` read the setting on every run, and
+`--user-agent=VALUE` overrides it for one.
 
 > **Cookies from Firefox, user-agent claiming Chrome — on purpose.** Instagram
 > only serves its 1080p ladder to Chrome user-agents; with a Firefox UA both
@@ -214,18 +199,14 @@ helpers need a `dlx restart` ([Inside the container](#inside-the-container)).
 
 **When to redo this:** Instagram sessions go stale in weeks. When downloads
 start 403ing or silently returning nothing, `just cookies` is the first thing
-to try. `just doctor` reports whether a session cookie is *present* (Instagram's
-`sessionid`; YouTube's `__Secure-3PSID` or `SAPISID`), not just that the file
-exists. It cannot tell whether the site still accepts that session: an
-expired one is still present, so failing downloads are the real signal.
-`just setup` skips the export whenever the jar already holds an Instagram
-`sessionid`, but still refreshes the user-agent before building. When setup
-does export, `just cookies` performs that one refresh itself. After a session
-expires, run `just cookies` yourself.
+to try (or `dlx cookies refresh NAME` for another source). `just doctor`
+reports whether the default source holds a session cookie (Instagram's
+`sessionid`; YouTube's `__Secure-3PSID` or `SAPISID`) and warns when only an
+expired one is recorded. It cannot tell whether the site still accepts an
+unexpired one, so failing downloads are the real signal.
 
-You can skip this step entirely if you only grab public videos. The entrypoint
-seeds an empty-but-valid cookie file so yt-dlp doesn't hard-error on a missing
-path.
+You can skip this step entirely if you only grab public videos: an anonymous
+download passes no cookies at all.
 
 ## Step 4 — Build and launch
 
@@ -246,10 +227,10 @@ downloadinux
   ✓ /home/you/.config/downloadinux/credentials.toml (mode 0600)
   ✓ NordVPN token well-formed
   ✓ /home/you/Downloads
-  ✓ /home/you/.local/share/downloadinux/cookies/cookies.txt: 108 cookies
+  ✓ source firefox: 108 cookies (3 expired)
   ✓ instagram: session cookie present
   ! youtube: no session cookie (fine unless you need age-gated or members-only video)
-  ✓ Chrome 151
+  ✓ explicit user-agent set
   ✓ Docker 27.5.1
   ✓ container running (project downloadinux)
   ✓ /downloads is a mount point
@@ -273,9 +254,16 @@ command, a `just` recipe, or the host change to make. The command exits 1 if
 any check fails; warnings and skipped checks still exit 0. With
 `vpn.enabled = false`, all four VPN checks are skipped and need no token or
 network access. `just doctor --json` returns the same ordered checks for
-scripts, without printing token or cookie values. A cookie check says a
-session cookie is *present* in the jar; no check can tell whether the site
-still accepts it.
+scripts, without printing token or cookie values.
+
+The cookie rows read the default source (migrating a Stage 1 jar first, as
+any source command does), never a browser or a site. An anonymous default
+skips them. A damaged store fails `cookies.jar` with the path-bearing error
+and `fix: repair or restore the file it names`, skips the two site rows, and
+the rest of the report still runs. A source with no cookies warns. A site row
+warns when its session cookie is absent or only expired; none can tell
+whether the site still accepts an unexpired one. The user-agent row checks
+only that `downloads.user_agent` is a nonempty single line.
 
 ---
 
@@ -344,8 +332,10 @@ The import writes `config.toml` with `vpn.enabled = true` and the old values:
 (0600); a malformed one is reported by length and skipped. `USERNAME` is
 dropped (the container user is always `dl`), and any other key is listed as
 not imported. It then copies `cookies/cookies.txt` into the managed cookie
-directory (0600 in 0700) unless a jar is already there. It prints what it
-imported, never the token.
+directory (0600 in 0700) unless a jar is already there; the first cookie-aware
+command then registers that copy as the source `legacy` and the default
+([Cookie sources](#cookie-sources)). It prints what it imported, never the
+token.
 
 It refuses, before writing anything, when the settings file exists, or the
 credentials file when it would write a token. `--force` overwrites them
@@ -358,20 +348,22 @@ setup works. Until then, remember what they hold: `.env` has the token, and
 the old jar has live session cookies and may be world-readable: check with
 `ls -l cookies/cookies.txt`, then `chmod 600` it or delete it.
 
-## Inspecting the preparatory source store
+## Cookie sources
 
-**`dl` and `batch` run on these sources ([Daily use](#daily-use)). `just
-cookies`, setup, and doctor still use `paths.cookies/cookies.txt` and ignore
-the registry default until they move over too.**
+`dl` and `batch` ([Daily use](#daily-use)), `just cookies`, setup, and
+doctor all use these sources; nothing reads `paths.cookies/cookies.txt` after
+migration.
 
-The first source-store operation (list, inspect, default, registration, refresh, or a `dl` or `batch` without `--anonymous`) reads the managed Stage 1 jar
+The first source-store operation (list, inspect, default, registration, refresh, `cookies firefox`, `cookies setup`, `doctor`, or a `dl` or `batch` without `--anonymous`) reads the managed Stage 1 jar
 under the host writer lock when no `sources.json` exists. A valid nonempty jar
 becomes source `legacy` and the source-store default in one atomic publication;
 a missing or valid header-only jar creates an empty anonymous store. The old
 managed jar and checkout jar keep their bytes and permissions. An invalid or
 unreadable managed jar fails without publishing a registry: repair it or move it
 aside before retrying with valid data. `config import-env` keeps its existing
-copy behavior; a later source command migrates that managed copy.
+copy behavior; a later source command migrates that managed copy. To use a
+jar that only exists in the checkout, import it and select it:
+`dlx cookies import mine cookies/cookies.txt`, then `dlx cookies default mine`.
 
 ```sh
 dlx cookies list --json          # migrate once, then list metadata
@@ -392,9 +384,8 @@ The store lives at the effective `paths.cookies`: `sources.json`, `.lock`,
 and immutable copies at `sources/<name>/<revision>.txt`. Managed directories
 are 0700; published material, registry, and lock are 0600. Selecting a default
 changes no revision or refresh timestamp. Existing registries are never remigrated
-or reset on damage. A later Stage 1 export can change the old jar, but the
-`legacy` inspection copy stays at its original revision until explicitly
-refreshed or replaced.
+or reset on damage. The `legacy` copy stays at its original revision until
+explicitly refreshed or replaced.
 List, inspect, default, and file import need no browser. None of the source
 commands needs Docker, token access, or a user-agent lookup.
 
@@ -421,13 +412,11 @@ Success creates a fresh revision/time, retaining all old immutable revisions.
 Failed reads, exports, parsing, or publication retain committed state; a
 successful prerequisite legacy migration remains committed. A source changed
 during extraction refuses with retry guidance; unrelated sources and the latest
-default survive. See [browser capabilities](#browser-capabilities-preparatory-stage-2)
+default survive. See [browser capabilities](#browser-capabilities)
 for selectors and keyring prerequisites.
 
-`dlx cookies firefox [PROFILE]` is the Firefox account switch that `just
-cookies` will call from the download cutover; until then it is preparatory, and
-`just cookies` still writes the Stage 1 jar. It is `add-browser` for the fixed
-name `firefox`: it creates or replaces that source, whatever its kind, with an
+`dlx cookies firefox [PROFILE]` is the Firefox account switch `just cookies`
+calls. It is `add-browser` for the fixed name `firefox`: it creates or replaces that source, whatever its kind, with an
 export of the Firefox profile (default discovery with no `PROFILE`, all
 containers, no `--replace` needed), and makes it the default in the same
 atomic publication. It prints the same summary as `add-browser`; a failed
@@ -440,8 +429,7 @@ dlx cookies firefox                          # Firefox's default profile
 dlx cookies firefox widfsx0p.default-release
 ```
 
-`dlx cookies setup` is setup's cookie step from the cutover; until then `just
-setup` still runs its Stage 1 export step. It takes no operand and migrates
+`dlx cookies setup` is setup's cookie step. It takes no operand and migrates
 first (a migration failure exits 1 with that error). With a named default it
 prints `Keeping the default cookie source NAME; it was not refreshed.` and that
 source's summary, without reading input, exporting, or refreshing; a missing or
@@ -769,7 +757,7 @@ exit IP.
 
 # Command reference
 
-## Browser capabilities (preparatory Stage 2)
+## Browser capabilities
 
 `dlx cookies browsers [--json]` reports supported selectors without probing an
 installation or accessing/migrating cookies. Firefox, Chrome, and Chromium are
@@ -801,7 +789,6 @@ keychain access. Netscape file import provides a browser-independent
 alternative through `dlx cookies import NAME FILE`. Registration is implemented;
 refresh rereads the stored origin only when explicitly requested.
 [Adapter validation evidence](docs/browser-adapter.md) records the API and tests.
-Current downloads, export, setup, and doctor still use the Stage 1 jar.
 
 ## The host CLI
 
@@ -830,11 +817,11 @@ dlx cookies add-browser NAME --browser BROWSER
                                Export/register Firefox, Chrome, or Chromium; optional
                                --profile, --keyring, --container, --replace
 dlx cookies firefox [PROFILE] Create or replace the source firefox from a Firefox profile
-                               and make it the default in one publication (preparatory)
+                               and make it the default in one publication (just cookies)
 dlx cookies setup            Setup's cookie step: keep a named default, or with an anonymous
-                               default offer a Firefox export (preparatory)
+                               default offer a Firefox export
 dlx cookies refresh NAME     Reread the stored file/browser origin; publish a fresh revision
-dlx cookies list [--json]    Migrate once and list source metadata (preparatory Stage 2)
+dlx cookies list [--json]    Migrate once and list source metadata
 dlx cookies inspect NAME     Source metadata and safe cookie counts/domain summaries (--json)
 dlx cookies default [NAME]   Report/select the default for dl and batch; --anonymous selects
                                null (NAME and --anonymous conflict)
@@ -870,11 +857,11 @@ success, 1 when an operation fails, and 2 for a usage error or invalid
 settings, with errors on standard error as `downloadinux: error: …`.
 
 Every recipe reaches the configured container through the CLI. The
-lifecycle, `token`, `useragent`, `dl`, `batch`, `watch`, `shell`, `vpn`,
-`servers`, `status`, and `doctor` recipes are wrappers (`status` runs
+lifecycle, `token`, `cookies`, `useragent`, `dl`, `batch`, `watch`, `shell`,
+`vpn`, `servers`, `status`, and `doctor` recipes are wrappers (`status` runs
 `dlx compose -- ps`, then `dlx vpn status`, ignoring its failure); `logs` and
-`nuke` pass through `dlx compose --`, and `setup` and `cookies` run the CLI
-in between their own steps.
+`nuke` pass through `dlx compose --`, and `setup` runs the CLI in between its
+own steps.
 `up`, `restart`, and `update` prepare state and cookies before starting;
 `compose` passes arguments through unchanged and returns Docker's status.
 Use `dlx compose -- config -q` for validation: without `-q`, a VPN-enabled
@@ -891,7 +878,8 @@ just env             Write a legacy .env with your real UID/GID, for
                        dlx config import-env
 just token <token>   Save a NordVPN token in credentials.toml; log a running
                        VPN container in
-just cookies [prof]  Export Firefox cookies to the managed jar
+just cookies [prof]  Export Firefox into the source firefox and make it
+                       the default
 just useragent [ua]  Set downloads.user_agent to a literal (quote it), or
                        with no argument to your host Chrome version
 
@@ -964,8 +952,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 Under the effective `paths.cookies`, outside the checkout:
 
 ```text
-cookies.txt                       # Stage 1 working jar; retained by migration
-sources.json                      # named-source metadata and future default (0600)
+cookies.txt                       # Stage 1 jar; read once by migration, never written
+sources.json                      # named-source metadata and the default (0600)
 .lock                             # host writer lock (0600)
 sources/<name>/<revision>.txt      # immutable managed copy (0600 in 0700 directories)
 ```

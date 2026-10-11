@@ -573,8 +573,7 @@ def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
         return 0
     result = operations.refresh_user_agent(options.config, options.overrides)
     if result.major is None:
-        # DEC-21: `just cookies` runs this after every export, so a host
-        # without Chrome must not fail it.
+        # DEC-21: a host without Chrome warns rather than fails.
         print(
             f"{PROG}: warning: cannot read Chrome's version from {result.plist}; "
             "downloads.user_agent is unchanged",

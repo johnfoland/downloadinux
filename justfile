@@ -4,7 +4,6 @@ set positional-arguments := true
 
 compose := "uv run downloadinux compose --"
 dex     := compose + " exec -u dl downloadinux"
-probe   := "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
 
 # Show the menu
 default:
@@ -20,16 +19,12 @@ setup:
     set -euo pipefail
     bash scripts/setup.sh
 
-    printf '\n\033[1;36m==> 3/5  Exporting browser cookies\033[0m\n'
-    # Presence of the file proves nothing — yt-dlp writes its jar back on every
-    # run, so an unauthenticated file still grows. Look for a real session.
-    jar="$(bash scripts/config-value.sh paths.cookies)/cookies.txt"
-    if grep -qE 'instagram.*sessionid' "$jar" 2>/dev/null; then
-      echo "    Already have an Instagram session, leaving cookies alone."
-      just useragent
-    else
-      echo "    Make sure you're logged in to the sites you care about in Firefox."
-      just cookies || echo "    Skipped — run 'just cookies' later."
+    printf '\n\033[1;36m==> 3/5  Cookie source\033[0m\n'
+    # Keeps a named default, or offers a Firefox export (DEC-38, DEC-40).
+    cookie_status=0
+    uv run downloadinux cookies setup || cookie_status=$?
+    if [[ $cookie_status -ne 0 ]]; then
+      echo "    The cookie step failed (exit $cookie_status); setup continues. Retry with: dlx cookies setup"
     fi
 
     printf '\n\033[1;36m==> 4/5  Building the image (first run takes a few minutes)\033[0m\n'
@@ -40,7 +35,7 @@ setup:
     sleep 10
     echo ""
     just doctor
-    printf '\n\033[1;32mReady.\033[0m  Get in with:  \033[1;36mjust shell\033[0m\n'
+    printf '\n\033[1;32mReady.\033[0m  Download with:  \033[1;36mjust dl video <url>\033[0m\n'
 
 # Write a legacy .env with your real UID/GID, for `dlx config import-env`
 env:
@@ -66,51 +61,9 @@ env:
 token tok:
     @uv run downloadinux config set-token "$1"
 
-# Export Firefox cookies into the configured managed cookie jar
-cookies profile="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v yt-dlp >/dev/null || { echo "    Need yt-dlp on the host: brew install yt-dlp"; exit 1; }
-    umask 077
-    src="firefox${1:+:$1}"
-    directory=$(bash scripts/config-value.sh paths.cookies)
-    mkdir -p -m 700 "$directory"
-    chmod 700 "$directory"
-    jar="$directory/cookies.txt"
-    stage=$(mktemp "$directory/.cookies.XXXXXX")
-    trap 'rm -f -- "$stage"' EXIT
-    # yt-dlp reads an existing --cookies path before writing it. Reserve the
-    # name, then remove only our empty entry so it starts with no input jar.
-    rm -- "$stage"
-    echo "    Reading cookies from $src ..."
-    # yt-dlp writes its cookie jar back to --cookies on exit, which turns a
-    # live browser profile into the Netscape file both downloaders can read.
-    probe_status=0
-    yt-dlp --cookies-from-browser "$src" --cookies "$stage" \
-           --simulate --quiet --no-warnings '{{probe}}' || probe_status=$?
-    if [[ -f "$stage" ]]; then
-      chmod 600 "$stage"
-    fi
-    first_line=""
-    if ! IFS= read -r first_line < "$stage" || [[ "$first_line" != "# Netscape HTTP Cookie File" ]]; then
-      echo "    Cookie export did not produce a usable Netscape jar; the managed jar was left unchanged." >&2
-      exit 1
-    fi
-    mv -f -- "$stage" "$jar"
-    trap - EXIT
-    chmod 600 "$jar"
-    if [[ $probe_status -ne 0 ]]; then
-      echo "    Warning: the YouTube probe failed (yt-dlp exit $probe_status), but the exported jar was published." >&2
-    fi
-    n=$(grep -cv '^#' "$jar" || true)
-    echo "    Wrote $jar — $n cookies."
-    for site in instagram youtube tiktok; do
-      c=$(grep -ci "$site" "$jar" || true)
-      printf '      %-10s %s\n' "$site" "$([[ $c -gt 0 ]] && echo "$c ✓" || echo "none — log in to it in Firefox, then rerun")"
-    done
-    # The cookies and the user-agent have to describe the same browser, so
-    # resync the UA whenever the cookies are refreshed.
-    just useragent
+# Export a Firefox profile as the source firefox and make it the default: just cookies [profile]
+cookies *args:
+    @uv run downloadinux cookies firefox "$@"
 
 # Set downloads.user_agent: just useragent "<literal>", or no argument for your host Chrome version
 useragent *args:
