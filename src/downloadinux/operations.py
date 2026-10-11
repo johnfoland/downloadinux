@@ -323,8 +323,8 @@ class CleanupCounts:
 def _cleanup_counts(output: str) -> CleanupCounts | None:
     """The runner's one JSON object, `{"removed": N, "skipped": M}` with
     non-negative integers (not booleans), or None for anything else. Any
-    exception from parsing means the output was unexpected (review-checklist
-    §3)."""
+    exception while parsing means the output was unexpected, whatever its
+    type (Named cookie sources §3, the host front; DEC-37)."""
     def unique(pairs):
         keys = [key for key, _ in pairs]
         if len(set(keys)) != len(keys):

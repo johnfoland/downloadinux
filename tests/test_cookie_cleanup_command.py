@@ -3,8 +3,9 @@ capture double: no test starts Docker. The smoke test runs it for real.
 
 The double returns what Compose does: `ps --status running --quiet` exits 0
 with the container ID when it runs and with no output when it does not, and
-`exec` exits 126 or 127 when the program cannot be run or found
-(review-checklist §2). The runner's stdout is built from its real format.
+`exec` exits 126 or 127 when the program cannot be run or found: each fake
+returns what the real call does. The runner's stdout is built from its real
+format.
 """
 
 import json
@@ -179,7 +180,8 @@ def test_the_operation_returns_the_counts(captures):
 
 
 def test_missing_docker_is_a_cli_error(tmp_path, monkeypatch, capsys):
-    # review-checklist §1, §2: the real failure, `docker` absent from PATH.
+    # The real failure, `docker` absent from PATH, not a faked one: an
+    # operating-system failure ends as `downloadinux: error:` with exit 1.
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))

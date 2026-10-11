@@ -366,7 +366,9 @@ def test_an_invalid_explicit_value_is_a_usage_error(unreadable_plist, config, ca
 @pytest.mark.skipif(os.getuid() == 0, reason="root bypasses permissions")
 @pytest.mark.parametrize("existing", [False, True])
 def test_an_explicit_value_in_an_unwritable_directory_exits_1(unreadable_plist, config, capsys, existing):
-    # review-checklist §1: the real failure, a directory without write access.
+    # The real failure, a directory without write access: an operating-system
+    # failure ends as `downloadinux: error:` with exit 1 (Named cookie sources §4;
+    # DEC-37).
     config.parent.mkdir()
     if existing:
         config.write_text('[downloads]\nuser_agent = "old"\n')
