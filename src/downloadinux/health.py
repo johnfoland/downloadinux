@@ -10,13 +10,15 @@ import json
 import os
 import re
 import stat
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, credentials, useragent
+from downloadinux import compose, cookie_store, cookie_writer, cookiejar, credentials, useragent
+from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host, Settings
 
@@ -227,6 +229,112 @@ def _user_agent(value: str) -> Check:
         f"user-agent says Chrome {configured_major}, host Chrome is {host_major}",
         "dlx config user-agent",
     )
+
+
+# Named cookie sources §5, doctor's Stage 2 rows (DEC-39): exact texts.
+_YOUTUBE_ASIDE = " (fine unless you need age-gated or members-only video)"
+_STORE_FIX = "repair or restore the file it names"
+_USER_AGENT_FIX = "dlx config user-agent VALUE"
+
+
+def _site_rows(
+    name: str, material: cookiejar.Material, now: float
+) -> tuple[Check, Check]:
+    """Present-and-unexpired is ok; only expired ones, or none, warn. A record
+    with no expiry is never expired."""
+    expired: dict[str, bool] = {}
+    for cookie in material.jar:
+        site = cookiejar.session_site(cookie.domain, cookie.name)
+        if site is not None:
+            stale = cookie.expires is not None and cookie.expires <= now
+            expired[site] = expired.get(site, True) and stale
+    fix = f"dlx cookies refresh {name}"
+    rows = []
+    for site, aside, site_fix in (
+        ("instagram", "", f"log in to Instagram, then: {fix}"),
+        ("youtube", _YOUTUBE_ASIDE, None),
+    ):
+        id = f"cookies.{site}"
+        if site not in expired:
+            rows.append(_check(id, Status.WARN, f"{site}: no session cookie{aside}", site_fix))
+        elif expired[site]:
+            rows.append(_check(id, Status.WARN, f"{site}: session cookie expired{aside}", site_fix))
+        else:
+            rows.append(_check(id, Status.OK, f"{site}: session cookie present"))
+    return rows[0], rows[1]
+
+
+def _source_user_agent(value: str) -> Check:
+    """Presence and CR/LF only; no Chrome version is read (§4, §5)."""
+    if not value:
+        return _check(
+            "downloads.user_agent", Status.WARN, "user-agent is empty", _USER_AGENT_FIX
+        )
+    if "\r" in value or "\n" in value:
+        return _check(
+            "downloads.user_agent",
+            Status.WARN,
+            "user-agent contains CR or LF; downloads refuse it",
+            _USER_AGENT_FIX,
+        )
+    return _check("downloads.user_agent", Status.OK, "explicit user-agent set")
+
+
+def source_checks(
+    cookie_root: Path, user_agent: str, *, now: float | None = None
+) -> tuple[Check, Check, Check, Check]:
+    """Doctor's Stage 2 `cookies.jar`, `cookies.instagram`, `cookies.youtube`
+    and `downloads.user_agent` rows, in that order (Named cookie sources §5,
+    DEC-39). Migrates as any source operation does, then reads the default's
+    current revision through the shared reader. Every store failure is the
+    `cookies.jar` failure, never an exception, so the report continues. Not
+    yet part of `inspect`: the cutover swaps it for the Stage 1 rows."""
+    now = time.time() if now is None else now
+    agent = _source_user_agent(user_agent)
+    try:
+        snapshot = cookie_writer.ensure_store(cookie_root)
+        name = snapshot.default
+        material = None if name is None else cookie_store.load_revision(
+            cookie_root, name, snapshot.sources[name].revision
+        )
+    except (DownloadinuxError, OSError) as error:
+        if isinstance(error, OSError):
+            path = cookie_root if error.filename is None else error.filename
+            summary = f"{path}: {error.strerror or error}"
+        else:
+            summary = str(error)
+        return (
+            _check("cookies.jar", Status.FAIL, summary, _STORE_FIX),
+            _check("cookies.instagram", Status.SKIP, "no usable cookie source"),
+            _check("cookies.youtube", Status.SKIP, "no usable cookie source"),
+            agent,
+        )
+    if name is None or material is None:
+        return (
+            _check("cookies.jar", Status.SKIP, "anonymous cookie default"),
+            _check("cookies.instagram", Status.SKIP, "anonymous cookie default"),
+            _check("cookies.youtube", Status.SKIP, "anonymous cookie default"),
+            agent,
+        )
+    counts = cookiejar.summary(material, now=now)
+    if not counts["total"]:
+        return (
+            _check(
+                "cookies.jar",
+                Status.WARN,
+                f"source {name} has no cookies; public downloads still work",
+                f"dlx cookies refresh {name}",
+            ),
+            _check("cookies.instagram", Status.SKIP, "no usable cookie source"),
+            _check("cookies.youtube", Status.SKIP, "no usable cookie source"),
+            agent,
+        )
+    jar = _check(
+        "cookies.jar",
+        Status.OK,
+        f"source {name}: {counts['total']} cookies ({counts['expired']} expired)",
+    )
+    return (jar, *_site_rows(name, material, now), agent)
 
 
 def _process_environment(host: Host) -> dict[str, str]:
