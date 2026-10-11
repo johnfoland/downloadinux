@@ -123,6 +123,25 @@ def serialize(material: Material, path: Path) -> str:
     return result
 
 
+# *Health checks*' site rule: each site's domain and session-cookie names.
+# A record belongs to a site when its domain, less leading dots, is the
+# site's domain or ends with `.` and it. ``summary`` and doctor's Stage 2
+# site checks share this one definition (Named cookie sources §5, DEC-39).
+SESSION_COOKIES = {
+    'instagram': ('instagram.com', ('sessionid',)),
+    'youtube': ('youtube.com', ('__Secure-3PSID', 'SAPISID')),
+}
+
+
+def session_site(domain: str, name: str) -> str | None:
+    """The site whose session cookie a record with this domain and name is."""
+    domain = domain.lstrip('.').lower()
+    for site, (suffix, names) in SESSION_COOKIES.items():
+        if name in names and (domain == suffix or domain.endswith('.' + suffix)):
+            return site
+    return None
+
+
 def summary(material: Material, *, now: float | None = None) -> dict:
     """Counts partition total; presence is local evidence, never login validity."""
     now = time.time() if now is None else now
@@ -134,8 +153,5 @@ def summary(material: Material, *, now: float | None = None) -> dict:
         for target in (counts, entry):
             target['total'] += 1
             target[category] += 1
-        domain = cookie.domain.lstrip('.').lower()
-        instagram = domain == 'instagram.com' or domain.endswith('.instagram.com')
-        youtube = domain == 'youtube.com' or domain.endswith('.youtube.com')
-        entry['session_cookie_present'] |= (instagram and cookie.name == 'sessionid') or (youtube and cookie.name in ('__Secure-3PSID', 'SAPISID'))
+        entry['session_cookie_present'] |= session_site(cookie.domain, cookie.name) is not None
     return dict(**counts, domains=[domains[key] for key in sorted(domains)])
