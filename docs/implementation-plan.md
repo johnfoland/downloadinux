@@ -14,8 +14,9 @@ P0003 ([issue #34](https://github.com/johnfoland/downloadinux/issues/34)). P0003
 parser and atomic source-store foundation; P0003-C02 implements locked legacy
 migration and host-only list/inspect/default commands, finishing D1's build.
 [PR #41](https://github.com/johnfoland/downloadinux/pull/41) implements accepted browser/file registration and explicit refresh (D2).
-Private execution remains unimplemented; downloads,
-export, setup, and doctor retain the Stage 1 jar until cutover. Stages 3–4 remain proposals.
+PRs #45–#55 implement private execution and the remaining fronts, and PR #62
+the D4 cutover onto named sources; D5's completion evidence is pending.
+Stages 3–4 remain proposals.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -47,16 +48,15 @@ Acceptance criteria:
 
 ## Stage 2 — Named cookie sources
 
-Settled contract: target design *Named cookie sources*, DEC-28 to DEC-39.
+Settled contract: target design *Named cookie sources*, DEC-28 to DEC-40.
 P0003 owns the ordered delivery; `relay:plan` sizes its items into chunks.
 P0003-C01 implements the strict parser/summaries, immutable registry reader,
 and atomic host publication foundation. P0003-C02 implements automatic locked
 legacy migration and public `cookies list`, `inspect`, and `default` operations.
-These commands prepare the source workflow; current downloads/export/setup/doctor
-still use the Stage 1 shared jar and ignore the registry default. Browser/file
+These commands prepared the source workflow while downloads/export/setup/doctor
+still used the Stage 1 shared jar. Browser/file
 registration/explicit refresh are implemented and accepted in PR #41 (D2), including direct
-browser extraction and the support report. Snapshot execution and D4 cutover
-remain pending. Internal pinned reads and snapshot storage/cleanup land in
+browser extraction and the support report. Internal pinned reads and snapshot storage/cleanup land in
 PR #45, ahead of the process-tree runner and image integration; the storage
 boundary is pinned in Named cookie sources §3 / DEC-34, and its locks follow
 DEC-35. The container runner's packaging, argument lists, and process
@@ -66,9 +66,12 @@ PR #52 completes D3 with the public `cookies cleanup` front and the explicit
 `config user-agent VALUE` write (§3 host front, §4, DEC-37), with in-image
 cleanup evidence. PR #55 starts D4's additive preparation: TOML 1.0 settings
 and credentials writes (issue #53) and the `cookies firefox` and `cookies setup`
-fronts (§5, DEC-38), which the recipes call only from the cutover. None of this
-preparation activates public download routes before the coordinated
-cutover.
+fronts (§5, DEC-38). PR #62 implements D4's coordinated cutover (§3–§5,
+DEC-39, DEC-40): `dl`/`batch` selection, pinning, runner launch and
+`--user-agent`; `just cookies`, setup, and doctor on named sources; and the
+retirement of the container download shortcuts, `DL_USER_AGENT`, and the
+placeholder jar. D5's completion evidence is pending, so Stage 2 is not yet
+complete.
 
 - Implement source registration for browser/profile exports and Netscape imports.
 - Support list, inspect, refresh, default selection, and per-job/invocation choice.
@@ -167,7 +170,8 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 - Inventory settings to import from `.env` without copying secrets into docs/logs.
 - Register the existing `cookies/cookies.txt` as a named source.
 - Preserve `dlmp4` and `dlgal` naming and output conventions in the presets;
-  retire their container shell shortcuts in Stage 2 and document host commands.
+  retire their container shell shortcuts in Stage 2 and document host commands
+  (done in PR #62).
 - Preserve or explicitly relocate the existing gallery archive.
 - Import existing text queues with a documented duplicate policy.
 - Keep old URL-only batch logs distinguishable from new job history.
@@ -194,6 +198,7 @@ explicit refresh, are implemented and accepted. D3, private execution jars and
 explicit user-agent operations, is implemented: PR #45 adds its internal
 pinning/snapshot foundation, PR #49 the container runner and its image
 integration, and PR #52 public cleanup and the explicit user-agent write. D4,
-the coordinated download cutover, is next; PR #55 adds its preparatory
-`cookies firefox` and `cookies setup` fronts. Worker/job rules
+the coordinated download cutover, is implemented: PR #55 adds its
+`cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
+D5, Stage 2's completion evidence, is next. Worker/job rules
 still need Stage 3 design; TUI styling and keybindings follow stable operations.
