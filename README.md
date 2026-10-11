@@ -1,8 +1,8 @@
 # downloadinux
 
-A headless Debian 13 "Trixie" container that runs your `dlmp4` / `dlgal`
-workflow — yt-dlp, gallery-dl, NordVPN, zsh — against the host `~/Downloads`
-folder.
+A headless Debian 13 "Trixie" container that runs the `video` (yt-dlp) and
+`gallery` (gallery-dl) download presets behind NordVPN against the host
+`~/Downloads` folder.
 
 It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
 wrap it, with its settings in a file of their own outside the checkout. That
