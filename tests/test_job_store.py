@@ -343,3 +343,169 @@ def test_lock_os_failure_normalized(tmp_path, monkeypatch):
     monkeypatch.undo()
     with open_store(tmp_path):
         pass
+
+
+def contents(store):
+    c = store._connection
+    return tuple(c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall()
+                 for table in ('submissions', 'jobs', 'queue_counter'))
+
+
+def test_submissions_initial_fields_order_duplicates_and_no_material(tmp_path, monkeypatch):
+    with open_store(tmp_path) as store:
+        def forbidden(*a, **k):
+            pytest.fail('submission touched material')
+        monkeypatch.setattr(Path, 'read_bytes', forbidden)
+        first = store.submit('video', ['a', 'b', 'a', 'c'], lane='video', source='alpha',
+                             revision='a' * 32, user_agent='literal')
+        assert first.submission == 1
+        assert [(j.id, j.url) for j in first.created] == [(1, 'a'), (2, 'b'), (3, 'c')]
+        assert first.duplicates == ()
+        c = store._connection
+        c.row_factory = sqlite3.Row
+        jobs = [dict(row) for row in c.execute('SELECT * FROM jobs ORDER BY id')]
+        c.row_factory = None
+        for order, job in enumerate(jobs, 1):
+            assert job == dict(id=order, submission=1, preset='video', url='abc'[order - 1], lane='video',
+                              source='alpha', revision='a' * 32, user_agent='literal', state='queued', wait=None,
+                              attempt=1, cancel_requested=0, created_at='2026-10-11T12:00:00Z',
+                              queued_at='2026-10-11T12:00:00Z', started_at=None, finished_at=None,
+                              exit_status=None, error=None, queue_order=order)
+        second = store.submit('video', ['b', 'new', 'a', 'new', 'other'], user_agent='changed')
+        assert second.submission == 2
+        assert [(j.id, j.url) for j in second.created] == [(4, 'new'), (5, 'other')]
+        assert [(j.id, j.url) for j in second.duplicates] == [(2, 'b'), (1, 'a')]
+        assert c.execute('SELECT * FROM jobs WHERE id<=3 ORDER BY id').fetchall() == [tuple(j.values()) for j in jobs]
+        third = store.submit('video', ['b', 'b', 'a'], lane='video', source='beta', revision='b' * 32)
+        assert third.submission == 3 and third.created == ()
+        assert [(j.id, j.url) for j in third.duplicates] == [(2, 'b'), (1, 'a')]
+        assert c.execute('SELECT value FROM queue_counter').fetchone() == (5,)
+        assert sorted(p.name for p in (tmp_path / 'jobs').iterdir()) == [js.LOCK, js.DATABASE, 'logs']
+        assert list((tmp_path / 'jobs/logs').iterdir()) == []
+        assert not (tmp_path / 'cookie-invocations').exists()
+        assert not (tmp_path / 'cookies').exists()
+
+
+@pytest.mark.parametrize('active', ['queued', 'running'])
+@pytest.mark.parametrize('original_lane,new_lane', [(None, 'video'), ('video', None), ('video', 'video'), (None, None)])
+def test_active_duplicates_preserve_every_field_across_queues(tmp_path, active, original_lane, new_lane):
+    with open_store(tmp_path) as store:
+        first = store.submit('video', ['url'], lane=original_lane, source='alpha', revision='a' * 32, user_agent='old')
+        c = store._connection
+        c.execute('''UPDATE jobs SET state=?, wait=?, attempt=2, cancel_requested=1,
+                     started_at=?, error=? WHERE id=?''',
+                  (active, '{"reason":"vpn"}' if active == 'queued' else None,
+                   None if active == 'queued' else '2026-10-11T12:00:00Z', 'diagnostic', first.created[0].id))
+        before = c.execute('SELECT * FROM jobs').fetchall()
+        second = store.submit('video', ['url'], lane=new_lane, source='beta', revision='b' * 32, user_agent='new')
+        assert second.created == () and second.duplicates == first.created
+        assert c.execute('SELECT * FROM jobs').fetchall() == before
+
+
+@pytest.mark.parametrize('terminal', js.STATES[2:])
+def test_terminal_states_allow_resubmission(tmp_path, terminal):
+    with open_store(tmp_path) as store:
+        first = store.submit('video', ['url'])
+        store._connection.execute('UPDATE jobs SET state=? WHERE id=?', (terminal, first.created[0].id))
+        second = store.submit('video', ['url'], lane='video')
+        assert second.duplicates == ()
+        assert second.created[0].id > first.created[0].id
+
+
+def test_exact_binary_comparison_and_presets(tmp_path):
+    urls = ['https://EXAMPLE/a', 'https://example/a', ' https://example/a', 'https://example/a ',
+            'é', 'e\u0301', '\t', "quotes'\"\\"]
+    with open_store(tmp_path) as store:
+        first = store.submit('video', urls)
+        second = store.submit('gallery', urls)
+        assert [j.url for j in first.created] == [j.url for j in second.created] == urls
+        assert second.duplicates == ()
+        assert store.submit('video', list(reversed(urls))).duplicates == tuple(reversed(first.created))
+
+
+INVALID = [dict(urls=[]), dict(urls='url'), dict(urls=b'url'), dict(urls={'url'}), dict(urls=(u for u in ['a'])),
+           dict(urls=['valid', '']), dict(urls=['valid', None]), dict(urls=['valid', True]),
+           dict(urls=['valid', 1]), dict(urls=['valid', 'bad\r']), dict(urls=['valid', 'bad\n']),
+           dict(urls=['valid', 'bad\0']), dict(preset='mp4'), dict(preset=True), dict(preset=[]),
+           dict(lane='gallery'), dict(lane='immediate'), dict(lane=True), dict(lane=[]),
+           dict(source='alpha'), dict(revision='a' * 32), dict(source='', revision='a' * 32),
+           dict(source='Alpha', revision='a' * 32), dict(source='é', revision='a' * 32),
+           dict(source='a' * 65, revision='a' * 32), dict(source=True, revision='a' * 32),
+           dict(source='alpha', revision='A' * 32), dict(source='alpha', revision='a' * 31),
+           dict(source='alpha', revision=True), dict(user_agent=None), dict(user_agent=True),
+           dict(user_agent='bad\r'), dict(user_agent='bad\n'), dict(user_agent='bad\0')]
+
+
+@pytest.mark.parametrize('invalid', INVALID)
+def test_complete_prevalidation_publishes_nothing(tmp_path, invalid):
+    with open_store(tmp_path) as store:
+        before = contents(store)
+        args = dict(preset='video', urls=['good'], user_agent='')
+        args.update(invalid)
+        with pytest.raises(DownloadinuxError):
+            store.submit(**args)
+        assert contents(store) == before
+        assert not store._connection.in_transaction
+
+
+@pytest.mark.parametrize('failure', ['mid-insert', 'commit', 'text-encoding'])
+def test_real_transaction_failures_rollback_all_mutations(tmp_path, failure):
+    with open_store(tmp_path) as store:
+        c = store._connection
+        store.submit('gallery', ['existing'])
+        if failure == 'mid-insert':
+            c.execute('''CREATE TRIGGER fail_job BEFORE INSERT ON jobs WHEN NEW.url='SENTINEL'
+                         BEGIN SELECT RAISE(ABORT, 'SENTINEL secret user-agent'); END''')
+        elif failure == 'commit':
+            c.execute('''CREATE TABLE deferred_failure (submission INTEGER REFERENCES submissions(id)
+                         DEFERRABLE INITIALLY DEFERRED)''')
+            c.execute('''CREATE TRIGGER fail_commit AFTER INSERT ON jobs
+                         BEGIN INSERT INTO deferred_failure VALUES(-1); END''')
+        before = contents(store)
+        urls = ['first', '\ud800'] if failure == 'text-encoding' else ['first', 'SENTINEL']
+        with pytest.raises(DownloadinuxError, match='jobs.sqlite3') as error:
+            store.submit('video', urls, user_agent='SENTINEL secret user-agent')
+        assert 'SENTINEL' not in str(error.value)
+        assert contents(store) == before
+        assert not c.in_transaction
+        if failure == 'mid-insert':
+            c.execute('DROP TRIGGER fail_job')
+        elif failure == 'commit':
+            assert c.execute('SELECT * FROM deferred_failure').fetchall() == []
+            c.execute('DROP TRIGGER fail_commit')
+            c.execute('DROP TABLE deferred_failure')
+        success = store.submit('video', ['after'])
+        assert success.created and contents(store)[2] == [(1, 2)]
+
+
+def test_reopen_durable_ids_queue_order_and_backward_clock(tmp_path):
+    with open_store(tmp_path) as store:
+        first = store.submit('video', ['one', 'two'], source='a' * 64, revision='0' * 32,
+                             user_agent='literal \t\\"é')
+        duplicate = store.submit('video', ['one'])
+        before = contents(store)
+        assert duplicate.submission > first.submission
+        assert duplicate.created == ()
+    with open_store(tmp_path, clock=lambda: datetime(2020, 1, 1, tzinfo=timezone.utc)) as store:
+        assert contents(store) == before
+        assert store.submit('video', ['one']).duplicates == first.created[:1]
+        c = store._connection
+        # A deleted committed job ID must never be reused.
+        c.execute("UPDATE jobs SET state='succeeded'")
+        c.execute('DELETE FROM jobs WHERE id=2')
+        next_result = store.submit('video', ['new'])
+        assert next_result.submission > duplicate.submission
+        assert next_result.created[0].id > first.created[-1].id
+        orders = c.execute('SELECT queue_order, queued_at FROM jobs ORDER BY id').fetchall()
+        assert orders == [(1, '2026-10-11T12:00:00Z'), (3, '2020-01-01T00:00:00Z')]
+        assert c.execute('SELECT value FROM queue_counter').fetchone() == (3,)
+
+
+def test_active_partial_unique_index_rejects_real_duplicate(tmp_path):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'])
+        with pytest.raises(sqlite3.IntegrityError):
+            store._connection.execute('''INSERT INTO jobs
+                (submission,preset,url,user_agent,state,attempt,cancel_requested,created_at,queued_at,queue_order)
+                SELECT submission,preset,url,user_agent,state,attempt,cancel_requested,created_at,queued_at,queue_order
+                FROM jobs''')

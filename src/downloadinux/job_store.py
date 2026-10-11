@@ -4,12 +4,14 @@ Target design, Persistent worker and jobs §2. This library has no service,
 state transitions, cookie reads, or host configuration dependencies.
 """
 from contextlib import contextmanager
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import errno
 import fcntl
 import os
 from pathlib import Path
+import re
 import sqlite3
 import stat
 from typing import Callable
@@ -66,6 +68,40 @@ class Busy:
 
 
 BUSY = Busy()
+
+
+@dataclass(frozen=True)
+class JobReference:
+    id: int
+    url: str
+
+
+@dataclass(frozen=True)
+class SubmissionResult:
+    submission: int
+    created: tuple[JobReference, ...]
+    duplicates: tuple[JobReference, ...]
+
+
+def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tuple[str, ...]:
+    """Validate the entire input before IDs or queues can change (DEC-45)."""
+    if type(preset) is not str or preset not in PRESETS:
+        raise DownloadinuxError('submission preset must be video or gallery')
+    if lane is not None and (type(lane) is not str or lane != preset):
+        raise DownloadinuxError('submission lane must be null or its preset')
+    if not isinstance(urls, Sequence) or isinstance(urls, (str, bytes, bytearray)) or not urls:
+        raise DownloadinuxError('submission URLs must be a nonempty ordered sequence')
+    urls = tuple(urls)
+    for url in urls:
+        if type(url) is not str or not url or any(char in url for char in '\r\n\0'):
+            raise DownloadinuxError('submission URLs must be nonempty strings without CR, LF, or NUL')
+    if source is not None or revision is not None:
+        if (type(source) is not str or re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', source) is None
+                or type(revision) is not str or re.fullmatch(r'[a-f0-9]{32}', revision) is None):
+            raise DownloadinuxError('submission requires both valid source and revision identifiers')
+    if type(user_agent) is not str or any(char in user_agent for char in '\r\n\0'):
+        raise DownloadinuxError('submission user-agent must be a string without CR, LF, or NUL')
+    return urls
 
 
 def _os_error(path: Path, error: OSError) -> DownloadinuxError:
@@ -192,6 +228,35 @@ class JobStore:
             except OSError as error:
                 raise _os_error(self.path.parent / LOCK, error) from None
 
+    def submit(self, preset: str, urls: Sequence[str], *, lane: str | None = None,
+               source: str | None = None, revision: str | None = None,
+               user_agent: str = '') -> SubmissionResult:
+        """Commit new work or references to exact active duplicates as one unit.
+
+        This accepts pinned identifiers; host pinning and runner material
+        checks stay at their own boundaries (DEC-31, DEC-45).
+        """
+        urls = _validate_submission(preset, urls, lane, source, revision, user_agent)
+        timestamp = _timestamp(self._clock)
+        created, duplicates = [], []
+        with self._transaction() as c:
+            submission = c.execute('INSERT INTO submissions(created_at) VALUES (?)', (timestamp,)).lastrowid
+            for url in dict.fromkeys(urls):
+                existing = c.execute('''SELECT id FROM jobs WHERE preset=? AND url=?
+                                        AND state IN ('queued', 'running')''', (preset, url)).fetchone()
+                if existing is not None:
+                    duplicates.append(JobReference(existing[0], url))
+                    continue
+                c.execute('UPDATE queue_counter SET value=value+1 WHERE id=1')
+                order = c.execute('SELECT value FROM queue_counter WHERE id=1').fetchone()[0]
+                job = c.execute('''INSERT INTO jobs
+                    (submission, preset, url, lane, source, revision, user_agent, state,
+                     attempt, cancel_requested, created_at, queued_at, queue_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 1, 0, ?, ?, ?)''',
+                    (submission, preset, url, lane, source, revision, user_agent, timestamp, timestamp, order)).lastrowid
+                created.append(JobReference(job, url))
+        return SubmissionResult(submission, tuple(created), tuple(duplicates))
+
     @contextmanager
     def _transaction(self):
         """Commit is publication. Rollback is attempted even after commit fails."""
@@ -206,6 +271,8 @@ class JobStore:
                 raise _sqlite_error(self.path, rollback_error) from None
             if isinstance(error, sqlite3.Error):
                 raise _sqlite_error(self.path, error) from None
+            if isinstance(error, UnicodeError):
+                raise DownloadinuxError(f'{self.path}: SQLite text encoding failed') from None
             raise
 
     def _initialize(self) -> None:
