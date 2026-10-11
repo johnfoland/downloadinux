@@ -1,0 +1,37 @@
+#!/usr/bin/python3 -I
+"""Stub yt-dlp / gallery-dl for the gate's host-route smoke test (Named
+cookie sources §3, "Host launch (DEC-39)"). scripts/smoke.sh installs it as
+root into the disposable check container's /opt/venv/bin, which leads PATH.
+
+Exec cannot set environment through dlx, so it logs to the fixed directory
+/downloads/route-smoke: per call, its argv NUL-separated, then a JSON record
+naming its cookie argument, that file's SHA-256, and the source and revision
+in the metadata.json beside it. It never records or prints cookie contents.
+It exits 7 when a URL ends in /exit7, else 0.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+LOG = Path('/downloads/route-smoke')
+args = sys.argv[1:]
+jar = None
+for previous, argument in zip([None, *args], args):
+    if previous == '--cookies':
+        jar = argument
+    if argument.startswith('extractor.instagram.cookies='):
+        jar = argument.removeprefix('extractor.instagram.cookies=')
+record = {'program': Path(sys.argv[0]).name, 'jar': jar}
+if jar is not None:
+    record['sha256'] = hashlib.sha256(Path(jar).read_bytes()).hexdigest()
+    metadata = json.loads((Path(jar).parent / 'metadata.json').read_text())
+    record.update(source=metadata['source'], revision=metadata['revision'])
+stem = LOG / f'call-{time.time_ns()}-{os.getpid()}'
+stem.with_suffix('.argv').write_bytes(b''.join(arg.encode() + b'\0' for arg in args))
+staged = stem.with_suffix('.tmp')
+staged.write_text(json.dumps(record))
+staged.rename(stem.with_suffix('.json'))
+sys.exit(7 if any(arg.endswith('/exit7') for arg in args) else 0)

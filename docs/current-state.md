@@ -223,7 +223,7 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 | Container paths use `/home/<user>/Downloads` | Resolved: four fixed mounts, `/downloads`, `/config`, `/state`, `/cookies`, and a container user that is always `dl`; no recipe names `/home/dl`, and DEC-15's old-path links are gone (DEC-9) | target design *Container contract*; P0001-C02, P0001-C04 |
 | Config and cookies reside in the checkout | Resolved: settings and credentials at XDG locations, the managed cookie jar and state outside the checkout, the presets mounted read-only, and `config user-agent` writing the settings file rather than tracked configs (DEC-8, DEC-10) | target design *Configuration and paths*, *Presets*; P0001-C01, P0001-C02, P0001-C04 |
 | Queue files must live under the download mount | Not resolved: `dlx batch` still requires it, now checking and translating the path itself. Stage 3 (persistent worker and jobs) owns queues | target design *Host application* ("Downloads"); implementation plan *Stage 3* |
-| Firefox-only export and macOS Chrome lookup | Partly: `config user-agent` reads Chrome's plist without `defaults` and only warns on a host without Chrome (DEC-21), but `just cookies` still exports from Firefox through host yt-dlp. Stage 2 (named cookie sources) owns it | target design *Host application* ("Downloads"), *Migration*; implementation plan *Stage 2* |
+| Firefox-only export and macOS Chrome lookup | Partly: `config user-agent` reads Chrome's plist without `defaults` and only warns on a host without Chrome (DEC-21), but `just cookies` still exported from Firefox through host yt-dlp. Since Stage 2's cutover (PR #62) sources come from Firefox, Chrome, Chromium, or a Netscape import, `just cookies` exports Firefox through the host adapter with no probe, and the Chrome lookup is optional (DEC-29, DEC-32, DEC-38) | target design *Named cookie sources*; implementation plan *Stage 2* |
 | NordVPN is installed and wired into every deployment | Resolved: `vpn.enabled` per config, off for a fresh one; with it off, Compose runs without the VPN overlay and the entrypoint starts no `nordvpnd` (DEC-11). The image still contains NordVPN; a separate VPN service is still open | target design *VPN mode*; implementation plan *Decisions to resolve*; P0001-C02, P0001-C03 |
 | Fixed container name | Resolved: no `container_name`; `container.project` names the Compose project, so independent instances (the gate's `downloadinux-check`, for one) run side by side | target design *Host application* ("Docker invocation"); P0001-C02, P0001-C03 |
 | UID/GID baked into image | Resolved: applied at container start from `container.uid` and `container.gid` (DEC-9); `just restart` applies a change without a rebuild | target design *Container contract*; `scripts/entrypoint.sh`; P0001-C02 |
@@ -234,7 +234,7 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 | No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` and every push to it, with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
 
 
-## Since this review: Stage 2 preparation
+## Since this review: Stage 2 preparation and cutover
 
 [PRs #39–#40](https://github.com/johnfoland/downloadinux/pull/40) added the strict parser/summaries, atomic source registry and
 immutable revisions, locked legacy migration, and public list/inspect/default
@@ -244,9 +244,9 @@ and stored-origin refresh. The host adapter is locked to yt-dlp 2026.08.19 and
 uses no URL/site probe; failed extraction/parsing/publication preserves the last
 committed source/default. Registration and refresh never infer a user-agent.
 
-These commands are preparation only: foreground/batch downloads, `just cookies`,
-setup, and doctor still use the Stage 1 shared jar and ignore the registry
-default. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds D3's internal foundation only: host submission pinning,
+Until the cutover these commands were preparation only: foreground/batch
+downloads, `just cookies`, setup, and doctor used the Stage 1 shared jar and
+ignored the registry default. [PR #45](https://github.com/johnfoland/downloadinux/pull/45) adds D3's internal foundation only: host submission pinning,
 the settings-free exact revision reader, and a standard-library library that
 allocates, tears down, and cleans up lease-held snapshots, with credential-free
 Docker Linux evidence. [PR #49](https://github.com/johnfoland/downloadinux/pull/49) ships the container runner on that library,
@@ -255,8 +255,12 @@ in a private snapshot and is tested inside the built image by the gate's smoke
 test. [PR #52](https://github.com/johnfoland/downloadinux/pull/52) completes D3's operations: public `cookies cleanup`
 runs that runner's cleanup in the running container, and `config user-agent
 VALUE` writes an explicit literal, with in-image cleanup evidence in the smoke
-test. [PR #55](https://github.com/johnfoland/downloadinux/pull/55) adds the preparatory `cookies firefox` and
-`cookies setup` fronts that `just cookies` and setup will call, and makes the
-settings and credentials writers emit TOML 1.0 strings. No download calls the
-runner yet; the coordinated cutover (D4) remains pending.
+test. [PR #55](https://github.com/johnfoland/downloadinux/pull/55) adds the `cookies firefox` and `cookies setup` fronts,
+and makes the settings and credentials writers emit TOML 1.0 strings.
+[PR #62](https://github.com/johnfoland/downloadinux/pull/62) is the coordinated cutover (D4): `dl` and `batch` select a
+source (`--cookie-source`, `--anonymous`, or the default), pin its revision,
+and launch through the runner with an optional `--user-agent`; `just cookies`
+and setup call the new fronts; doctor reads the source store; and the
+container's download shortcuts, `DL_USER_AGENT`, and the placeholder jar are
+retired. Stage 2's completion evidence (D5) remains pending.
 The dated review and Stage 1 outcomes above remain historical observations.

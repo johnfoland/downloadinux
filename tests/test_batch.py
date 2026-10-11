@@ -1,20 +1,18 @@
 """`batch`, `watch`, and the container's zsh helpers (P0001-C04-d; target
 design, *Host application*, "Downloads, pinned for P0001-C04", and *Container
-contract*), with fake runners: no test starts Docker."""
+contract*), with fake runners: no test starts Docker. The batch's cookie
+selection, user-agent options and launch order are in `test_host_launch.py`
+(Named cookie sources §3, "Host launch (DEC-39)")."""
 
 import os
 import subprocess
 
 import pytest
 
-from downloadinux import checkout, presets
+from downloadinux import checkout, cookie_store, launch, presets
 from test_container_commands import calls, compose_args, run  # noqa: F401 (fixture)
 
 AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-SCRIPT = (
-    'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"; '
-    'echo; echo "[done — press a key]"; read -k1'
-)
 EXEC = ["exec", "-u", "dl", "downloadinux"]
 ROWS = {
     "video": ("batch-video", "dlmp4_queue", "dlmp4", "Batch Download", "blue"),
@@ -23,20 +21,19 @@ ROWS = {
 
 
 def tmux(preset, container_queue):
-    session, _, prefix, title, colour = ROWS[preset]
+    """An anonymous batch (the empty store's default): the runner in the
+    preset's session (Named cookie sources §3, DEC-39)."""
+    session = ROWS[preset][0]
+    runner = launch.runner_argv("batch", cookie_store.ANONYMOUS, AGENT, preset, [container_queue])
     return [
         *EXEC, "tmux", "new-session", "-d", "-s", session, "-c", "/downloads",
-        "zsh", "-f", "-c", SCRIPT, "zsh", container_queue, prefix, title, colour,
-        *presets.argv(preset, AGENT, batch=True),
+        "zsh", "-f", "-c", launch.BATCH_RUNNER_SCRIPT, "zsh", *runner[1:],
     ]
 
 
-def test_batch_script_is_the_shared_loop_plus_the_pause():
-    # The runner reuses the loop text; the host keeps its pause (DEC-36).
-    from downloadinux import operations
+def test_the_runner_keeps_the_shared_loop():
+    # The runner starts this loop text inside its lease (DEC-36).
     assert presets.LOOP == 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
-    assert operations.BATCH_SCRIPT == presets.LOOP + '; echo; echo "[done — press a key]"; read -k1'
-    assert operations.BATCH_SCRIPT == SCRIPT
 
 
 @pytest.fixture
@@ -66,14 +63,6 @@ def test_default_queue_builds_the_pinned_tmux_argv(calls, capsys, downloads, pre
     [(kind, argv, _)] = calls
     assert kind == "run"  # uncaptured: no -T
     assert compose_args(argv) == tmux(preset, f"/downloads/{queue}")
-
-
-def test_gallery_batch_has_quiet_right_after_gallery_dl(calls, capsys, downloads):
-    (downloads / "dlgal_queue").write_text("")
-    batch(capsys, downloads, "gallery")
-    program = compose_args(calls[0][1])
-    start = program.index("gallery-dl")
-    assert program[start:start + 3] == ["gallery-dl", "-q", "--config"]
 
 
 @pytest.mark.parametrize("preset", ["video", "gallery"])
@@ -215,45 +204,28 @@ def test_watch_attaches_uncaptured_and_returns_the_status(calls, capsys, argv, s
 
 ZSH = """
 for f in "$ZSH_HELPERS"/*.zsh; do source "$f"; done
-# Stubs print their arguments NUL-separated, one call per line.
-yt-dlp() { printf '%s\\0' yt-dlp "$@"; print; }
-gallery-dl() { printf '%s\\0' gallery-dl "$@"; print; }
-_batch_downloader_core() { printf '%s\\0' _batch_downloader_core "$@"; print; }
-whence -w dlmp4 dlgal dlmp4_batch dlgal_batch _batch_downloader_core
-dlmp4 "$URL"
-dlgal "$URL"
-dlmp4_batch "$QUEUE"
-dlgal_batch "$QUEUE"
+for name in dlmp4 dlgal dlmp4_batch dlgal_batch _preset_video _preset_gallery \\
+    _batch_downloader_core exifmod; do
+  whence -w "$name" || true
+done
 """
 
 
-def test_the_shell_helpers_run_the_package_lists(tmp_path):
-    # Run under real zsh without startup files; fails, not skips, without zsh.
-    queue = tmp_path / "queue file"
-    queue.write_text("https://example.com/q\n")
-    url = "https://example.com/watch?v=1&x=2"
-    env = {
-        "PATH": os.environ["PATH"], "HOME": str(tmp_path),
-        "ZSH_HELPERS": str(checkout.asset_path("zsh")),
-        "DL_USER_AGENT": AGENT, "URL": url, "QUEUE": str(queue),
-    }
+def test_the_download_shortcuts_are_retired(tmp_path):
+    # Named cookie sources §5 (DEC-33): downloads start on the host; the
+    # batch loop and exifmod stay. Real zsh without startup files.
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
+           "ZSH_HELPERS": str(checkout.asset_path("zsh"))}
     result = subprocess.run(["zsh", "-f", "-c", ZSH], env=env, capture_output=True,
                             text=True, check=False)
     assert result.returncode == 0, result.stderr
-    lines = result.stdout.splitlines()
-    assert lines[:5] == [
-        "dlmp4: function", "dlgal: function", "dlmp4_batch: function",
-        "dlgal_batch: function", "_batch_downloader_core: function",
+    assert result.stdout.splitlines() == [
+        "dlmp4: none", "dlgal: none", "dlmp4_batch: none", "dlgal_batch: none",
+        "_preset_video: none", "_preset_gallery: none",
+        "_batch_downloader_core: function", "exifmod: function",
     ]
-    words = [line.split("\0")[:-1] for line in lines[5:]]
-    assert words == [
-        [*presets.argv("video", AGENT), url],
-        [*presets.argv("gallery", AGENT), url],
-        ["_batch_downloader_core", str(queue), "dlmp4", "Batch Download", "blue",
-         *presets.argv("video", AGENT, batch=True)],
-        ["_batch_downloader_core", str(queue), "dlgal", "Gallery Batch Download", "magenta",
-         *presets.argv("gallery", AGENT, batch=True)],
-    ]
+    for name in ("functions.zsh", "aliases.zsh", "zshrc"):
+        assert "DL_USER_AGENT" not in checkout.asset_path(f"zsh/{name}").read_text()
 
 
 def test_the_shell_starts_in_downloads_and_names_no_old_path():

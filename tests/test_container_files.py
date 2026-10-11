@@ -20,6 +20,15 @@ def test_entrypoint_messages_name_the_host_commands():
     assert "compose -- exec" not in text
 
 
+def test_no_placeholder_jar_and_no_user_agent_channel():
+    # Named cookie sources §5 (DEC-33): the image seeds no shared jar, and
+    # the shortcuts' DL_USER_AGENT channel is gone.
+    assert "/cookies/cookies.txt" not in entrypoint()
+    assert "cookies.txt" not in entrypoint()
+    base = checkout.asset_path("compose/base.yaml").read_text()
+    assert "DL_USER_AGENT" not in base and "USER_AGENT" not in base
+
+
 def test_runtime_home_repairs_all_entries_after_identity_without_recursing():
     # Target design, Container contract, Runtime home ownership (DEC-26).
     text = entrypoint()

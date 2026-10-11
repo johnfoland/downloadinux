@@ -1,8 +1,7 @@
-"""Structured ``doctor`` host checks (P0001-C05-b; DEC-12, DEC-22)."""
+"""Structured ``doctor`` host checks (P0001-C05-b; DEC-12, DEC-22), with the
+cookie and user-agent rows of Named cookie sources §5 (DEC-39)."""
 
 import json
-import os
-import plistlib
 from pathlib import Path
 
 import pytest
@@ -242,117 +241,143 @@ def test_missing_downloads_fails(docker, doctor_paths, capsys):
     }
 
 
-@pytest.mark.parametrize("contents", [None, b"# placeholder\n", b"a\tb\tc\td\te\tf\n"])
-def test_missing_placeholder_and_six_field_jars_warn_and_skip_sites(
-    docker, doctor_paths, capsys, contents
-):
-    doctor_paths["jar"].unlink()
-    if contents is not None:
-        doctor_paths["jar"].write_bytes(contents)
-    report = run_json(capsys, doctor_paths)[1]
-    checks = by_id(report)
-    assert checks["cookies.jar"] == {
-        "id": "cookies.jar", "status": "warn",
-        "summary": "no cookies yet; public downloads still work",
-        "fix": "just cookies",
-    }
-    assert checks["cookies.instagram"]["status"] == "skip"
-    assert checks["cookies.youtube"]["status"] == "skip"
+# --- the cookie and user-agent rows (Named cookie sources §5, DEC-39) --------
+#
+# Every store is real, built through the CLI's own source operations. The
+# Chrome lookup is patched to fail the test if doctor ever calls it.
 
-
-def test_cookie_jar_parses_httponly_domains_and_non_utf8_values(
-    docker, doctor_paths, capsys
-):
-    doctor_paths["jar"].write_bytes(
-        b"#HttpOnly_.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tsecret-\xff\n"
-        b".www.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tanother-secret\n"
-    )
-    checks = by_id(run_json(capsys, doctor_paths)[1])
-    assert checks["cookies.jar"]["summary"] == f"{doctor_paths['jar']}: 2 cookies"
-    assert checks["cookies.instagram"]["status"] == "ok"
-    assert checks["cookies.youtube"]["status"] == "ok"
-
-
-def test_similar_cookie_domain_does_not_count(docker, doctor_paths, capsys):
-    doctor_paths["jar"].write_text(
-        "notinstagram.com\tFALSE\t/\tTRUE\t0\tsessionid\tsecret\n"
-        ".youtube.com\tTRUE\t/\tTRUE\t0\tother\tsecret\n"
-    )
-    checks = by_id(run_json(capsys, doctor_paths)[1])
-    assert checks["cookies.instagram"] == {
-        "id": "cookies.instagram", "status": "warn",
-        "summary": "instagram: no session cookie",
-        "fix": "log in to Instagram in Firefox, then: just cookies",
-    }
-    assert checks["cookies.youtube"] == {
-        "id": "cookies.youtube", "status": "warn",
-        "summary": "youtube: no session cookie (fine unless you need age-gated or members-only video)",
-    }
-
-
-@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses permissions")
-def test_unreadable_jar_fails_and_skips_site_checks(docker, doctor_paths, capsys):
-    doctor_paths["jar"].chmod(0)
-    try:
-        status, report, _ = run_json(capsys, doctor_paths)
-    finally:
-        doctor_paths["jar"].chmod(0o600)
-    checks = by_id(report)
-    assert status == 1
-    assert checks["cookies.jar"] == {
-        "id": "cookies.jar", "status": "fail",
-        "summary": f"{doctor_paths['jar']}: Permission denied",
-    }
-    assert checks["cookies.instagram"]["summary"] == "no cookie jar"
-    assert checks["cookies.youtube"]["summary"] == "no cookie jar"
+COOKIE_IDS = ["cookies.jar", "cookies.instagram", "cookies.youtube", "downloads.user_agent"]
+STORE_FIX = "repair or restore the file it names"
 
 
 @pytest.fixture
-def chrome_plist(tmp_path, monkeypatch):
-    path = tmp_path / "Chrome" / "Info.plist"
-    path.parent.mkdir()
-    monkeypatch.setattr(useragent, "CHROME_PLIST", path)
-    return path
+def no_chrome(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("doctor read the host Chrome version")
+    monkeypatch.setattr(useragent, "chrome_version", forbidden)
 
 
-def write_chrome(path, version):
-    path.write_bytes(plistlib.dumps({"CFBundleShortVersionString": version}))
+def cookie_rows(report):
+    checks = by_id(report)
+    return [checks[id] for id in COOKIE_IDS]
 
 
-def test_user_agent_matches_real_chrome_fixture(
-    docker, doctor_paths, chrome_plist, capsys
+def human(capsys, paths, *extra):
+    args = argv(paths, *extra)
+    args.remove("--json")
+    status = cli.main(args)
+    out, err = capsys.readouterr()
+    assert err == ""
+    return status, out
+
+
+def test_doctor_migrates_the_stage1_jar_and_reports_legacy(docker, doctor_paths, no_chrome, capsys):
+    before = doctor_paths["jar"].read_bytes()
+    status, report, err = run_json(capsys, doctor_paths)
+    assert (status, err) == (0, "")
+    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS + VPN_IDS
+    assert cookie_rows(report) == [
+        {"id": "cookies.jar", "status": "ok", "summary": "source legacy: 2 cookies (0 expired)"},
+        {"id": "cookies.instagram", "status": "ok", "summary": "instagram: session cookie present"},
+        {"id": "cookies.youtube", "status": "ok", "summary": "youtube: session cookie present"},
+        {"id": "downloads.user_agent", "status": "ok", "summary": "explicit user-agent set"},
+    ]
+    sources = json.loads((doctor_paths["cookies"] / "sources.json").read_text())
+    assert sources["default"] == "legacy"
+    assert sources["sources"]["legacy"]["path"] == str(doctor_paths["jar"])
+    assert doctor_paths["jar"].read_bytes() == before
+
+
+def test_an_anonymous_default_skips_the_cookie_rows(docker, doctor_paths, no_chrome, capsys):
+    doctor_paths["jar"].unlink()
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 0
+    assert cookie_rows(report)[:3] == [
+        {"id": id, "status": "skip", "summary": "anonymous cookie default"}
+        for id in COOKIE_IDS[:3]
+    ]
+    status, out = human(capsys, doctor_paths)
+    assert status == 0
+    assert out.count("  - anonymous cookie default\n") == 3
+
+
+def test_a_named_default_reports_its_counts_and_fixes(docker, doctor_paths, no_chrome, capsys):
+    doctor_paths["jar"].unlink()
+    export = doctor_paths["cookies"].parent / "export.txt"
+    export.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".instagram.com\tTRUE\t/\tTRUE\t1\tsessionid\texpired-secret\n"
+        "example.com\tFALSE\t/\tFALSE\t0\tother\tother-secret\n"
+    )
+    sets = ["--set", f"paths.cookies={doctor_paths['cookies']}"]
+    assert cli.main([*sets, "cookies", "import", "work", str(export)]) == 0
+    assert cli.main([*sets, "cookies", "default", "work"]) == 0
+    capsys.readouterr()
+    status, report, _ = run_json(capsys, doctor_paths, "--set", "downloads.user_agent=")
+    assert status == 0
+    assert cookie_rows(report) == [
+        {"id": "cookies.jar", "status": "ok", "summary": "source work: 2 cookies (1 expired)"},
+        {"id": "cookies.instagram", "status": "warn", "summary": "instagram: session cookie expired",
+         "fix": "log in to Instagram, then: dlx cookies refresh work"},
+        {"id": "cookies.youtube", "status": "warn",
+         "summary": "youtube: no session cookie (fine unless you need age-gated or members-only video)"},
+        {"id": "downloads.user_agent", "status": "warn", "summary": "user-agent is empty",
+         "fix": "dlx config user-agent VALUE"},
+    ]
+    status, out = human(capsys, doctor_paths, "--set", "downloads.user_agent=")
+    assert status == 0
+    assert ("  ✓ source work: 2 cookies (1 expired)\n"
+            "  ! instagram: session cookie expired\n"
+            "      fix: log in to Instagram, then: dlx cookies refresh work\n") in out
+    assert "expired-secret" not in out + json.dumps(report)
+
+
+def test_a_damaged_store_fails_the_jar_row_and_the_report_continues(docker, doctor_paths, no_chrome, capsys):
+    registry = doctor_paths["cookies"] / "sources.json"
+    registry.write_text("{")
+    status, report, err = run_json(capsys, doctor_paths)
+    assert (status, err, report["ok"]) == (1, "", False)
+    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS + VPN_IDS
+    assert cookie_rows(report)[:3] == [
+        {"id": "cookies.jar", "status": "fail",
+         "summary": f"{registry}: invalid registry JSON; repair the source store or retry the operation",
+         "fix": STORE_FIX},
+        {"id": "cookies.instagram", "status": "skip", "summary": "no usable cookie source"},
+        {"id": "cookies.youtube", "status": "skip", "summary": "no usable cookie source"},
+    ]
+    checks = by_id(report)
+    assert checks["docker.daemon"]["status"] == "ok"
+    assert checks["container.running"]["status"] == "ok"
+    assert all(checks[id]["status"] == "ok" for id in CONTAINER_IDS)
+    assert registry.read_text() == "{"
+    status, out = human(capsys, doctor_paths)
+    assert status == 1
+    assert f"  ✗ {registry}: invalid registry JSON" in out
+    assert f"      fix: {STORE_FIX}\n" in out
+    assert "  ✓ Docker 27.5.1\n" in out
+
+
+def test_an_invalid_stage1_jar_fails_migration_as_the_jar_row(docker, doctor_paths, no_chrome, capsys):
+    doctor_paths["jar"].write_bytes(b"not a cookie jar\n")
+    status, report, _ = run_json(capsys, doctor_paths)
+    jar = cookie_rows(report)[0]
+    assert status == 1
+    assert (jar["status"], jar["fix"]) == ("fail", STORE_FIX)
+    assert str(doctor_paths["jar"]) in jar["summary"]
+    assert not (doctor_paths["cookies"] / "sources.json").exists()
+    assert doctor_paths["jar"].read_bytes() == b"not a cookie jar\n"
+
+
+@pytest.mark.parametrize("value,status,summary", [
+    ("Firefox/130", "ok", "explicit user-agent set"),
+    ("a\nb", "warn", "user-agent contains CR or LF; downloads refuse it"),
+])
+def test_the_user_agent_row_checks_presence_and_line_breaks_only(
+    docker, doctor_paths, no_chrome, capsys, value, status, summary
 ):
-    write_chrome(chrome_plist, "151.0.1")
+    write_config(doctor_paths, f"[downloads]\nuser_agent = {json.dumps(value)}\n")
     check = by_id(run_json(capsys, doctor_paths)[1])["downloads.user_agent"]
-    assert check == {
-        "id": "downloads.user_agent", "status": "ok", "summary": "Chrome 151"
-    }
-
-
-def test_user_agent_behind_host_chrome(docker, doctor_paths, chrome_plist, capsys):
-    write_chrome(chrome_plist, "152.0.1")
-    check = by_id(run_json(capsys, doctor_paths)[1])["downloads.user_agent"]
-    assert check == {
-        "id": "downloads.user_agent", "status": "warn",
-        "summary": "user-agent says Chrome 151, host Chrome is 152",
-        "fix": "dlx config user-agent",
-    }
-
-
-def test_non_chrome_user_agent_warns(docker, doctor_paths, capsys):
-    check = by_id(run_json(
-        capsys, doctor_paths, "--set", "downloads.user_agent=Firefox/130"
-    )[1])["downloads.user_agent"]
-    assert check == {
-        "id": "downloads.user_agent", "status": "warn",
-        "summary": "user-agent is not Chrome's; Instagram caps video at 720p",
-        "fix": "dlx config user-agent",
-    }
-
-
-def test_missing_host_chrome_does_not_warn(docker, doctor_paths, chrome_plist, capsys):
-    check = by_id(run_json(capsys, doctor_paths)[1])["downloads.user_agent"]
-    assert check["status"] == "ok"
+    assert (check["status"], check["summary"]) == (status, summary)
 
 
 def test_docker_info_uses_the_cli_environment_without_downloadinux_values(

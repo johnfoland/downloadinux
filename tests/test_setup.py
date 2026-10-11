@@ -8,7 +8,8 @@ their arguments and fail, so nothing reaches the host's Docker or recipes.
 Every `XDG_*` directory and the `.env` are under `tmp_path`.
 
 The full-recipe tests stub the first two steps and external commands, then run
-the actual cookie branch, build, start, and doctor recipe flow.
+the recipe's cookie step (the real `cookies setup`), build, start, and doctor
+flow.
 """
 
 import json
@@ -22,7 +23,7 @@ import tomllib
 import pytest
 
 from conftest import FAKE_TOKEN
-from downloadinux import checkout, cli
+from downloadinux import checkout, cli, cookie_writer, cookiejar
 
 SETUP = checkout.asset_path("scripts/setup.sh")
 ANSI = re.compile(r"\033\[[0-9;]*m")
@@ -282,45 +283,22 @@ case "$1" in
     printf '\\033[1;36m==> 2/5  NordVPN token\\033[0m\\n'
     exit 0
     ;;
-  scripts/config-value.sh)
-    printf '%s\\n' "$COOKIE_DIRECTORY"
-    exit 0
-    ;;
 esac
 exec /bin/bash "$@"
 """
 
+# Logs every call; runs the real CLI only for the cookie step, so build, up,
+# and doctor reach no Docker (Named cookie sources §5, DEC-38, DEC-40).
 FULL_SETUP_UV_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >>"$UV_LOG"
+if [ "$*" = "run downloadinux cookies setup" ]; then
+  exec "{python}" -m downloadinux cookies setup
+fi
 exit 0
 """
 
-FULL_SETUP_YTDLP_STUB = """#!/bin/sh
-stage=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --cookies)
-      stage=$2
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-printf 'called\\n' >>"$YTDLP_LOG"
-if [ -e "$stage" ] && [ ! -s "$stage" ]; then
-  echo "yt-dlp: existing cookie file is not Netscape format" >&2
-  exit 1
-fi
-if [ "$YTDLP_STAGE" = valid ]; then
-  printf '# Netscape HTTP Cookie File\\n.instagram.com\\tTRUE\\t/\\tTRUE\\t0\\tsessionid\\ttest-secret\\n' >"$stage"
-else
-  printf 'not a Netscape jar\\ntest-secret\\n' >"$stage"
-fi
-"""
-
-FULL_SETUP_SLEEP_STUB = """#!/bin/sh
+LOGGING_ONLY_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >>"$STUB_LOG"
 exit 0
 """
 
@@ -332,39 +310,41 @@ def full_setup_host(tmp_path):
     bin_dir.mkdir()
     stubs = {
         "bash": FULL_SETUP_BASH_STUB,
-        "uv": FULL_SETUP_UV_STUB,
-        "yt-dlp": FULL_SETUP_YTDLP_STUB,
-        "sleep": FULL_SETUP_SLEEP_STUB,
+        "uv": FULL_SETUP_UV_STUB.format(python=sys.executable),
+        "yt-dlp": LOGGING_ONLY_STUB,
+        "sleep": LOGGING_ONLY_STUB,
     }
     for name, body in stubs.items():
         path = bin_dir / name
         path.write_text(body)
         path.chmod(0o755)
-    directory = tmp_path / "managed cookies"
-    env = os.environ.copy()
+    xdg = {name: tmp_path / name.lower() for name in
+           ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")}
+    env = {key: value for key, value in os.environ.items() if key != "DOWNLOADINUX_CONFIG"}
+    env.update({name: str(path) for name, path in xdg.items()})
     env.update(
         {
             "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
-            "COOKIE_DIRECTORY": str(directory),
             "UV_LOG": str(tmp_path / "full-setup-uv.log"),
-            "YTDLP_LOG": str(tmp_path / "full-setup-ytdlp.log"),
-            "YTDLP_STAGE": "valid",
+            "STUB_LOG": str(tmp_path / "full-setup-stubs.log"),
         }
     )
+    directory = xdg["XDG_DATA_HOME"] / "downloadinux" / "cookies"
     return {
         "directory": directory,
         "jar": directory / "cookies.txt",
         "uv_log": tmp_path / "full-setup-uv.log",
-        "yt_dlp_log": tmp_path / "full-setup-ytdlp.log",
+        "stub_log": tmp_path / "full-setup-stubs.log",
         "env": env,
     }
 
 
-def run_full_setup(host):
+def run_full_setup(host, stdin=""):
     return subprocess.run(
         [JUST, "--justfile", str(checkout.asset_path("justfile")), "setup"],
         cwd=checkout.checkout_root(),
         env=host["env"],
+        input=stdin,
         capture_output=True,
         text=True,
         timeout=60,
@@ -379,59 +359,66 @@ def setup_headings(output):
 
 def assert_full_setup_finishes(result, host):
     assert result.returncode == 0, result.stderr
-    assert not (host['directory'] / 'sources.json').exists()
     assert setup_headings(result.stdout) == [
         "==> 1/5  Settings",
         "==> 2/5  NordVPN token",
-        "==> 3/5  Exporting browser cookies",
+        "==> 3/5  Cookie source",
         "==> 4/5  Building the image (first run takes a few minutes)",
         "==> 5/5  Starting up",
     ]
     calls = host["uv_log"].read_text().splitlines()
-    assert calls[-3:] == [
+    assert calls == [
+        "run downloadinux cookies setup",
         "run downloadinux build",
         "run downloadinux up",
         "run downloadinux doctor",
     ]
-    return calls
-
-
-def test_full_setup_refreshes_once_when_it_keeps_an_instagram_session(
-    full_setup_host,
-):
-    full_setup_host["directory"].mkdir()
-    original = b"# Netscape HTTP Cookie File\n.instagram.com sessionid kept-secret\n"
-    full_setup_host["jar"].write_bytes(original)
-
-    result = run_full_setup(full_setup_host)
-
-    calls = assert_full_setup_finishes(result, full_setup_host)
-    assert full_setup_host["jar"].read_bytes() == original
-    assert not full_setup_host["yt_dlp_log"].exists()
-    assert calls.count("run downloadinux config user-agent") == 1
-    assert calls.index("run downloadinux config user-agent") < calls.index(
-        "run downloadinux build"
+    # No branch refreshes the user-agent or runs a host yt-dlp (DEC-40).
+    assert "yt-dlp" not in (host["stub_log"].read_text() if host["stub_log"].exists() else "")
+    assert ANSI.sub("", result.stdout).splitlines()[-1] == "Ready.  Download with:  just dl video <url>"
+    assert result.stdout.endswith(
+        "\n\033[1;32mReady.\033[0m  Download with:  \033[1;36mjust dl video <url>\033[0m\n"
     )
+    assert "COOKIE_CANARY" not in result.stdout + result.stderr
+    return ANSI.sub("", result.stdout)
 
 
-def test_full_setup_export_relies_on_cookies_for_its_one_refresh(full_setup_host):
-    result = run_full_setup(full_setup_host)
-
-    calls = assert_full_setup_finishes(result, full_setup_host)
-    assert full_setup_host["yt_dlp_log"].read_text().splitlines() == ["called"]
-    assert calls.count("run downloadinux config user-agent") == 1
-    assert calls.index("run downloadinux config user-agent") < calls.index(
-        "run downloadinux build"
+def test_full_setup_keeps_a_named_default_without_exporting(full_setup_host):
+    material = cookiejar.parse(
+        (cookiejar.HEADER + ".instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tCOOKIE_CANARY\n").encode(),
+        full_setup_host["directory"] / "import.txt",
     )
+    cookie_writer.publish(full_setup_host["directory"], "work", material,
+                          dict(kind="file", path="/external/work.txt"), expected=None, select=True)
+    before = (full_setup_host["directory"] / "sources.json").read_bytes()
+
+    out = assert_full_setup_finishes(run_full_setup(full_setup_host), full_setup_host)
+
+    assert "Keeping the default cookie source work; it was not refreshed.\n" in out
+    assert "Export Firefox cookies now?" not in out
+    assert (full_setup_host["directory"] / "sources.json").read_bytes() == before
 
 
-def test_full_setup_carries_on_after_an_unusable_cookie_export(full_setup_host):
-    full_setup_host["env"]["YTDLP_STAGE"] = "wrong-header"
+@pytest.mark.parametrize("stdin", ["n\n", ""], ids=["no", "end of input"])
+def test_full_setup_stays_anonymous_without_a_yes(full_setup_host, stdin):
+    out = assert_full_setup_finishes(run_full_setup(full_setup_host, stdin), full_setup_host)
+
+    assert "Export Firefox cookies now? [y/N] " in out
+    assert ("The cookie default stays anonymous; add a source later with "
+            "dlx cookies firefox, add-browser, or import.\n") in out
+    registry = json.loads((full_setup_host["directory"] / "sources.json").read_text())
+    assert registry == {"version": 1, "default": None, "sources": {}}
+
+
+def test_full_setup_carries_on_after_a_failed_cookie_step(full_setup_host):
+    full_setup_host["directory"].mkdir(parents=True, mode=0o700)
+    full_setup_host["jar"].write_bytes(b"not a cookie jar COOKIE_CANARY\n")
 
     result = run_full_setup(full_setup_host)
+    out = assert_full_setup_finishes(result, full_setup_host)
 
-    calls = assert_full_setup_finishes(result, full_setup_host)
-    assert "Skipped — run 'just cookies' later." in result.stdout
-    assert calls.count("run downloadinux config user-agent") == 0
-    assert not full_setup_host["jar"].exists()
-    assert "test-secret" not in result.stdout + result.stderr
+    assert ("    The cookie step failed (exit 1); setup continues. "
+            "Retry with: dlx cookies setup\n") in out
+    assert f"downloadinux: error: {full_setup_host['jar']}" in result.stderr
+    assert not (full_setup_host["directory"] / "sources.json").exists()
+    assert full_setup_host["jar"].read_bytes() == b"not a cookie jar COOKIE_CANARY\n"

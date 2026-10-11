@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import cookie_selectors, cookie_store, health, migrate, operations, presets, servers
+from downloadinux import cookie_selectors, cookie_store, health, launch, migrate, operations, presets, servers
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -216,11 +216,14 @@ def build_parser() -> argparse.ArgumentParser:
     dl = commands.add_parser(
         "dl",
         help="download with a preset",
-        description="Run a preset's downloader in the container with the "
-        "output root, cookie jar, and user-agent from the settings. PRESET is "
-        "video (v: yt-dlp) or gallery (gal, g: gallery-dl).",
+        description="Run a preset's downloader in the container, with a private "
+        "copy of the pinned cookie source (or none) and the user-agent from the "
+        "settings. PRESET is video (v: yt-dlp) or gallery (gal, g: gallery-dl). "
+        "Without --cookie-source or --anonymous the cookie default applies. "
+        "Options go before PRESET or after the last URL.",
     )
     _add_global_options(dl, 1)
+    _add_launch_options(dl)
     dl.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
     dl.add_argument("urls", nargs="+", metavar="URL")
     dl.set_defaults(handler=_dl)
@@ -229,11 +232,13 @@ def build_parser() -> argparse.ArgumentParser:
         "batch",
         help="run a queue file in a detached tmux session",
         description="Start the batch loop on a queue file under "
-        "paths.downloads in a detached tmux session in the container. The "
-        "queue defaults to dlmp4_queue (video) or dlgal_queue (gallery) in "
-        "paths.downloads.",
+        "paths.downloads in a detached tmux session in the container, with one "
+        "private copy of the pinned cookie source (or none) for the whole "
+        "batch. The queue defaults to dlmp4_queue (video) or dlgal_queue "
+        "(gallery) in paths.downloads. Options are dl's.",
     )
     _add_global_options(batch, 1)
+    _add_launch_options(batch)
     batch.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
     batch.add_argument("queue", nargs="?", metavar="QUEUE")
     batch.set_defaults(handler=_batch)
@@ -291,6 +296,26 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(handler=_doctor)
 
     return parser
+
+
+def _add_launch_options(parser: argparse.ArgumentParser) -> None:
+    """`dl` and `batch`'s selection and user-agent options (Named cookie
+    sources §3, "Host launch (DEC-39)"; §4; DEC-40). Both selectors and the
+    value checks are usage errors, before settings load."""
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--cookie-source", metavar="NAME", type=_source_name,
+        help="use this registered cookie source (default: the cookie default)",
+    )
+    selection.add_argument(
+        "--anonymous", action="store_true",
+        help="use no cookies; the source store is not read",
+    )
+    parser.add_argument(
+        "--user-agent", metavar="VALUE", type=launch.user_agent_option,
+        help="user-agent for this run instead of downloads.user_agent "
+        "(spell a VALUE beginning with - as --user-agent=VALUE)",
+    )
 
 
 def _passthrough(args: list[str]) -> list[str]:
@@ -422,12 +447,19 @@ def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
     return operations.run_compose(_passthrough(args.args), options.config, options.overrides)
 
 
+def _launch_options(args: argparse.Namespace) -> dict:
+    return dict(cookie_source=args.cookie_source, anonymous=args.anonymous,
+                user_agent=args.user_agent)
+
+
 def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
-    return operations.download(args.preset, args.urls, options.config, options.overrides)
+    return operations.download(args.preset, args.urls, options.config, options.overrides,
+                               **_launch_options(args))
 
 
 def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
-    result = operations.batch(args.preset, args.queue, options.config, options.overrides)
+    result = operations.batch(args.preset, args.queue, options.config, options.overrides,
+                              **_launch_options(args))
     print(f"Queue: {result.queue}")
     print(
         f"Running detached in tmux session {result.session}. "
@@ -541,8 +573,7 @@ def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:
         return 0
     result = operations.refresh_user_agent(options.config, options.overrides)
     if result.major is None:
-        # DEC-21: `just cookies` runs this after every export, so a host
-        # without Chrome must not fail it.
+        # DEC-21: a host without Chrome warns rather than fails.
         print(
             f"{PROG}: warning: cannot read Chrome's version from {result.plist}; "
             "downloads.user_agent is unchanged",
@@ -624,7 +655,13 @@ def render_health(result: health.Result) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except DownloadinuxError as error:
+        # An argument type may raise the project's usage error, which keeps
+        # the host's error form rather than argparse's (DEC-40).
+        print(f"{PROG}: error: {error}", file=sys.stderr)
+        return error.exit_status
     handler = getattr(args, "handler", None)
     if handler is None:
         # Bare invocation is reserved for the TUI; until Stage 4 it prints

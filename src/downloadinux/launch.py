@@ -25,8 +25,8 @@ USER_AGENT_CONFIGURED = (
 )
 
 # The batch's tmux script (§3, DEC-39): the runner, then the pause, so the
-# pause follows the runner's cleanup. The pause matches Stage 1's
-# `operations.BATCH_SCRIPT`.
+# pause follows the runner's cleanup. The pause is Stage 1's (*Host
+# application*, "Downloads, pinned for P0001-C04").
 BATCH_RUNNER_SCRIPT = f'{RUNNER} "$@"; echo; echo "[done — press a key]"; read -k1'
 
 

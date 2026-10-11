@@ -2,8 +2,8 @@
 DEC-39), through `health.source_checks` over real stores under `tmp_path`.
 
 Stores are built with the source writer, and every failure is a real damaged
-store, not a patched reader. Nothing here is wired into `doctor` yet: the
-Stage 1 rows stay in `health.inspect` until the cutover.
+store, not a patched reader. `test_doctor.py` drives the same rows through
+`doctor`.
 """
 
 from datetime import datetime, timezone
@@ -12,7 +12,6 @@ import os
 import pytest
 
 from downloadinux import cookie_store as store, cookie_writer as writer, cookiejar, health, useragent
-from test_doctor import by_id, docker, doctor_paths, run_json  # noqa: F401 (fixtures)
 
 NOW = 1_800_000_000
 LATER, EARLIER = NOW + 3600, NOW - 3600
@@ -260,13 +259,3 @@ def no_chrome_lookup(monkeypatch):
 def test_user_agent_row(tmp_path, no_chrome_lookup, value, status, summary, fix):
     *_, agent = checks(tmp_path, value)
     assert (agent.status.value, agent.summary, agent.fix) == (status, summary, fix)
-
-
-# --- doctor is unchanged -----------------------------------------------------
-
-def test_doctor_still_reads_the_stage_1_jar_and_never_migrates(docker, doctor_paths, capsys):
-    status, report, _ = run_json(capsys, doctor_paths)
-    found = by_id(report)
-    assert found["cookies.jar"]["summary"] == f"{doctor_paths['jar']}: 2 cookies"
-    assert found["cookies.instagram"]["summary"] == "instagram: session cookie present"
-    assert not (doctor_paths["cookies"] / "sources.json").exists()

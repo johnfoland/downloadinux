@@ -32,8 +32,6 @@ BASE_VARIABLES = {
     "DOWNLOADINUX_UID": "container.uid",
     "DOWNLOADINUX_GID": "container.gid",
     "DOWNLOADINUX_TZ": "container.timezone",
-    # DL_USER_AGENT in the container, for the shell's helpers (DEC-20).
-    "DOWNLOADINUX_USER_AGENT": "downloads.user_agent",
 }
 VPN_VARIABLES = {
     "DOWNLOADINUX_NORDVPN_SERVER": "vpn.server",

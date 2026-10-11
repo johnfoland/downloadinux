@@ -6,7 +6,6 @@ import pytest
 from downloadinux import cli, compose, cookiejar, cookie_store as store, cookie_writer as writer, credentials, operations, settings, useragent
 from downloadinux.errors import ConfigError
 from test_cookie_migration import DATA, NOW, REVISION, legacy
-from test_doctor import Docker
 
 
 @pytest.fixture
@@ -285,36 +284,36 @@ def test_config_show_never_reads_or_migrates_registry(capsys, root, monkeypatch,
         assert not (root / 'sources.json').exists() and not (root / '.lock').exists()
 
 
-@pytest.mark.parametrize('command', ['dl', 'batch', 'doctor'])
+@pytest.mark.parametrize('command', ['dl', 'batch'])
 @pytest.mark.parametrize('existing', [False, True])
-def test_stage1_routes_ignore_registry_default_and_never_migrate(capsys, root, tmp_path, monkeypatch, command, existing):
+def test_downloads_follow_the_registry_default_and_migrate_once(capsys, root, tmp_path, monkeypatch, command, existing):
+    """Named cookie sources §3, §5 (DEC-33, DEC-39): without a registry a
+    download migrates the Stage 1 jar to `legacy` and pins it; an existing
+    anonymous default launches anonymously and leaves the registry alone.
+    Neither names the Stage 1 jar, whose bytes stay unchanged."""
     old = legacy(root)
     if existing:
         writer.ensure_store(root)
         writer.set_default(root, None)
     before = (root / 'sources.json').read_bytes() if existing else None
-    def forbidden(*args, **kwargs): raise AssertionError('Stage 1 route accessed source store')
-    monkeypatch.setattr(store, 'read', forbidden)
-    monkeypatch.setattr(writer, 'ensure_store', forbidden)
     calls = []
     monkeypatch.setattr(compose, 'run_process', lambda argv, env: calls.append(argv) or 0)
-    monkeypatch.setattr(compose, 'capture_process', Docker().capture)
     downloads = tmp_path / 'downloads'
     downloads.mkdir()
     (downloads / 'dlmp4_queue').write_text('https://example.invalid/v\n')
-    argv = ['--set', f'paths.cookies={root}', '--set', f'paths.downloads={downloads}']
-    argv += [command, 'video', 'https://example.invalid/v'] if command == 'dl' else [command, 'video'] if command == 'batch' else [command, '--json']
+    argv = ['--set', f'paths.cookies={root}', '--set', f'paths.downloads={downloads}', command, 'video']
+    argv += ['https://example.invalid/v'] if command == 'dl' else []
     assert cli.main(argv) == 0
-    out, err = capsys.readouterr()
-    if command == 'doctor':
-        checks = {item['id']: item for item in json.loads(out)['checks']}
-        assert checks['cookies.jar']['status'] == 'ok'
-        assert checks['cookies.instagram']['status'] == 'ok'
+    capsys.readouterr()
+    [launched] = calls
+    assert not any('/cookies/cookies.txt' in arg for arg in launched)
+    if existing:
+        assert (root / 'sources.json').read_bytes() == before
+        assert '--anonymous' in launched
     else:
-        assert any('/cookies/cookies.txt' in arg for arg in calls[0])
-    assert ((root / 'sources.json').read_bytes() if existing else None) == before
-    if not existing:
-        assert not (root / 'sources.json').exists() and not (root / '.lock').exists()
+        source = store.read(root).sources['legacy']
+        assert launched[launched.index('--source'):launched.index('--source') + 4] == [
+            '--source', 'legacy', '--revision', source.revision]
     assert old.read_bytes() == DATA
 
 

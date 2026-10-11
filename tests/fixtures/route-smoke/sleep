@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stub sleep for the host-route smoke test: the batch loop's throttle records
+# that it ran, then holds until the host writes the release file, so the host
+# can act while the batch keeps its private jar. Polls with the real sleep.
+touch /downloads/route-smoke/sleep-ran
+while [ ! -e /downloads/route-smoke/release ]; do
+    /bin/sleep 0.1
+done

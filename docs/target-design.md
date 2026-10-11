@@ -8,11 +8,13 @@ P0003-C02 implements locked legacy migration and public list/inspect/default
 operations. PR #41 implements accepted browser/file registration and explicit refresh.
 PR #49 ships the container runner for private execution, tested in the image;
 PR #52 adds public `cookies cleanup` and `config user-agent VALUE`. PR #55
-adds the preparatory `cookies firefox` and `cookies setup` fronts (DEC-38) and
-TOML 1.0 settings writes. The recipes' switch to those fronts, the download
-selection and user-agent options, and the runner's use by downloads arrive
-together at D4's cutover.
-Downloads/export/setup/doctor retain the Stage 1 shared jar until cutover.
+adds the `cookies firefox` and `cookies setup` fronts (DEC-38) and TOML 1.0
+settings writes. PR #62 implements D4's cutover: `dl` and `batch` select,
+pin, and launch through the runner with `--user-agent`; `just cookies`,
+setup, and doctor use named sources; the container's download shortcuts,
+`DL_USER_AGENT`, and the placeholder jar are retired. Stage 2's completion
+evidence (D5) is pending, so Stage 2 is not yet marked implemented. Passages
+the cutover replaced are marked as history where they stand.
 Stages 3–4 remain proposed.
 
 ## Agreed decisions
@@ -236,6 +238,13 @@ Commands in the container, pinned for P0001-C03:
 
 Downloads, pinned for P0001-C04:
 
+*History, superseded at the Stage 2 cutover (PR #62):* `dl` no longer runs the preset's argument list itself, and
+`batch`'s tmux program is no longer the `<script>`/`<argv…>` form below; both
+launch `downloadinux-runner` with a pinned cookie selection and the effective
+user-agent (*Named cookie sources* §3, "Host launch (DEC-39)"). The preset
+and URL rules, the queue checks and container path, the report, the session
+table, the failure message, and `watch` below still hold.
+
 - `dl <preset> <url>…` takes at least one URL; `preset` is `video` (`v`)
   or `gallery` (`gal`, `g`), anything else a usage error, exit 2. It runs
   the preset's argument list (*Presets*) with the URLs appended, through
@@ -433,7 +442,9 @@ Settled for Stage 1 (DEC-9). Implemented in P0001-C02: Compose files,
 runtime identity, mount preparation, and transitional links (DEC-15).
 Implemented in P0001-C04 (D3): `DL_USER_AGENT`, the shell helpers on the
 presets, the batch loop's own file, and the end of DEC-15's interval (the
-`/legacy/` binds and the links are gone).
+`/legacy/` binds and the links are gone). *History, superseded at the Stage 2 cutover (PR #62):* `DL_USER_AGENT`, the
+shell download helpers, and the placeholder jar are retired (*Named cookie
+sources* §5); the batch loop's file and `exifmod` remain.
 
 | Container location | Host source | Access | Purpose |
 | --- | --- | --- | --- |
@@ -477,7 +488,7 @@ Compose files and the entrypoint, pinned for P0001-C02:
   | `DOWNLOADINUX_COOKIES` | `paths.cookies` | bind source of `/cookies` |
   | `DOWNLOADINUX_UID`, `DOWNLOADINUX_GID` | `container.uid`, `container.gid` | `DL_UID`, `DL_GID` |
   | `DOWNLOADINUX_TZ` | `container.timezone` | `TZ` |
-  | `DOWNLOADINUX_USER_AGENT` | `downloads.user_agent` | `DL_USER_AGENT` (from P0001-C04, DEC-20) |
+  | `DOWNLOADINUX_USER_AGENT` | `downloads.user_agent` | `DL_USER_AGENT` (from P0001-C04, DEC-20; history: removed at the Stage 2 cutover, *Named cookie sources* §5) |
 
   The prefix keeps Compose's automatic read of a `.env` in the project
   directory from supplying any of them: the legacy `.env` names none.
@@ -488,9 +499,10 @@ Compose files and the entrypoint, pinned for P0001-C02:
   `dl`'s own group takes the GID; a UID already used by another account is an
   error that stops the container with a message naming it. Ownership changes
   stay inside the image's `/home/dl` and never follow a link. Then, as `dl`,
-  it creates `/downloads/dlmp4` and `/downloads/dlgal`, and the placeholder
-  `/cookies/cookies.txt` (mode 0600) when absent; a mount it cannot write is
-  a warning, not a stop, so `doctor` can report it.
+  it creates `/downloads/dlmp4` and `/downloads/dlgal` (and, as history until
+  the Stage 2 cutover, the placeholder `/cookies/cookies.txt`, mode 0600, when
+  absent; no longer seeded, *Named cookie sources* §5); a mount it cannot
+  write is a warning, not a stop, so `doctor` can report it.
 - The checkout's `presets/` exists from P0001-C02 (holding a README until D3
   moves the presets in), since a long-syntax bind fails on a missing source.
 - Until D3 (done in P0001-C04, below) the entrypoint also kept the old
@@ -505,6 +517,7 @@ Pinned for P0001-C04, the end of DEC-15's interval:
 
 - The base file's environment gains `DL_USER_AGENT` from
   `DOWNLOADINUX_USER_AGENT` (table above, DEC-20), in both VPN modes.
+  (History: removed at the Stage 2 cutover, *Named cookie sources* §5.)
 - The `/legacy/` binds, the four links, and the entrypoint loop that
   removes stale links before `usermod` are gone, and so is the checkout's
   `config/` directory (*Presets*). Nothing in the image, the entrypoint, or
@@ -520,10 +533,10 @@ Pinned for P0001-C04, the end of DEC-15's interval:
   `zsh/batch.zsh` (in the image `/home/dl/.zsh-custom/batch.zsh`), which
   `batch` sources and the interactive shell sources with the other `zsh/`
   files; `exifmod` stays in `functions.zsh`.
-  These remain the implemented Stage 1 contracts. Stage 2's *Named cookie
-  sources / Compatibility and migration* retires the four download shortcuts
-  and their user-agent environment channel at cutover (DEC-33, amended
-  2026-10-09); the non-interactive batch loop and `exifmod` remain.
+  History: Stage 2's *Named cookie sources / Compatibility and migration*
+  retired the four download shortcuts and their user-agent environment
+  channel at the cutover (DEC-33, amended 2026-10-09; PR #62); the
+  non-interactive batch loop and `exifmod` remain.
 - Entrypoint messages (issue #18): without a token, `NORDVPN_TOKEN not set.
   Store one on the host with: just token <token>`; the last line, `Ready.
   Shell in with: just shell (or dlx shell)`.
@@ -558,18 +571,21 @@ At invocation the operations layer adds, from application configuration:
 
 | Preset | Output root | Cookies | User-agent |
 | --- | --- | --- | --- |
-| `video` | `/downloads/dlmp4` | `/cookies/cookies.txt` | `downloads.user_agent` |
-| `gallery` | `/downloads/dlgal` for Instagram | `/cookies/cookies.txt` for Instagram | `downloads.user_agent`, globally and for Instagram |
+| `video` | `/downloads/dlmp4` | `/cookies/cookies.txt` (history; now the runner's private jar) | `downloads.user_agent` |
+| `gallery` | `/downloads/dlgal` for Instagram | `/cookies/cookies.txt` for Instagram (history; now the runner's private jar) | `downloads.user_agent`, globally and for Instagram |
 
 The gallery archive stays at `/downloads/dlgal/gallery-dl-archive.sqlite3`,
 the same host file as today. Settings applied only to Instagram today stay
 Instagram-only. The overrides go in as downloader arguments or as a generated
 file under `/state`; shipped preset files are never written.
 
-The Stage 2 *Named cookie sources / User-agent policy* contract replaces these
-Stage 1 fixed-cookie arguments with private jars, and adds explicit literals.
-Only `config user-agent VALUE` is implemented (PR #52); the download arguments
-change at D4's cutover.
+The Stage 2 *Named cookie sources / User-agent policy* contract replaced these
+Stage 1 fixed-cookie arguments with private jars, and added explicit literals:
+`config user-agent VALUE` in PR #52, and the download arguments at the cutover
+in PR #62. The runner builds the lists below with its private jar in place of
+`/cookies/cookies.txt`, or no cookie argument for an anonymous run, and the
+run's user-agent as `<ua>` (*Named cookie sources* §3, "Child argument
+lists"); the `/cookies/cookies.txt` lists are history.
 
 `config user-agent` writes `downloads.user_agent` into the settings file. In
 Stage 1 it keeps today's source, the host Chrome major version on macOS, and
@@ -698,6 +714,10 @@ Pinned for P0001-C05 (DEC-22):
   terminal and `NO_COLOR` is unset or empty.
 - A fix names a `dlx` command where one does the job, else a `just` recipe
   (`just cookies` until Stage 2), else the change in words.
+- *History, superseded at the Stage 2 cutover (PR #62):* the Netscape-lines bullet below, the `no cookie jar` skip, and
+  the `cookies.jar`, `cookies.instagram`, `cookies.youtube`, and
+  `downloads.user_agent` rows of the table are replaced, at the same IDs and
+  positions, by *Named cookie sources* §5's Stage 2 rows (DEC-39).
 - Host checks read files on the host. The Netscape jar is read as lines: a
   line starting `#HttpOnly_` is a cookie line with that prefix removed (yt-dlp
   writes session cookies that way), any other line starting `#` and any
@@ -829,8 +849,9 @@ argument list the `dl` operation would use (plus gallery-dl's `-q`, as
 today's gallery batch has). The queue file must still be under the
 downloads root.
 
-`just cookies` keeps its Firefox export through host yt-dlp until Stage 2
-replaces it, but writes the managed jar (`paths.cookies`/`cookies.txt`) instead
+History until the Stage 2 cutover (PR #62; now *Named cookie sources* §5):
+`just cookies` kept its Firefox export through host yt-dlp, but wrote the
+managed jar (`paths.cookies`/`cookies.txt`) instead
 of the checkout's `cookies/` directory.
 
 Recipes when the Compose files change, pinned for P0001-C02 (the old
@@ -907,7 +928,9 @@ Pinned for P0001-C06, D5's setup (DEC-23):
   and `just restart`. With it true, a `set` token is left alone as today;
   otherwise it prompts as today, and an empty answer or end of input skips,
   pointing at `just token <token>`.
-- *Exporting browser cookies*, *Building*, and *Starting up* are unchanged:
+- *Exporting browser cookies* (history: since the Stage 2 cutover the step is
+  *Cookie source*, running `cookies setup`; *Named cookie sources* §5,
+  "Cutover recipes (DEC-40)"), *Building*, and *Starting up* are unchanged:
   the export is skipped when the jar already holds an Instagram `sessionid`
   line (Stage 2 replaces this step), a failed export is reported and setup
   carries on; then `build`, `up`, a ten-second pause, and `just doctor`,
@@ -928,7 +951,9 @@ Pinned for P0001-C06, D5's setup (DEC-23):
 Cookie and user-agent follow-ups, pinned for P0002 (DEC-25):
 
 Implemented in P0002-C02 (D2), including the absent staging path required by
-yt-dlp's input-before-output cookie lifecycle.
+yt-dlp's input-before-output cookie lifecycle. *History, superseded at the Stage 2 cutover (PR #62):* the `just cookies`
+export and setup's cookie branches below became `cookies firefox` and
+`cookies setup` (*Named cookie sources* §5, "Cutover recipes (DEC-40)").
 
 - Until Stage 2 replaces the Firefox recipe, `just cookies` exports into a
   mode-0600 temporary file in `paths.cookies`, never directly over the managed
@@ -961,7 +986,7 @@ foundation and §2's parser, serializer, and safe metadata assembly. PR #40
 implements §5's locked migration and §2's public list/inspect/default operations.
 PR #41 implements accepted direct browser extraction, the support report, browser/file
 registration with explicit replacement, and stored-origin refresh. PR #45 adds
-§3's internal groundwork, unused by any public route: host submission pinning,
+§3's internal groundwork: host submission pinning,
 the settings-free reader of a pinned revision's exact bytes, and a
 standard-library library that allocates private snapshots under a held lease,
 tears them down, and cleans up abandoned ones, with credential-free Docker
@@ -969,12 +994,12 @@ Linux evidence. PR #49 ships §3's container runner ("Runner interface and
 process lifetime") as `downloadinux-runner` in the image, with in-image evidence
 from the gate's smoke test. PR #52 implements §3's public `cookies cleanup` host
 front, with in-image evidence, and §4's explicit `config user-agent VALUE`.
-PR #55 implements §5's `cookies firefox` and `cookies setup` fronts, which no
-recipe calls yet. No download calls the runner yet: that is D4's cutover.
-The new source commands are preparatory: downloads, export,
-setup, and doctor retain the Stage 1 shared jar and ignore the registry default
-until D4's coordinated cutover. These rules replace its
-shared-jar execution and required Firefox/probe/user-agent recipe chain.
+PR #55 implements §5's `cookies firefox` and `cookies setup` fronts. PR #62
+implements D4's coordinated cutover: §3's selection options and host launch
+through the runner for `dl` and `batch`, §4's `--user-agent`, and §5's
+recipes, doctor rows, and retirements. D5's completion evidence is pending.
+These rules replaced Stage 1's shared-jar execution and required
+Firefox/probe/user-agent recipe chain.
 
 ### 1. Source store and publication
 
@@ -1265,7 +1290,7 @@ exits 1.
 #### Snapshot storage format and interrupted allocation
 
 The following storage details pin the shared producer/cleanup contract
-(DEC-34); they are preparation for the runner, not public download cutover.
+(DEC-34); the runner and, since the cutover, every download use them.
 The private jar is a byte-for-byte copy of the exact pinned file after shared
 validation of those bytes; a serializer must not rewrite its comments, line
 endings, BOM or accepted cookie representation. Read and validate from the
@@ -1343,9 +1368,10 @@ and cleanup would remove an active snapshot.
 
 #### Runner interface and process lifetime
 
-These details pin the container runner (DEC-36). The runner is shipped and
-tested before D4 activates it; until then no download route calls it, and
-only the host `cookies cleanup` front (PR #52) runs its `cleanup`. Implemented
+These details pin the container runner (DEC-36). The runner shipped and was
+tested before D4 activated it; since the cutover (PR #62) `dl` and `batch`
+run its `download` and `batch`, and the host `cookies cleanup` front (PR #52)
+its `cleanup`. Implemented
 in PR #49 (`src/downloadinux/cookie_runner.py`, `scripts/downloadinux-runner`,
 and the gate's smoke test).
 
@@ -1556,8 +1582,8 @@ The downloaders remain installed for the runner.
 The helper-specific `DL_USER_AGENT` / `DOWNLOADINUX_USER_AGENT` environment
 channel ends with those shortcuts; host operations pass the configured or
 invocation user-agent directly to the runner, as DEC-20 already does for host
-commands. The Stage 1 environment table above remains implemented history until
-cutover. A changed source default or user-agent applies to the next host request
+commands. The Stage 1 environment table above is history since the cutover
+(PR #62). A changed source default or user-agent applies to the next host request
 without recreation; mounts/identity still require the configured running
 container to match. Stage 2 adds no automatic recreate on every download.
 The README and recipe guidance give the host replacement for every retired
@@ -1602,17 +1628,18 @@ Skips, first match wins: with an anonymous default both site checks are
 version. `<error>` is the shared reader's or migration's path-bearing message,
 which never holds a cookie value.
 
-Delivery may expose source inspection/registration before execution changes,
-but document those as preparatory: existing downloads still use the Stage 1
-jar until cutover. Ship and test the new runner before activating it. Switch
-host foreground downloads, batches, `just cookies`, setup, and cookie/user-agent
-health checks together, and remove the container download shortcuts in that
-same cutover chunk. This prevents a refresh updating the old jar while a new
+Delivery exposed source inspection/registration before execution changed,
+documented as preparatory while existing downloads still used the Stage 1
+jar. The runner shipped and was tested before it was activated. Host
+foreground downloads, batches, `just cookies`, setup, and cookie/user-agent
+health checks switched together, and the container download shortcuts were
+removed, in one cutover pull request (PR #62). This prevents a refresh updating the old jar while a new
 route reads an immutable
 source, or a new default silently being ignored by a remaining old route.
 Additive preparation may be split; preserve the whole cutover boundary.
 Already-running Stage 1 batches may finish using their existing jar; operators
-stop/finish them before rebuilding/recreating the image for cutover.
+stop or finish them before rebuilding and recreating the image (README,
+"Inside the container").
 
 The README, cookie README, preset README, recipe menu text, and smoke test
 must change with the implementing chunks. Keep the 2026-09 current-state review

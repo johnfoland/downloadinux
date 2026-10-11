@@ -8,7 +8,6 @@ services:
       DL_UID: ${DOWNLOADINUX_UID}
       DL_GID: ${DOWNLOADINUX_GID}
       TZ: ${DOWNLOADINUX_TZ}
-      DL_USER_AGENT: ${DOWNLOADINUX_USER_AGENT}
     volumes:
       - type: bind
         source: ${DOWNLOADINUX_DOWNLOADS}

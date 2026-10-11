@@ -1,108 +1,21 @@
 # cookies/
 
-The cookie jar moved to the managed directory at `paths.cookies`, by default
-`~/.local/share/downloadinux/cookies/cookies.txt`. The old `cookies.txt` here
-is no longer read. `dlx config import-env` copies it once, leaving the original
-in place. Cookie files hold live session credentials; treat them like passwords.
-Once the import has run, delete the old jar here, or `chmod 600` it if you
-keep it: it may be world-readable.
+Downloads read cookies from **named cookie sources** kept in the managed
+directory at `paths.cookies` (by default `~/.local/share/downloadinux/cookies/`),
+never from this checkout directory. The old `cookies.txt` here is no longer
+read. `dlx config import-env` copies it once into the managed directory,
+leaving the original in place, and the first cookie-aware command then
+registers that copy (below). Cookie files hold live session credentials; treat
+them like passwords. Once the import has run, delete the old jar here, or
+`chmod 600` it if you keep it: it may be world-readable.
 
-## Preparatory named sources
-
-`dlx cookies list [--json]`, `dlx cookies inspect NAME [--json]`, and
-`dlx cookies default [NAME] [--anonymous]` are implemented. **Downloads,
-`just cookies`, setup, and doctor still use the Stage 1 managed jar and ignore
-this source-store default, even when it is anonymous.** File/browser registration
-and explicit refresh are implemented. Private execution jars (PR #45) and the
-container runner that creates them (PR #49) are shipped, and the public
-cleanup front is implemented (PR #52), but no download or recipe creates
-snapshots until the pending download cutover. `dlx cookies cleanup` asks the running
-container's runner to remove abandoned ones (a hard-killed download's, once
-downloads use them), skipping any still in use or unverifiable, and prints
-both counts. It needs the running container from an image built with the
-runner, and never reads the source store or migrates.
-
-On first source access, a valid nonempty managed `paths.cookies/cookies.txt`
-is copied into immutable source `legacy` and selected as the future default.
-Missing or header-only material creates an anonymous empty registry; malformed
-or unreadable material fails with a repair/move-aside hint and publishes nothing.
-Migration never changes either old jar's bytes or modes. An existing registry
-is kept unchanged, and a damaged one is never reset automatically.
+To import a jar that only exists here without `import-env`, register it and
+select it:
 
 ```sh
-dlx cookies list --json
-dlx cookies default
-# When list reports a migrated legacy source:
-dlx cookies inspect legacy
-dlx cookies default legacy
-dlx cookies default --anonymous
+dlx cookies import mine cookies/cookies.txt
+dlx cookies default mine
 ```
-
-`sources.json`, `.lock`, and `sources/<name>/<revision>.txt` live below
-`paths.cookies`. Managed directories are 0700; published files and lock are
-0600. List shows origin/revision/time/default metadata; inspect adds expiry
-counts and domain/session-cookie presence without individual cookie names or
-values, and never asserts login validity. Default changes retain revisions and
-timestamps. List/inspect/default/import need no browser. Source operations need no Docker,
-token, or user-agent operation.
-A later `just cookies` export changes the old Stage 1 jar; the immutable
-`legacy` inspection copy remains unchanged until explicitly refreshed or replaced.
-
-```sh
-dlx cookies browsers --json
-dlx cookies import imported "~/Exports/account cookies.txt"
-dlx cookies add-browser personal --browser firefox --profile "work profile" --container none
-dlx cookies add-browser work --browser chrome --profile "Default"
-dlx cookies refresh imported  # reread the stored file origin
-dlx cookies refresh personal  # reuse the stored browser selectors
-dlx cookies default imported  # explicit selection for the future cutover
-# Explicit replacement may change origin or kind without switching defaults:
-dlx cookies import personal "~/Exports/replacement.txt" --replace
-```
-
-Registration validates before atomic publication, retaining old revisions and
-the current anonymous/named default. Imports are immutable managed copies, never
-links to the external origin; imports/profiles are never chmodded or overwritten.
-Warnings, partial exports, parser/publication errors, and concurrent changes to
-the original source fail safely. If legacy migration succeeded first, that
-committed baseline remains. Clean empty files/exports are valid.
-
-`dlx cookies firefox [PROFILE]` creates or replaces the source `firefox`, of
-any kind, from a Firefox profile export (all containers) and selects it as the
-default in the same publication; a failure changes nothing, default included.
-It is the account switch `just cookies` will call from the download cutover.
-Until then it is preparatory, like the other `cookies` commands, and `just
-cookies` still writes the Stage 1 jar.
-
-`dlx cookies setup` is setup's cookie step from the cutover; `just setup`
-still runs its Stage 1 step until then. A named default is kept and summarized,
-never refreshed, and nothing is asked. An anonymous default asks `Export
-Firefox cookies now? [y/N] `: only `y`/`yes` (any case) runs `cookies
-firefox`; anything else, or end of input, keeps anonymous. A failed export
-exits 1 with the default still anonymous.
-
-The browser adapter uses locked yt-dlp 2026.08.19 directly without a URL/probe.
-Firefox accepts containers (`none` = outside, omitted = all); Chrome/Chromium
-accept Linux keyrings only. Profile names stay names; path-like/tilde profiles
-and import paths become absolute without resolving symlinks. See the
-[capabilities/prerequisites](../README.md#browser-capabilities-preparatory-stage-2)
-for the exact keyring set and Linux desktop dependencies. Netscape import is
-the browser-independent alternative; these commands do not alter user-agent.
-
-Duplicate domain/path/name keys fail before browser extraction can overwrite a
-record, including collisions between Firefox containers or Chromium partitions.
-For Firefox, choose an explicit named container or `--container none`; omitted
-container still exports all containers when their keys are distinct. Alternatively,
-import a Netscape file with distinct keys. A failed export leaves the committed
-source, default, and managed copies unchanged.
-
-Refresh is explicit, never automatic. It always publishes a fresh revision/time
-on success, including identical or valid empty material. A missing origin does
-not invalidate the last managed copy: inspect still works. Restore/export the
-origin, check the profile/keyring/keychain, or explicitly replace the origin.
-Failures preserve source/default/material, and a source changed during extraction
-refuses with retry guidance. No registration or refresh invokes the optional
-Chrome user-agent lookup or edits settings.
 
 ## Just use the recipe
 
@@ -110,14 +23,14 @@ Chrome user-agent lookup or edits settings.
 just cookies
 ```
 
-Reads your host Firefox profile and writes `paths.cookies`/`cookies.txt` in
-Netscape format (0600 in a 0700 directory), then reports cookie counts by site.
-It stages the export beside the managed jar, validates the Netscape header,
-and atomically replaces the jar only when that staged output is usable. A
-missing, empty, or malformed export leaves the previous jar untouched. The
-fixed YouTube probe may still fail after Firefox cookies were exported; in
-that case the recipe warns, publishes the usable jar, prints its counts, and
-continues successfully.
+This is the account switch. It runs `dlx cookies firefox`: it reads your host
+Firefox profile (Firefox's default discovery, all containers), creates or
+replaces the source named `firefox` with that export, and makes it the default,
+all in one atomic publication. It prints the same summary as `dlx cookies
+inspect`: counts by domain and whether a recognized session cookie is
+present, never a cookie name or value. A failed export or parse exits 1 with
+`source firefox: …` and changes nothing, default included. It does not touch
+`downloads.user_agent`, and it never requests a site.
 
 Multiple profiles:
 
@@ -126,35 +39,95 @@ ls ~/Library/Application\ Support/Firefox/Profiles/
 just cookies widfsx0p.default-release
 ```
 
+`just setup`'s cookie step is `dlx cookies setup`. With a named default it
+keeps it, prints `Keeping the default cookie source NAME; it was not
+refreshed.` and its summary, and asks nothing. With an anonymous default it
+asks `Export Firefox cookies now? [y/N] `: only `y` or `yes` (any case) runs
+the Firefox export; anything else, or end of input, keeps anonymous. A
+failed step is reported and setup carries on with the build.
+
+## Sources, the default, and downloads
+
+```sh
+dlx cookies list                      # every source, and the default
+dlx cookies inspect firefox           # counts and session-cookie presence
+dlx cookies default work              # the default for later downloads
+dlx cookies default --anonymous       # later downloads use no cookies
+dlx cookies refresh firefox           # reread the stored origin
+```
+
+`dlx dl` and `dlx batch` use `--cookie-source NAME`, or `--anonymous`, or
+else the default; with no default they run anonymously. The host pins the
+source's current revision when you run the command, and the container's
+runner copies exactly that revision into a private jar for that one call or
+that whole batch, then deletes it. A refresh or a new default afterwards
+applies to the next command, never to a run already submitted. `gallery`
+passes the cookies to Instagram only.
+
+Register other origins without a browser switch:
+
+```sh
+dlx cookies browsers --json
+dlx cookies import imported "~/Exports/account cookies.txt"
+dlx cookies add-browser personal --browser firefox --profile "work profile" --container none
+dlx cookies add-browser work --browser chrome --profile "Default"
+# Explicit replacement may change origin or kind without switching defaults:
+dlx cookies import personal "~/Exports/replacement.txt" --replace
+```
+
+`sources.json`, `.lock`, and `sources/<name>/<revision>.txt` live below
+`paths.cookies`. Managed directories are 0700; published files and the lock
+are 0600. Registration validates before atomic publication, retaining old
+revisions and the current default; it never selects a default itself (only
+`just cookies` / `dlx cookies firefox` and `dlx cookies default` do). Imports
+are immutable managed copies, never links to the external origin; imports and
+profiles are never chmodded or overwritten. Warnings, partial exports,
+parser/publication errors, and concurrent changes fail safely. Clean empty
+files and exports are valid. Imports need no installed browser.
+
+Refresh is explicit, never automatic. It always publishes a fresh revision and
+time on success, including identical or valid empty material. A missing origin
+does not invalidate the last managed copy: inspect still works. Restore or
+re-export the origin, check the profile, keyring or keychain, or replace the
+origin explicitly. No registration or refresh edits settings or the
+user-agent.
+
+The browser adapter uses the locked yt-dlp 2026.08.19 directly, without a URL
+or probe. Firefox accepts containers (`none` = outside, omitted = all);
+Chrome/Chromium accept Linux keyrings only. Profile names stay names;
+path-like or `~` profiles and import paths become absolute without resolving
+symlinks. See [browser capabilities](../README.md#browser-capabilities) for
+the exact keyring set and Linux desktop dependencies.
+
+Duplicate domain/path/name keys fail before browser extraction can overwrite a
+record, including collisions between Firefox containers or Chromium
+partitions. For Firefox, choose an explicit named container or `--container
+none`, or import a Netscape file with distinct keys.
+
+`dlx cookies cleanup` asks the running container's runner to remove private
+snapshots a hard kill or a stopped container left behind, skipping any still
+in use or unverifiable, and prints both counts. It never reads the source
+store or migrates.
+
+## The Stage 1 jar and migration
+
+On the first source access (any `cookies` command but `browsers` and
+`cleanup`, a `dl` or `batch` without `--anonymous`, `setup`, or `doctor`),
+when there is no `sources.json`, a valid nonempty `paths.cookies/cookies.txt`
+becomes the file source `legacy` and the default, in one atomic publication.
+A missing or header-only jar creates an anonymous empty registry; malformed or
+unreadable material fails with a repair/move-aside hint and publishes nothing
+(`--anonymous` still works). Migration never changes either old jar's bytes or
+modes, and nothing writes to them afterwards. An existing registry is kept
+unchanged, and a damaged one is never reset automatically.
+
 ## Why this exists
 
 The host configs used `--cookies-from-browser firefox` (yt-dlp) and
 `"cookies": ["firefox"]` (gallery-dl). Neither works in the container: there is
 no Firefox profile in there, and on macOS the profile is encrypted against the
-local keychain regardless. Export on the host, use the managed file.
-
-The container mounts the managed directory at `/cookies`, and every download
-is given `/cookies/cookies.txt` as an argument.
-
-## Doing it by hand
-
-Any Firefox extension that emits Netscape format works — "cookies.txt" or
-"Get cookies.txt LOCALLY". Export while logged in, save as `cookies.txt` under
-the configured `paths.cookies` directory, with mode 0600.
-
-For a manual export you can run the underlying yt-dlp command directly when
-you need to vary it:
-
-```sh
-yt-dlp --cookies-from-browser firefox --cookies ~/.local/share/downloadinux/cookies/cookies.txt \
-       --simulate --quiet 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
-```
-
-yt-dlp writes its cookie jar back to `--cookies` on exit, which is what turns
-a live browser profile into a portable file. The URL is only there to give it
-something to do. Unlike `just cookies`, this manual command writes the managed
-jar directly: it does not stage and validate the replacement or preserve the
-previous jar when the export is unusable.
+local keychain regardless. Export on the host into a managed source; the
+container gets a private copy per download.
 
 ## Cookies come from Firefox, the user-agent says Chrome
 
@@ -174,13 +147,14 @@ attention, roughly in order:
 1. **Exit IP** — a datacenter/VPN address carrying a residential session is a
    far stronger signal than any UA string. This is the one to think about.
 2. **Request rate** — already handled by the `sleep` settings here and the
-   throttling in `dlmp4_batch`.
+   throttling in the `video` batch.
 3. **A UA that keeps changing** — which is why it's pinned rather than derived
    live.
 
 Consistency matters more than which browser you claim to be. One setting,
-`downloads.user_agent` in your `config.toml`, holds the string, and every
-download passes it to all three places that send a user-agent:
+`downloads.user_agent` in your `config.toml`, holds the string (a single
+line; downloads refuse one with a line break), and every download passes it
+to all three places that send a user-agent:
 
 - yt-dlp → its `User-Agent` header
 - gallery-dl → `extractor.user-agent`
@@ -191,20 +165,11 @@ own `useragent`, and gallery-dl deliberately ignores the *global*
 `extractor.user-agent` for any extractor that does — only an extractor-specific
 key overrides it.
 
-`just cookies` runs `just useragent` (`dlx config user-agent`) automatically,
-which reads your host Chrome version and writes the matching user-agent into
-the setting; no file in the checkout changes. Run `just useragent` on its own
-after a Chrome update; `just doctor` warns if the setting falls behind the
-host version or stops being Chrome. Without Chrome in `/Applications` (any
-Linux host) it warns and leaves the setting alone, so the export still
-succeeds. To pin an exact literal instead (on Linux, say), pass it as one
-argument: `just useragent "Mozilla/5.0 …"` (`dlx config user-agent "…"`).
-That form never reads Chrome; see the main README.
-
-`just setup` attempts the same refresh exactly once before its build when it
-keeps an existing Instagram session or publishes a usable export. The existing
-session branch runs `just useragent` directly; the export branch relies on
-`just cookies`. An unusable export skips the refresh and setup carries on.
+Neither `just cookies` nor setup changes the user-agent. Set an exact literal
+with `just useragent "Mozilla/5.0 …"` (`dlx config user-agent "…"`), or, on
+macOS, run `just useragent` with no argument to derive one from your host
+Chrome's version. `dlx dl --user-agent=VALUE` overrides it for one run.
+`just doctor` only checks that the setting is a nonempty single line.
 
 If Instagram ever does challenge the session, the fix is the same as for
 expiry: clear it in Firefox, then re-run `just cookies`.
@@ -212,12 +177,12 @@ expiry: clear it in Firefox, then re-run `just cookies`.
 ## Expiry
 
 Instagram and YouTube sessions go stale in days-to-weeks. When downloads start
-403ing or silently returning nothing, re-export first.
+403ing or silently returning nothing, re-export (`just cookies`) or refresh
+the source you use (`dlx cookies refresh NAME`) first.
 
-`just doctor` checks for the session cookie itself (Instagram's `sessionid`;
-YouTube's `__Secure-3PSID` or `SAPISID`) rather than just the file's
-existence, so it tells you whether a session cookie is *present*. It cannot
-tell whether the site still accepts it: an expired session looks the same in
-the jar, so downloads failing is what tells you to re-export. Note that
-yt-dlp rewrites this file on every run, so its size and timestamp mean
-nothing on their own.
+`just doctor` checks the default source for the session cookie itself
+(Instagram's `sessionid`; YouTube's `__Secure-3PSID` or `SAPISID`) and warns
+when only an expired one is recorded. It cannot tell whether the site still
+accepts an unexpired one, so downloads failing is what tells you to
+re-export. Downloader writeback goes to the private per-download copy, never
+to the source.

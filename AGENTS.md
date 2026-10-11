@@ -3,8 +3,8 @@
 Instructions for coding agents. Codex reads this file; Claude Code reads it
 through `CLAUDE.md`'s `@AGENTS.md` import.
 
-downloadinux is a headless Debian container that runs the `dlmp4` (yt-dlp) and
-`dlgal` (gallery-dl) download workflow behind NordVPN, writing to a host
+downloadinux is a headless Debian container that runs the `video` (yt-dlp) and
+`gallery` (gallery-dl) download presets behind NordVPN, writing to a host
 download folder, driven from the host by `just` recipes. It is a personal tool,
 being refactored into a portable application with a persistent worker and a
 Python + Textual TUI. README.md describes the current implementation and how to

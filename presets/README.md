@@ -11,16 +11,19 @@ nothing writes these files in routine operation (DEC-10).
 | `video` (`v`) | `video/yt-dlp.conf` | yt-dlp | `dlmp4`'s config |
 | `gallery` (`gal`, `g`) | `gallery/config.json` | gallery-dl | `dlgal`'s config |
 
-`dlx dl`, `dlx batch`, and the container's `dlmp4`, `dlgal`, `dlmp4_batch`,
-and `dlgal_batch` add the rest as arguments on every run (DEC-20), from the
-settings (the shell helpers take the user-agent from `DL_USER_AGENT`):
+`dlx dl` and `dlx batch` (and the `just dl` and `just batch` recipes) add
+the rest as arguments on every run (DEC-20): the container's
+`downloadinux-runner` builds each list with the run's user-agent
+(`downloads.user_agent`, or `--user-agent`) and the runner's private copy of
+the pinned cookie source, or no cookie argument at all for an anonymous run
+(`docs/target-design.md`, *Named cookie sources* §3):
 
-- `video`: `--paths /downloads/dlmp4`, `--cookies /cookies/cookies.txt`, and
-  `--add-headers User-Agent:<downloads.user_agent>`.
+- `video`: `--paths /downloads/dlmp4`, `--cookies <private jar>`, and
+  `--add-headers User-Agent:<user-agent>`.
 - `gallery`: for every extractor, the archive
   `/downloads/dlgal/gallery-dl-archive.sqlite3` and the user-agent; for
   Instagram only, the user-agent again (its extractor ignores the global
-  one), the output root `/downloads/dlgal`, and the cookie jar. Other sites
+  one), the output root `/downloads/dlgal`, and the private cookie jar. Other sites
   download under `gallery-dl/` in the working directory, gallery-dl's own
   default, which is `/downloads` for `dlx dl` and `dlx batch`.
 

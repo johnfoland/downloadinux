@@ -17,7 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookie_store, cookie_writer, cookiejar, credentials, useragent
+from downloadinux import compose, cookie_store, cookie_writer, cookiejar, credentials
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host, Settings
@@ -54,15 +54,6 @@ class Result:
 
     def as_dict(self) -> dict[str, Any]:
         return {"ok": self.ok, "checks": [check.as_dict() for check in self.checks]}
-
-
-@dataclass(frozen=True)
-class Cookie:
-    domain: str
-    name: str
-
-
-_CHROME = re.compile(r"Chrome/([0-9]+)")
 
 
 def _check(
@@ -140,97 +131,6 @@ def _downloads(path: Path) -> Check:
     )
 
 
-def _read_jar(path: Path) -> tuple[Check, tuple[Cookie, ...]]:
-    try:
-        text = path.read_bytes().decode("utf-8", errors="replace")
-    except FileNotFoundError:
-        return (
-            _check(
-                "cookies.jar",
-                Status.WARN,
-                "no cookies yet; public downloads still work",
-                "just cookies",
-            ),
-            (),
-        )
-    except OSError as error:
-        return _check("cookies.jar", Status.FAIL, f"{path}: {error.strerror}"), ()
-
-    cookies = []
-    for line in text.splitlines():
-        if line.startswith("#HttpOnly_"):
-            line = line.removeprefix("#HttpOnly_")
-        elif not line or line.startswith("#"):
-            continue
-        fields = line.split("\t")
-        if len(fields) == 7:
-            cookies.append(Cookie(fields[0], fields[5]))
-    if not cookies:
-        return (
-            _check(
-                "cookies.jar",
-                Status.WARN,
-                "no cookies yet; public downloads still work",
-                "just cookies",
-            ),
-            (),
-        )
-    return (
-        _check("cookies.jar", Status.OK, f"{path}: {len(cookies)} cookies"),
-        tuple(cookies),
-    )
-
-
-def _belongs_to(domain: str, site: str) -> bool:
-    domain = domain.removeprefix(".").lower()
-    return domain == site or domain.endswith(f".{site}")
-
-
-def _site_cookie(
-    id: str,
-    label: str,
-    site: str,
-    names: tuple[str, ...],
-    cookies: tuple[Cookie, ...],
-    jar: Check,
-    missing: str,
-    fix: str | None = None,
-) -> Check:
-    if jar.status is not Status.OK:
-        return _check(id, Status.SKIP, "no cookie jar")
-    present = any(
-        cookie.name in names and _belongs_to(cookie.domain, site)
-        for cookie in cookies
-    )
-    if present:
-        return _check(id, Status.OK, f"{label}: session cookie present")
-    return _check(id, Status.WARN, missing, fix)
-
-
-def _user_agent(value: str) -> Check:
-    configured = _CHROME.search(value)
-    if configured is None:
-        return _check(
-            "downloads.user_agent",
-            Status.WARN,
-            "user-agent is not Chrome's; Instagram caps video at 720p",
-            "dlx config user-agent",
-        )
-    configured_major = configured.group(1)
-    version = useragent.chrome_version(useragent.CHROME_PLIST)
-    host_major = useragent.major(version) if version is not None else None
-    if host_major is None or host_major == configured_major:
-        return _check(
-            "downloads.user_agent", Status.OK, f"Chrome {configured_major}"
-        )
-    return _check(
-        "downloads.user_agent",
-        Status.WARN,
-        f"user-agent says Chrome {configured_major}, host Chrome is {host_major}",
-        "dlx config user-agent",
-    )
-
-
 # Named cookie sources §5, doctor's Stage 2 rows (DEC-39): exact texts.
 _YOUTUBE_ASIDE = " (fine unless you need age-gated or members-only video)"
 _STORE_FIX = "repair or restore the file it names"
@@ -287,8 +187,7 @@ def source_checks(
     and `downloads.user_agent` rows, in that order (Named cookie sources §5,
     DEC-39). Migrates as any source operation does, then reads the default's
     current revision through the shared reader. Every store failure is the
-    `cookies.jar` failure, never an exception, so the report continues. Not
-    yet part of `inspect`: the cutover swaps it for the Stage 1 rows."""
+    `cookies.jar` failure, never an exception, so the report continues."""
     now = time.time() if now is None else now
     agent = _source_user_agent(user_agent)
     try:
@@ -591,30 +490,9 @@ def inspect(
         _credentials_token(creds, settings["vpn.enabled"]),
         _downloads(settings["paths.downloads"]),
     ]
-    jar, cookies = _read_jar(settings["paths.cookies"] / "cookies.txt")
-    checks += [
-        jar,
-        _site_cookie(
-            "cookies.instagram",
-            "instagram",
-            "instagram.com",
-            ("sessionid",),
-            cookies,
-            jar,
-            "instagram: no session cookie",
-            "log in to Instagram in Firefox, then: just cookies",
-        ),
-        _site_cookie(
-            "cookies.youtube",
-            "youtube",
-            "youtube.com",
-            ("__Secure-3PSID", "SAPISID"),
-            cookies,
-            jar,
-            "youtube: no session cookie (fine unless you need age-gated or members-only video)",
-        ),
-        _user_agent(settings["downloads.user_agent"]),
-    ]
+    # Named cookie sources §5, doctor's Stage 2 rows (DEC-39), at the Stage 1
+    # rows' IDs and positions.
+    checks += source_checks(settings["paths.cookies"], settings["downloads.user_agent"])
 
     run_capture = capture or compose.capture_process
     try:

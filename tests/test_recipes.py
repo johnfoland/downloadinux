@@ -83,8 +83,9 @@ def test_useragent_wraps_the_cli():
     body = recipe("useragent")
     assert body[-1].strip() == '@uv run downloadinux config user-agent "$@"'
     assert "python3" not in "\n".join(body)
-    assert recipe("cookies")[-1].strip() == "just useragent"
-    assert "just useragent" in [line.strip() for line in recipe("setup")]
+    # Neither the cookie export nor setup refreshes it (§4, §5; DEC-40).
+    for name in ("cookies", "setup"):
+        assert "useragent" not in "\n".join(recipe(name))
 
 
 ARGV_STUB = """#!/bin/sh
@@ -126,9 +127,19 @@ def test_doctor_is_only_the_cli_wrapper():
     assert "grep" not in body
 
 
-def test_dl_wraps_the_cli():
-    # Target design, Migration, "Pinned for P0001-C04".
-    assert recipe("dl")[-1].strip() == '@uv run downloadinux dl "$@"'
+def test_dl_and_batch_forward_every_word():
+    # Named cookie sources §5, "Cutover recipes (DEC-40)": the CLI validates.
+    assert recipe("dl") == [
+        "# Download with a preset: just dl [--cookie-source NAME | --anonymous] "
+        "[--user-agent=UA] video|gallery <url>...",
+        "dl +args:",
+        '    @uv run downloadinux dl "$@"',
+    ]
+    assert recipe("batch") == [
+        "# Queue in detached tmux: just batch [dl's options] video|gallery [file]",
+        "batch +args:",
+        '    @uv run downloadinux batch "$@"',
+    ]
 
 
 def smoke() -> str:
@@ -163,9 +174,28 @@ def test_smoke_runs_doctor_on_a_fresh_init_config():
     assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
-def test_batch_and_watch_wrap_the_cli():
-    # Target design, Migration, "Pinned for P0001-C04": the queue only when given.
-    assert recipe("batch")[-1].strip() == '@uv run downloadinux batch "$1" ${2:+"$2"}'
+def test_smoke_drives_the_host_route_and_checks_the_retirements():
+    # Named cookie sources §3, "Host launch (DEC-39)", and §5 (DEC-33).
+    body = smoke()
+    lines = [line.strip() for line in body.splitlines()]
+    assert 'assert "DL_USER_AGENT" not in service["environment"], "DL_USER_AGENT is retired (DEC-33)"' in lines
+    assert "test ! -e /cookies/cookies.txt" in lines
+    assert "test -f /cookies/cookies.txt" not in lines
+    route = body.index("# Named cookie sources §3, \"Host launch (DEC-39)\"")
+    runner = body.index("/runner-smoke/check.py")
+    cleanup = body.index("# Named cookie sources §3, the host front (DEC-37)")
+    assert runner < route < cleanup
+    block = body[route:cleanup]
+    for step in ("route_check named-download", "route_check anonymous-download",
+                 "route_check batch", "cookies cleanup", "cookies refresh beta",
+                 "tmux kill-session -t batch-gallery"):
+        assert step in block, step
+    assert '"${route[@]}" dl video https://example.com/one "https://example.com/two words"' in block
+    assert '"--user-agent=-smoke agent" gallery' in block
+
+
+def test_watch_wraps_the_cli():
+    # Target design, Migration, "Pinned for P0001-C04".
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'
 
 
@@ -176,7 +206,7 @@ def test_no_recipe_names_the_old_home():
         line.split(":=")[0].strip() for line in lines
         if ":=" in line and not line[0].isspace() and not line.startswith("set ")
     ]
-    assert variables == ["compose", "dex", "probe"]
+    assert variables == ["compose", "dex"]
     assert not any("/home/dl" in line for line in lines)
 
 
@@ -197,28 +227,28 @@ def test_setup_runs_its_settings_and_token_steps_and_never_writes_env():
     assert sorted(headings) == [
         "1/5  Settings",
         "2/5  NordVPN token",
-        "3/5  Exporting browser cookies",
+        "3/5  Cookie source",
         "4/5  Building the image (first run takes a few minutes)",
         "5/5  Starting up",
     ]
     assert body[-3:] == [
         'echo ""',
         "just doctor",
-        "printf '\\n\\033[1;32mReady.\\033[0m  Get in with:  \\033[1;36mjust shell\\033[0m\\n'",
+        "printf '\\n\\033[1;32mReady.\\033[0m  Download with:  \\033[1;36mjust dl video <url>\\033[0m\\n'",
     ]
 
 
-def test_setup_cookie_branches_each_own_one_user_agent_refresh():
-    # Target design, Migration, "Cookie and user-agent follow-ups" (DEC-25).
+def test_setup_cookie_step_runs_cookies_setup_and_continues():
+    # Named cookie sources §5, "Cutover recipes (DEC-40)".
     body = [line.strip() for line in recipe("setup")]
-    refresh = body.index("just useragent")
-    alternate = body.index("else", refresh)
-    export = body.index("just cookies || echo \"    Skipped — run 'just cookies' later.\"")
-    assert body.count("just useragent") == 1
-    assert refresh < alternate < export
-    assert body[refresh - 1] == (
-        'echo "    Already have an Instagram session, leaving cookies alone."'
-    )
+    step = body.index("printf '\\n\\033[1;36m==> 3/5  Cookie source\\033[0m\\n'")
+    build = body.index("uv run downloadinux build")
+    assert "uv run downloadinux cookies setup || cookie_status=$?" in body[step:build]
+    assert ('echo "    The cookie step failed (exit $cookie_status); setup continues. '
+            'Retry with: dlx cookies setup"') in body[step:build]
+    text = "\n".join(recipe("setup"))
+    for word in ("yt-dlp", "just cookies", "useragent", "config-value.sh", "grep"):
+        assert word not in text
 
 
 def test_env_menu_text_names_the_import():

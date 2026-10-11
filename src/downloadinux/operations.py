@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookiejar, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, presets, servers, settings, useragent
+from downloadinux import compose, cookiejar, cookie_pinning, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, launch, presets, servers, settings, useragent
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -217,11 +217,8 @@ def inspect_cookies(name: str, config: str | None = None,
 def cookie_default(name: str | None = None, *, anonymous: bool = False,
                    config: str | None = None, overrides: Sequence[str] = (),
                    host: Host = Host()) -> str | None:
-    """Report or atomically select the future source default (§1–§2, DEC-28).
-
-    Existing Stage 1 download/export/setup/doctor routes stay on their shared
-    jar until the coordinated cutover described in §5.
-    """
+    """Report or atomically select the source default (§1–§2, DEC-28),
+    which the next `dl` or `batch` naming no source pins (§3)."""
     if name is not None:
         _cookie_name(name)
         if anonymous:
@@ -281,6 +278,24 @@ def vpn(
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
+def _launch(
+    effective: settings.Settings,
+    command: str,
+    preset: str,
+    operands: Sequence[str],
+    cookie_source: str | None,
+    anonymous: bool,
+    user_agent: str | None,
+) -> list[str]:
+    """The runner list for a validated request (Named cookie sources §3,
+    "Host launch (DEC-39)"): refuse a configured user-agent with CR or LF,
+    then pin the selection, so a refused run never migrates and explicit
+    anonymous never touches the store (§5)."""
+    agent = launch.effective_user_agent(effective["downloads.user_agent"], user_agent)
+    selection = cookie_pinning.pin(effective["paths.cookies"], cookie_source, anonymous=anonymous)
+    return launch.runner_argv(command, selection, agent, preset, operands)
+
+
 def download(
     preset: str,
     urls: Sequence[str],
@@ -288,17 +303,20 @@ def download(
     overrides: Sequence[str] = (),
     host: Host = Host(),
     runner: compose.Runner | None = None,
+    *,
+    cookie_source: str | None = None,
+    anonymous: bool = False,
+    user_agent: str | None = None,
 ) -> int:
-    """`dl`: the preset's argument list (*Presets*) with `urls` appended, run
-    as `dl` uncaptured, since the downloaders draw progress on the terminal;
-    the downloader's exit status. No VPN or running check: Compose reports a
-    stopped service itself (Host application, "Downloads, pinned for
-    P0001-C04")."""
+    """`dl`: pin the cookie source and revision on the host, then run
+    `downloadinux-runner download` as `dl` uncaptured, since the downloaders
+    draw progress on the terminal; the runner's exit status. One call, all
+    its URLs, one private jar. No VPN or running check: Compose reports a
+    stopped service itself (Named cookie sources §3, "Host launch (DEC-39)";
+    Host application, "Downloads, pinned for P0001-C04")."""
     effective = settings.load(config, overrides, host)
-    program = [
-        *presets.argv(presets.resolve(preset).name, effective["downloads.user_agent"]),
-        *urls,
-    ]
+    presets.resolve(preset)
+    program = _launch(effective, "download", preset, urls, cookie_source, anonymous, user_agent)
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
@@ -371,11 +389,6 @@ def cookie_cleanup(
     return counts
 
 
-# The shared loop, then the pause the runner leaves to its caller (Host
-# application, "Downloads, pinned for P0001-C04"; DEC-13, DEC-36).
-BATCH_SCRIPT = presets.LOOP + '; echo; echo "[done — press a key]"; read -k1'
-
-
 @dataclass(frozen=True)
 class BatchResult:
     queue: str  # the container's path
@@ -390,12 +403,18 @@ def batch(
     overrides: Sequence[str] = (),
     host: Host = Host(),
     runner: compose.Runner | None = None,
+    *,
+    cookie_source: str | None = None,
+    anonymous: bool = False,
+    user_agent: str | None = None,
 ) -> BatchResult:
-    """`batch`: start the zsh batch loop on a queue under `paths.downloads`
-    in a detached tmux session, with the preset's batch argument list as
-    separate tmux arguments, so every word arrives intact (Host application,
-    "Downloads, pinned for P0001-C04"). Paths are made absolute without
-    resolving links, so a symlinked drive compares as written."""
+    """`batch`: check the queue lies under `paths.downloads`, pin the cookie
+    source and revision, then start `downloadinux-runner batch` in the
+    preset's detached tmux session, every word a separate tmux argument; the
+    whole batch shares one private jar (Named cookie sources §3, "Host launch
+    (DEC-39)"; Host application, "Downloads, pinned for P0001-C04"). Paths
+    are made absolute without resolving links, so a symlinked drive compares
+    as written."""
     effective = settings.load(config, overrides, host)
     chosen = presets.resolve(preset)
     downloads = os.path.abspath(effective["paths.downloads"])
@@ -410,12 +429,8 @@ def batch(
             f"{path} is outside paths.downloads ({downloads}); the container cannot see it"
         )
     container = "/downloads/" + os.path.relpath(path, downloads)
-    program = [
-        "tmux", "new-session", "-d", "-s", chosen.session, "-c", "/downloads",
-        "zsh", "-f", "-c", BATCH_SCRIPT, "zsh",
-        container, chosen.log_prefix, chosen.title, chosen.colour,
-        *presets.argv(chosen.name, effective["downloads.user_agent"], batch=True),
-    ]
+    args = _launch(effective, "batch", preset, [container], cookie_source, anonymous, user_agent)
+    program = launch.batch_program(preset, args)
     status = _invocation(effective, host).run(compose.exec_args(program), runner)
     if status != 0:
         raise DownloadinuxError(
