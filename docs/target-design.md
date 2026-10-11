@@ -1803,10 +1803,10 @@ A job is `queued`, `running`, `succeeded`, `failed`, `cancelled`, or
 | `running` | the worker finds it running when it starts (§5) | `interrupted` |
 | `failed`, `cancelled`, `interrupted` | retry | `queued`, `attempt` + 1 |
 
-A running job whose cancel was requested stays `running`, with
-`cancel_requested` set, until its runner exits. A succeeded job is not
-retried; submit its URL again instead. Cancelling a finished job, or retrying
-a queued, running, or succeeded one, is refused, naming its state.
+The first matching row applies. A running job whose cancel was requested stays
+`running`, with `cancel_requested` set, until its runner exits. A succeeded
+job is not retried; submit its URL again instead. Cancelling a finished job,
+or retrying a queued, running, or succeeded one, is refused, naming its state.
 
 *Retry* is a new submission of the job's next attempt, never automatic: an
 interrupted job waits for a deliberate retry (DEC-42). The host re-pins the
