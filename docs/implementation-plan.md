@@ -16,7 +16,9 @@ migration and host-only list/inspect/default commands, finishing D1's build.
 [PR #41](https://github.com/johnfoland/downloadinux/pull/41) implements accepted browser/file registration and explicit refresh (D2).
 PRs #45–#55 implement private execution and the remaining fronts, and PR #62
 the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
-Stage 2 is implemented. Stages 3–4 remain proposals.
+Stage 2 is implemented. Stage 3 is settled
+([issue #64](https://github.com/johnfoland/downloadinux/issues/64)) but not
+implemented; Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -112,6 +114,23 @@ Acceptance criteria:
 
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
+Settled contract: target design *Persistent worker and jobs*, DEC-41 to
+DEC-44 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+Not yet implemented. The worker is a standard-library program running as the
+download container's main process, reached from the host only through
+`docker compose exec` of its own client, and the only writer of a SQLite job
+store under `paths.state/jobs/` (DEC-41). A job is one URL, with explicit
+states and per-attempt logs; interrupted jobs wait for a deliberate retry,
+which re-pins the job's source (DEC-42). Each preset's batch lane keeps the
+120–289 second throttle, each `dl` starts at once, and no job starts while an
+enabled VPN is disconnected (DEC-43). `dl` follows its jobs and detaches on
+Ctrl-C, `batch` imports a queue file from any host path and removes what it
+queued, `watch` follows a lane, `jobs` manages history, and the cutover
+removes tmux and the zsh loop together (DEC-44). Job history retention is
+outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issues/65)).
+The worker ships additively first; `dl`, `batch`, and `watch` switch in one
+cutover pull request.
+
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
 - Move queue processing and throttling into the worker.
@@ -120,6 +139,7 @@ Acceptance criteria:
 - Replace `just watch` with job/log inspection or a documented compatibility wrapper.
 - Remove tmux from the image, recipes, dependencies, and operating documentation.
 - Retire the zsh batch implementation once the worker covers its required behavior.
+- Keep the gallery archive and output layout in place (DEC-44).
 
 Acceptance criteria:
 
@@ -132,6 +152,10 @@ Acceptance criteria:
 - Queue mutation and duplicate handling have deterministic behavior.
 - Existing archive history survives migration.
 - VPN readiness and throttling are observable instead of looking like hangs.
+- Appending to a queue file and rerunning `batch` queues only the new URLs;
+  failures stay in job history and export as a queue file.
+- A `dl` interrupted at the terminal keeps downloading; one interrupted by a
+  container restart becomes `interrupted`, and the queue behind it continues.
 
 Terminal independence and restart recovery are separate requirements. Continuing
 after UI closure does not imply that a running process survives container
@@ -175,8 +199,11 @@ and container restarts. Keep credentialed live-site checks separate and explicit
   retire their container shell shortcuts in Stage 2 and document host commands
   (done in PR #62).
 - Preserve or explicitly relocate the existing gallery archive.
-- Import existing text queues with a documented duplicate policy.
-- Keep old URL-only batch logs distinguishable from new job history.
+- Import existing text queues with a documented duplicate policy (settled:
+  `batch` imports and consumes them, skipping active duplicates; DEC-44).
+- Keep old URL-only batch logs distinguishable from new job history (settled:
+  they stay untouched under the output root, history lives in
+  `paths.state/jobs/`; DEC-44).
 - Document replacement commands and remove obsolete tmux instructions.
 - Update the main README to describe implemented behavior as each stage lands.
 
@@ -185,13 +212,13 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | Decision | Why it matters |
 | --- | --- |
 | Configuration format and host installation method | Resolved for Stage 1: TOML at XDG locations (DEC-8), editable install from the checkout (DEC-7). A self-contained distribution is still open. |
-| Worker interface and job-store ownership | Determines status streaming, coordination, and restart behavior |
+| Worker interface and job-store ownership | Resolved for Stage 3: the worker runs in the download container, reached through `compose exec` of its own client over a container-local socket, and is the job store's only writer (DEC-41). |
 | Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default and immutable revision pinned at submission; private copy at startup, one jar per invocation or whole batch (DEC-31, amended 2026-10-09). Stage 3 defines job persistence. |
 | Imported managed copies versus linked files | Resolved for Stage 2: immutable managed copies; refresh explicitly re-reads the stored origin, with no linked sources (DEC-28, DEC-29). |
 | Browser support for Stage 2 | Resolved: Firefox, Chrome, and Chromium through the locked host yt-dlp adapter; file imports require no browser (DEC-29). Other browsers remain outside this stage. |
-| Cancellation, retry, duplicates, and concurrency | Defines scheduler and user-visible behavior |
+| Cancellation, retry, duplicates, and concurrency | Resolved for Stage 3: `SIGTERM` through the runner, deliberate retries that re-pin, active duplicates skipped, a throttled lane per preset and an immediate queue per `dl` (DEC-42, DEC-43). |
 | VPN packaging and required/optional policy | Optional per config (DEC-11). Same container or a separate service is still open. |
-| Archive/state migration locations | Avoids losing deduplication history. Stage 1 leaves the gallery archive in place (DEC-13); Stage 3 decides. |
+| Archive/state migration locations | Resolved: the gallery archive stays in place (DEC-13, DEC-44); job history lives under `paths.state/jobs/` (DEC-41). |
 | ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
 
 Configuration and cookie-source contracts are settled. P0003 D1, the source
@@ -203,5 +230,5 @@ integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
-implemented. Worker/job rules
-still need Stage 3 design; TUI styling and keybindings follow stable operations.
+implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-44)
+and not yet implemented; TUI styling and keybindings follow stable operations.

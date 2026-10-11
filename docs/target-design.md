@@ -15,7 +15,9 @@ setup, and doctor use named sources; the container's download shortcuts,
 `DL_USER_AGENT`, and the placeholder jar are retired. PR #63 adds Stage 2's
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
-Stages 3–4 remain proposed.
+Stage 3's persistent worker and jobs are settled (*Persistent worker and
+jobs*, DEC-41 to DEC-44, issue #64) but not implemented; Stage 4 remains
+proposed.
 
 ## Agreed decisions
 
@@ -49,9 +51,15 @@ private startup jars, independent user-agent policy, and host-command migration.
 DEC-34 pins snapshot metadata and interrupted staging details for the shared
 producer/cleanup boundary. See *Named cookie sources*.
 
+Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
+settles DEC-41 to DEC-44: the worker's place in the download container and its
+`compose exec` interface, per-URL jobs in a worker-owned store, batch lanes,
+throttling and VPN readiness, and the host commands that replace tmux. See
+*Persistent worker and jobs*.
+
 Native downloader execution and a remote-server control protocol are not required
-by the agreed scope. The exact worker interface remains open; host packaging
-for Stage 1 is settled (DEC-7).
+by the agreed scope. The worker interface is settled for Stage 3 (DEC-41); host
+packaging for Stage 1 is settled (DEC-7).
 
 ## Proposed boundaries
 
@@ -77,8 +85,9 @@ can remain thin compatibility wrappers during migration.
 
 The worker must outlive the TUI. Closing and reopening the UI reconnects to
 existing work. Restart recovery comes from persisted job state, not a terminal
-multiplexer. The transport between host and worker needs a separate decision;
-this design does not require a network API merely to support local Docker.
+multiplexer. The host reaches the worker by running a container-side client
+through `docker compose exec`, over a socket inside the container, with no
+network API (*Persistent worker and jobs* §1, DEC-41).
 
 ## Host application
 
@@ -243,7 +252,9 @@ Downloads, pinned for P0001-C04:
 launch `downloadinux-runner` with a pinned cookie selection and the effective
 user-agent (*Named cookie sources* §3, "Host launch (DEC-39)"). The preset
 and URL rules, the queue checks and container path, the report, the session
-table, the failure message, and `watch` below still hold.
+table, the failure message, and `watch` below still hold. The Stage 3 cutover
+(settled, not yet implemented) replaces `batch`'s tmux launch and queue rules
+and `watch` (*Persistent worker and jobs* §6, §7).
 
 - `dl <preset> <url>…` takes at least one URL; `preset` is `video` (`v`)
   or `gallery` (`gal`, `g`), anything else a usage error, exit 2. It runs
@@ -321,6 +332,10 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 | `doctor [--json]` | Structured health check (DEC-12) |
 
 `video` (alias `v`) and `gallery` (aliases `gal`, `g`) name the presets.
+
+Stage 3 (settled, not yet implemented) submits `dl` and `batch` to the
+persistent worker, makes `watch` follow a batch lane, and adds `jobs`
+(*Persistent worker and jobs* §6, DEC-44).
 
 ## Configuration and paths
 
@@ -463,6 +478,11 @@ as that user, and drops to it. It never changes ownership recursively on a
 mount. The worker never needs the host username or home directory (DEC-2).
 Compose sets no `container_name`; `container.project` names the project, so
 two configs with different project names run side by side.
+
+Stage 3 (settled, not yet implemented) makes the worker the image's command,
+adds `init: true` and `stop_grace_period: 30s` to the base file, and has the
+entrypoint create `/run/downloadinux` for the worker's socket; job history
+lives under `/state/jobs/` (*Persistent worker and jobs* §1, §2; DEC-41).
 
 Compose files and the entrypoint, pinned for P0001-C02:
 
@@ -667,7 +687,9 @@ The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
 
 ## Health checks
 
-Settled for Stage 1 (DEC-12); implemented in P0001-C05 (D4).
+Settled for Stage 1 (DEC-12); implemented in P0001-C05 (D4). Stage 3 adds
+`worker.running` after `container.running` (*Persistent worker and jobs* §8,
+DEC-44; not yet implemented).
 
 `doctor` returns an ordered list of checks:
 
@@ -1167,7 +1189,8 @@ different account. Resolve the application default to a source identity and
 pin that identity's current immutable revision at submission (DEC-31). Store
 both identifiers, not cookie contents, in a future queued job; a later refresh,
 replacement, or changed default cannot change its submitted credentials.
-Stage 3 owns persistence and failure states, but must use this timing rule.
+Stage 3 owns persistence and failure states, but must use this timing rule
+(*Persistent worker and jobs* §2, §3).
 Do not allocate a mutable working jar while work waits in a queue: keep the
 pinned canonical revision available, then make the private copy at startup.
 
@@ -1181,7 +1204,10 @@ replacement, or changed default after pinning never changes that invocation,
 even if the runner has not started yet.
 Concurrent calls, including two calls using the same source, have different
 working jars. Preserve Stage 1's fixed batch session names and limits until
-Stage 3; Stage 2 does not add same-preset batch concurrency.
+Stage 3; Stage 2 does not add same-preset batch concurrency. From the Stage 3
+cutover, the unit is a job: one URL, and one private jar per attempt, made at
+its startup from the revision pinned when it was submitted (DEC-31, amended;
+*Persistent worker and jobs* §4).
 
 Host launch (DEC-39). A malformed `--cookie-source` name, both selectors
 together, or an invalid `--user-agent` (§4) is a usage error, exit 2, before
@@ -1210,7 +1236,10 @@ argument, with `<script>` exactly `downloadinux-runner "$@"; echo; echo "[done
 — press a key]"; read -k1`, so the pause follows the runner's cleanup. Its
 `Queue:`/`Running detached` report, its tmux failure message, and every other
 *Host application* rule stay. Neither host front allocates, copies, or cleans a
-snapshot itself.
+snapshot itself. From the Stage 3 cutover, the host submits instead of
+launching: the worker runs the runner's `download` once per job, with the
+selection the host pinned, and the batch tmux script retires (*Persistent
+worker and jobs* §4, §7; DEC-39, amended).
 
 A container-side runner, using the same parser and revision-path validation as
 the host, creates a private copy of the submitted revision immediately before
@@ -1394,6 +1423,10 @@ downloadinux-runner download --cookies DIR --state DIR SELECTION --user-agent UA
 downloadinux-runner batch --cookies DIR --state DIR SELECTION --user-agent UA PRESET QUEUE
 downloadinux-runner cleanup --state DIR
 ```
+
+The `batch` subcommand, and the batch loop it runs, retire at the Stage 3
+cutover (*Persistent worker and jobs* §7; DEC-36, amended); the worker runs
+`download` once per job.
 
 `SELECTION` is `--source NAME --revision REVISION` (both, using §1's identifier
 rules) or `--anonymous`, exactly one form. Every option is required: there are
@@ -1647,33 +1680,322 @@ must change with the implementing chunks. Keep the 2026-09 current-state review
 as history and update its outcome notes only when implementation lands. Do not
 mark this design implemented merely because its planning PR merged.
 
-## Persistent jobs
+## Persistent worker and jobs
 
-Proposed job data:
+Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
+(DEC-41 to DEC-44); not yet implemented. Until the cutover (§7), batches run
+in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
+the foreground. Do not mark this design implemented merely because its
+planning pull request merged. Client request and reply shapes and human
+output texts that this section does not give are pinned here, with a
+decision-log entry where they leave a choice, before the chunk that builds
+them.
 
-- Job ID, URL, downloader, preset, and destination.
-- Selected cookie source identity and immutable revision pinned at submission,
-  or anonymous mode; the private working copy is created at startup (DEC-31).
-- State, timestamps, attempt count, and structured error/result.
-- Log location and available downloader progress.
-- Output references when they can be obtained reliably.
+### 1. Worker placement and interface
 
-Proposed states: queued, running, throttling, succeeded, failed, cancelled, and
-interrupted. Network/VPN readiness should be an explicit waiting reason rather
-than an unexplained lack of progress. Final transition rules remain to be defined.
+The worker is a standard-library Python program that runs in the download
+container as its main process, in place of `sleep infinity` (DEC-41). It
+shares the container's network, so with `vpn.enabled` true its downloads leave
+through NordVPN as `dl`'s do today. Whether the VPN moves to a separate service
+stays open, outside Stage 3.
 
-Persist jobs independently of downloader archive databases. Job history explains
-execution; archives prevent redownloading previously seen media.
+*Packaging* follows the runner's (*Named cookie sources* §3, "Runner interface
+and process lifetime", DEC-36): `/usr/local/bin/downloadinux-worker` runs
+`/usr/bin/python3 -I` with `/opt/downloadinux` first on `sys.path` and calls
+`downloadinux.worker.main`. It and everything it imports use only the standard
+library, `sqlite3` included: never settings, the cookie source writer, host
+pinning, browser support, `tomlkit`, yt-dlp, or the `/opt/venv` interpreter.
+The image's command becomes `downloadinux-worker serve --cookies /cookies
+--state /state`; the entrypoint still applies the runtime identity and runs it
+as `dl` through `gosu`. `compose/base.yaml` adds `init: true`, so Docker's init
+is PID 1, reaps orphans, and passes `docker stop`'s `SIGTERM` to the worker,
+and `stop_grace_period: 30s` (§5). The worker reads `DL_VPN`, as the
+entrypoint does, for §4's readiness gate.
 
-Use explicit process arguments rather than constructing nested shell commands.
-Capture diagnostics and retain downloader exit status. Cancellation must reach
-child processes. On worker restart, reconcile previously running jobs instead of
-silently declaring them complete. Resuming a partially downloaded file remains
-subject to the downloader's capabilities.
+*Interface.* The worker listens on a Unix socket,
+`/run/downloadinux/worker.sock`, in the container's own filesystem and never on
+a mount; the entrypoint creates `/run/downloadinux` at mode 0700, owned by
+`dl`, on every start. The host never opens the socket, the job store, or a job
+log. Every host operation reaches the worker by running a client subcommand of
+the same executable through *Host application*'s invocation, captured:
+`exec -T -u dl downloadinux downloadinux-worker <subcommand> …`. The client
+connects to the socket, sends one request, and prints the reply on standard
+output as one JSON object, or, when following, one JSON object per line until
+the followed work ends or the client is stopped. It is a versioned,
+container-internal boundary like the runner's. There is no published port and
+no network API (*Proposed boundaries*). Host operations parse the replies, and
+the CLI and, in Stage 4, the TUI render them.
 
-Text queues become an import/export format. They are no longer the mutable source
-of truth. Define duplicate handling, retry policy, concurrency, and throttling
-before implementing automatic scheduling.
+The host maps failures as `cookies cleanup` does (DEC-37), with every failure
+exit 1: when Compose reports the service not running, a worker operation runs
+nothing and fails with `the container is not running; start it with dlx up`;
+status 126 or 127 means the running image predates the worker: `the running
+container has no downloadinux-worker; rebuild and recreate it with dlx build
+and dlx restart`; a client that cannot reach the socket fails with `the worker
+in the container is not answering; see dlx compose -- logs downloadinux`.
+
+*One worker per state root.* The worker is the only process that opens the job
+store. At start it creates `/state/jobs/.worker.lock` (0600) when absent and
+takes an exclusive lock on it through a reopened descriptor (DEC-35), held for
+its lifetime. When another worker holds it (two configurations sharing
+`paths.state`), the worker writes a line saying so to its standard output
+(the container's log) once a minute and keeps waiting, without opening its
+socket, so host operations report it as not answering.
+
+### 2. Job store and records
+
+The store is `/state/jobs/` (`paths.state/jobs/` on the host), created by the
+worker: the directory and its `logs/` at 0700, `jobs.sqlite3`, the lock, and
+every log at 0600 (DEC-42). The worker never creates the state root itself,
+which is the mount (*Container contract*). It opens the database with a
+rollback journal (`journal_mode=DELETE`; never WAL, whose shared-memory file a
+Docker Desktop bind mount does not support reliably) and `synchronous=FULL`,
+and commits each change before it acts on it: before starting a process, and
+before replying to a client. Job history is kept apart from the downloaders'
+archives: history explains execution, archives prevent redownloads.
+
+A job is one URL downloaded with one preset. Its record holds:
+
+- `id`, a positive integer the worker allocates in increasing order and never
+  reuses, and `submission`, the integer ID of the request that created the job
+  or its latest retry; the jobs of one `dl`, `batch`, or `jobs retry` share
+  one.
+- `preset` (`video` or `gallery`) and `url`. A URL is any nonempty string
+  without CR, LF, or NUL; the worker refuses a submission holding another.
+- `lane`: the preset name for a batch job, null for an immediate one (§4).
+- The cookie selection the host pinned (DEC-31): `source` and `revision`, or
+  both null for anonymous. Never cookie contents, origins, or settings.
+- `user_agent`: the effective literal at submission (*Named cookie sources*
+  §4).
+- `state` (§3), and `wait`: null, `{"reason": "throttle", "until": T}`, or
+  `{"reason": "vpn"}`, set only while the job is queued.
+- `attempt` (1 at submission), `cancel_requested`, the UTC timestamps
+  `created_at`, `queued_at`, `started_at`, and `finished_at` (*Named cookie
+  sources* §1's form, null until reached), `exit_status` (the runner's status,
+  DEC-36, null until it exits), and `error`, a worker-side reason such as a
+  launch failure or an interruption's cause.
+
+Each attempt's log is `/state/jobs/logs/<id>-<attempt>.log`: the runner's
+standard output and standard error together, as raw bytes, in the order
+written. Earlier attempts' logs stay. Records and logs are kept indefinitely;
+pruning job history is a later design (issue #65). Output file references are
+not recorded.
+
+*Duplicates.* A submitted URL whose preset and exact URL match a queued or
+running job creates no job; the reply names that job. A finished job never
+blocks a resubmission: the gallery archive and yt-dlp's existing-file check
+govern redownloads, as today. Repeats within one submission collapse to the
+first.
+
+### 3. States and transitions
+
+A job is `queued`, `running`, `succeeded`, `failed`, `cancelled`, or
+`interrupted`; the last four are terminal (DEC-42).
+
+| From | Event | To |
+| --- | --- | --- |
+| `queued` | the scheduler starts it (§4) | `running` |
+| `queued` | cancel | `cancelled` |
+| `running` | the runner exits 0 | `succeeded` |
+| `running` | the runner exits non-zero after a cancel request | `cancelled` |
+| `running` | the runner exits non-zero while the worker is stopping (§5) | `interrupted` |
+| `running` | the runner exits non-zero otherwise, or cannot be started | `failed` |
+| `running` | the worker finds it running when it starts (§5) | `interrupted` |
+| `failed`, `cancelled`, `interrupted` | retry | `queued`, `attempt` + 1 |
+
+A running job whose cancel was requested stays `running`, with
+`cancel_requested` set, until its runner exits. A succeeded job is not
+retried; submit its URL again instead. Cancelling a finished job, or retrying
+a queued, running, or succeeded one, is refused, naming its state.
+
+*Retry* is a new submission of the job's next attempt, never automatic: an
+interrupted job waits for a deliberate retry (DEC-42). The host re-pins the
+job's own source to that source's current revision, so a refresh followed by a
+retry takes effect; it keeps anonymous as anonymous and the stored user-agent,
+and does not follow a changed default, which was resolved when the job was
+first submitted. `jobs retry`'s `--cookie-source`, `--anonymous`, and
+`--user-agent` replace those, as on `dl`. A retried batch job rejoins the back
+of its lane; immediate jobs retried together run as one new immediate
+submission (§4).
+
+### 4. Scheduling, throttling, and VPN readiness
+
+Jobs run in queues (DEC-43). Each preset has one batch lane, `video` and
+`gallery`; each immediate submission (`dl`, or a retry of immediate jobs) is a
+queue of its own. A queue runs one job at a time, in the order its jobs
+entered `queued`, so a retry goes to the back. Different queues run at the
+same time: both lanes and any number of immediate submissions, as tmux
+sessions and foreground `dl` runs do today. A multi-URL `dl` downloads its
+URLs one after another, as its single yt-dlp did.
+
+*Throttle.* Batch lanes keep today's spacing (DEC-6): whenever a lane's job
+ends, for any reason, the worker draws a whole number of seconds uniformly
+from 120 to 289 and starts no job in that lane before the end plus that delay.
+The deadline is stored with the lane, so it survives a restart, and the lane's
+next job shows `wait: throttle` with it. Immediate queues are never throttled.
+The bounds are fixed; tests inject them, and the gate's smoke test may shorten
+them through a test seam the CLI never sets, as `DOWNLOADINUX_IMAGE` is.
+
+*VPN readiness.* With `DL_VPN=on`, before starting any job the worker runs
+`nordvpn status`; unless it reports `Status: Connected`, read as *Health
+checks* reads it, the job stays queued with `wait: vpn` and the worker checks
+again every 15 seconds (DEC-43). This holds whatever `vpn.killswitch` says:
+with the killswitch on the download would hang, and with it off it would leave
+through the host's connection, which `vpn.enabled` rules out. With the VPN off,
+no check runs.
+
+*Execution.* The worker starts a job by running, in `/downloads`,
+`downloadinux-runner download --cookies /cookies --state /state SELECTION
+--user-agent UA PRESET URL`, each item one list element, with the job's pinned
+selection and user-agent as in *Named cookie sources* §3 ("Host launch"). The
+runner is started in its own process group, with `/dev/null` as standard
+input and standard output and error appended to the attempt's log, so job
+processes receive signals only through the worker. Each attempt gets its own
+private jar, which the runner creates at startup and removes when it ends
+(DEC-31, amended). Every job uses the preset's one argument list (*Presets*):
+the gallery batch's `-q` ends with the zsh loop (§7).
+
+### 5. Cancellation, shutdown, and reconciliation
+
+*Cancel.* A queued job becomes `cancelled` at once. For a running job the
+worker records `cancel_requested` and sends `SIGTERM` to its runner, which
+forwards it to the downloader's process group and removes its jar once every
+process holding it has exited (DEC-36); the job's state follows from the
+runner's exit (§3). Cancelling it again sends `SIGTERM` again. Stage 3 has no
+`SIGKILL` escalation: a process that ignores `SIGTERM` keeps its job running
+until it exits or the container restarts.
+
+*Shutdown.* On `SIGTERM` or `SIGINT` the worker stops starting jobs and refuses
+submissions, sends `SIGTERM` to every running runner, and waits up to 20
+seconds for them to exit; it then records every job still running as
+`interrupted` with the error `worker stopped`, and exits 0. Docker's grace
+period (30 seconds, §1) covers that wait. A snapshot a killed runner left
+behind stays until `cookies cleanup` removes it (§3 of *Named cookie sources*).
+
+*Reconciliation.* At start, before opening its socket, the worker records
+every job still marked `running` as `interrupted`, with the error `worker
+restarted`, and sets that job's lane deadline as for any end. Queued jobs keep
+their places and run under §4. Nothing is resumed on its own; a retry may let
+yt-dlp continue a partial `.part` file, as far as the downloader can.
+
+### 6. Host commands
+
+These are thin fronts for host operations the TUI will call (DEC-44):
+
+| Command | Result |
+| --- | --- |
+| `dl [selection] PRESET URL…` | Submit one immediate job per URL, then follow them; `--detach` returns after submitting |
+| `batch [selection] PRESET [QUEUE]` | Import a text queue into the preset's lane, then remove the imported lines from the file |
+| `watch [PRESET]` | Follow the preset's lane until it has no queued or running job |
+| `jobs list [--all] [--json]` | Queued, running, failed, and interrupted jobs in ID order; `--all` every job |
+| `jobs show ID [--json]` | One job's record and its log paths |
+| `jobs logs ID [--attempt N] [--follow]` | Print an attempt's log (the latest by default); `--follow` streams it until the attempt ends |
+| `jobs cancel ID…` | Cancel jobs (§5) |
+| `jobs retry ID… [selection]` | Retry jobs (§3) |
+| `jobs export PRESET` | Print the URLs of the preset's failed, cancelled, and interrupted jobs, one per line in ID order: a queue file |
+
+`[selection]` is `dl`'s `--cookie-source NAME`, `--anonymous`, and
+`--user-agent VALUE`, with their placement, validation, errors, and pinning as
+*Named cookie sources* §3 ("Host launch") and §4 have them (DEC-39, DEC-40).
+`video`/`v` and `gallery`/`gal`/`g` name the presets for every command.
+
+*`dl`.* After `PRESET`/URL validation, the user-agent check, and pinning, the
+host submits the URLs as one immediate submission with one pinned selection,
+instead of running the runner itself. It then follows the submission: each
+job's log in turn, preceded by a line naming the job and its URL, and any VPN
+wait as it begins and ends. A duplicate is followed as the job the reply
+named. When every followed job has ended, `dl` exits 0 if all succeeded; when
+the submission is a single job that did not succeed, with its runner's status
+if it has one, else 1; otherwise 1. `--detach` prints the submitted job IDs and
+exits 0 without following. `SIGINT` (Ctrl-C), `SIGHUP`, or `SIGTERM` while
+following detaches: the jobs keep running, the CLI names the jobs still
+unfinished with how to follow (`dlx jobs logs --follow ID`) and cancel
+(`dlx jobs cancel ID`) them, and exits 128 plus the signal number. A follow
+stream that ends before its jobs do (the container stopped) exits 1, saying
+the worker went away and pointing at `dlx jobs list`.
+
+*`batch`.* The queue defaults to the preset's default queue file in
+`paths.downloads`, as today (`dlmp4_queue`, `dlgal_queue`). A given path
+expands a leading `~` and is made absolute against the working directory. It
+must be an existing regular file, else exit 1, `no such queue file: <path>`;
+it need not lie under `paths.downloads`, because the host reads it. The file
+is decoded as UTF-8 (an undecodable or unreadable file fails, exit 1, naming
+it, and nothing is submitted); each line is stripped of surrounding
+whitespace, and empty lines and lines beginning `#` are skipped. With no URLs
+it says so, submits nothing, and exits 0. Otherwise it pins once (DEC-31) and
+submits every URL, in file order, as one submission to the preset's lane; the
+worker records all of them or none. Then it consumes the file: it reads it
+again and replaces it, through a same-directory temporary file with the
+file's current mode and an atomic rename, without every line whose stripped
+text is a URL the reply created or named as a duplicate. Comments, blank
+lines, and other lines, including ones appended since the first read, stay in
+order; an append landing during the replacement itself can be lost. A failed
+submission leaves the file unchanged. A failed replacement leaves the jobs
+queued and exits 1 with the path-bearing error, saying they were queued; a
+rerun skips them as duplicates while they are active. On success it reports
+how many jobs it queued and skipped, in which lane, and `Follow with: dlx watch
+<preset>`, and exits 0. It never follows.
+
+*`watch`.* `watch [PRESET]` (default `video`) follows the preset's lane: the
+running job's log, throttle and VPN waits as they begin, and each next job,
+until the lane has no queued or running job; then it exits 0. With nothing in
+the lane it says so and exits 0. Any word other than a preset name is a usage
+error, exit 2: there are no tmux session names. Detaching works as for `dl`.
+
+*`jobs`.* `jobs logs` without `--follow` prints the stored bytes and exits 0;
+with it, it detaches as `dl` does. `jobs cancel` and `jobs retry` act on every
+ID they can and exit 1 if any was refused (§3) or unknown. `jobs retry` pins on
+the host before submitting (§3) and never follows. An unknown ID is an
+operation error, exit 1.
+
+The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
+(DEC-40), `watch` forwards its argument, and a new `jobs *args` runs
+`uv run downloadinux jobs "$@"`.
+
+### 7. Compatibility and retirement
+
+`dl`, `batch`, and `watch` switch to the worker together in one cutover pull
+request, as Stage 2's routes did (DEC-44). The worker ships first, additively:
+its executable, the image command, `init`, and the `jobs` commands, while tmux
+batches still work. At the cutover:
+
+- The image no longer installs tmux, and no recipe, command, or document
+  names it. `zsh/batch.zsh` and its sourcing by the interactive shell go, as
+  do the runner's `batch` subcommand (DEC-36, amended), the batch tmux script
+  (*Named cookie sources* §3, DEC-39, amended), the preset table's session,
+  log prefix, title, and colour columns, and the gallery batch's `-q`.
+  `rich-cli` stays for `exifmod`, and `just shell` stays for diagnostics and
+  utilities.
+- The URL-only batch logs (`dlmp4_successful_<time>.txt`,
+  `dlmp4_failed_<time>.txt`, and the `dlgal_` pair) are no longer written.
+  Existing ones are left untouched, distinguishable from job history, which
+  lives only in `paths.state/jobs/`.
+- Text queues become an import format (`batch`) and an export format (`jobs
+  export`), no longer the mutable source of truth. A queue no longer has to
+  lie under `paths.downloads`.
+- The gallery archive stays at `/downloads/dlgal/gallery-dl-archive.sqlite3`,
+  and the output layout is unchanged (DEC-6; this settles the placement
+  question DEC-13 left to Stage 3).
+- There is no job state to migrate. Operators finish or stop running tmux
+  batches before rebuilding; the loop has already removed each finished URL
+  from its queue file, so the next `batch` imports what remains.
+- Recreating the container (`dlx restart`, `dlx update`, or an `up` that
+  changes it) interrupts running jobs (§5); queued ones carry on. The README
+  says so.
+
+`cookies cleanup` is unchanged: neither the worker nor `up` runs it
+automatically.
+
+### 8. Health check
+
+`doctor` gains the row `worker.running` after `container.running` (DEC-44,
+amending DEC-22's list). It runs `downloadinux-worker status` as a container
+check. Status 0 with the client's reply is `ok`, `worker running (<r> running,
+<q> queued)`; status 126 or 127 is `fail`, `the running image has no worker`,
+fix `dlx build, then dlx restart`; anything else is `fail`, `worker not
+answering`, fix `dlx restart`. It is `skip` under the existing container rules
+(*Health checks*): `Docker daemon not reachable`, then `container not running`.
+The gate's smoke test expects it `ok`.
 
 ## Python + Textual TUI
 
@@ -1685,7 +2007,8 @@ Initial views:
 - **Cookies:** add/import, inspect non-secret metadata, refresh, and select defaults.
 - **Status/settings:** container, worker, VPN, mounts, paths, and tool versions.
 
-Expose retry and cancellation once worker semantics are defined. Show downloading,
+Expose retry and cancellation with the worker's semantics (*Persistent worker
+and jobs* §3, §5), through the same host operations as the CLI. Show downloading,
 throttling, waiting for VPN, and failure as distinct conditions. Authentication
 errors should only be labeled as such when supported by evidence.
 
