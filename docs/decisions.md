@@ -818,3 +818,33 @@ default need not be the `firefox` source.
 host-launch paragraph), §4 (the two user-agent errors), and §5 (doctor's Stage
 2 rows). Added on 2026-10-10 for issue #34, before the cutover's last additive
 preparation was cut.
+
+## DEC-40: The cutover's option errors, recipes, and setup step have fixed shapes (2026-10)
+
+`dl` and `batch` take `--cookie-source`, `--anonymous`, and `--user-agent`
+before or after their positional arguments, but not between two URLs, which
+argparse refuses. `--cookie-source` reuses the `cookies`
+commands' name check and shares an argparse mutually exclusive group with
+`--anonymous`, so those usage errors are argparse's own. The `--user-agent`
+check raises the project's usage error, which the CLI prints in the host's
+`downloadinux: error:` form with exit 2, never a traceback, even though
+argparse raises it while parsing. A value beginning with `-` is spelled
+`--user-agent=VALUE`.
+
+`just dl` and `just batch` forward every word to the CLI (`+args`, `"$@"`);
+`just cookies` forwards to `cookies firefox`. Setup's cookie step is headed
+`Cookie source`, runs `cookies setup`, reports a failure's exit status and
+continues to the build, and setup ends by pointing at `just dl` instead of
+`just shell`.
+
+Converting the usage error to argparse's `ArgumentTypeError` was rejected:
+argparse would print `argument --user-agent: --user-agent: …`, which repeats
+the name and is not §4's text. Keeping the recipes' `kind +urls` and
+`kind file` parameters was rejected because `batch` forwarded only two words,
+so its options would be lost. Keeping the `Exporting browser cookies` heading
+was rejected because the step usually exports nothing: it keeps a named
+default or stays anonymous on a no.
+
+*Where:* [target design](target-design.md), *Named cookie sources* §3 (the
+host-launch paragraph) and §5 (the cutover recipes paragraph). Added on
+2026-10-11 for issue #34, before the cutover chunk was cut.
