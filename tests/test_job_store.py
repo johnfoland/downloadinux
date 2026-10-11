@@ -1,5 +1,6 @@
 """Real SQLite and subprocess ownership evidence for DEC-35/41/45."""
 from datetime import datetime, timezone
+from dataclasses import asdict
 import errno
 import fcntl
 import os
@@ -509,3 +510,174 @@ def test_active_partial_unique_index_rejects_real_duplicate(tmp_path):
                 (submission,preset,url,user_agent,state,attempt,cancel_requested,created_at,queued_at,queue_order)
                 SELECT submission,preset,url,user_agent,state,attempt,cancel_requested,created_at,queued_at,queue_order
                 FROM jobs''')
+
+
+@pytest.fixture
+def populated(tmp_path):
+    with open_store(tmp_path) as store:
+        for preset in js.PRESETS:
+            result = store.submit(preset, [preset + '/' + state for state in js.STATES], lane=preset)
+            for reference, state in zip(result.created, js.STATES):
+                store._connection.execute('UPDATE jobs SET state=? WHERE id=?', (state, reference.id))
+        yield store
+
+
+@pytest.mark.parametrize('state', [None, *js.STATES])
+@pytest.mark.parametrize('preset', [None, *js.PRESETS])
+@pytest.mark.parametrize('submission', [None, 1, 2])
+def test_every_filter_combination_and_id_order(populated, state, preset, submission):
+    records = populated.list()
+    expected = [r for r in records if (state is None or r.state == state)
+                and (preset is None or r.preset == preset) and (submission is None or r.submission == submission)]
+    actual = populated.list(state=state, preset=preset, submission=submission)
+    assert actual == expected
+    assert [r.id for r in actual] == sorted(r.id for r in actual)
+    assert all(isinstance(r, js.JobRecord) for r in actual)
+    for record in actual:
+        assert populated.get(record.id) == record
+
+
+def test_empty_bound_filters_and_unknown_id(tmp_path):
+    with open_store(tmp_path) as store:
+        assert store.list() == []
+        with pytest.raises(DownloadinuxError, match='unknown job ID 1'):
+            store.get(1)
+        store.submit('video', ['one'])
+        assert store.list(state="queued' OR 1=1 --") == []
+        assert store.list(preset="video' OR 1=1 --") == []
+        assert store.list(submission=999) == []
+        with pytest.raises(DownloadinuxError, match='unknown job ID 999'):
+            store.get(999)
+        assert len(store.list()) == 1
+
+
+@pytest.mark.parametrize('invalid', [0, -1, True, False, 1.0, '1', None, [], {}])
+def test_nonpositive_bool_and_wrong_id_types(tmp_path, invalid):
+    with open_store(tmp_path) as store:
+        with pytest.raises(DownloadinuxError, match='positive integer'):
+            store.get(invalid)
+        if invalid is not None:
+            with pytest.raises(DownloadinuxError, match='positive integer'):
+                store.list(submission=invalid)
+
+
+@pytest.mark.parametrize('field', ['state', 'preset'])
+@pytest.mark.parametrize('invalid', [True, 1, [], {}])
+def test_filter_types_refused(tmp_path, field, invalid):
+    with open_store(tmp_path) as store:
+        with pytest.raises(DownloadinuxError, match='filter must be a string'):
+            store.list(**{field: invalid})
+
+
+def test_every_field_null_values_wait_shapes_and_independence(tmp_path):
+    with open_store(tmp_path) as store:
+        result = store.submit('video', ['anon'])
+        expected = dict(id=result.created[0].id, submission=result.submission, preset='video', url='anon', lane=None,
+                        source=None, revision=None, user_agent='', state='queued', wait=None, attempt=1,
+                        cancel_requested=False, created_at='2026-10-11T12:00:00Z', queued_at='2026-10-11T12:00:00Z',
+                        started_at=None, finished_at=None, exit_status=None, error=None)
+        assert asdict(store.get(expected['id'])) == expected
+        assert type(store.get(expected['id']).cancel_requested) is bool
+        named = store.submit('gallery', ['named'], lane='gallery', source='alpha', revision='b' * 32,
+                             user_agent='named UA').created[0].id
+        store._connection.execute('''UPDATE jobs SET state='failed', attempt=3, cancel_requested=1,
+            started_at='2026-10-11T12:01:00Z', finished_at='2026-10-11T12:02:00Z', exit_status=143,
+            error='worker diagnostic' WHERE id=?''', (named,))
+        filled = store.get(named)
+        assert asdict(filled) == dict(expected, id=named, submission=2, preset='gallery', url='named', lane='gallery',
+                                     source='alpha', revision='b' * 32, user_agent='named UA', state='failed',
+                                     attempt=3, cancel_requested=True, started_at='2026-10-11T12:01:00Z',
+                                     finished_at='2026-10-11T12:02:00Z', exit_status=143, error='worker diagnostic')
+        for wait in ('{"reason":"vpn"}', '{"reason":"throttle","until":"2026-10-11T12:03:00Z"}'):
+            store._connection.execute('UPDATE jobs SET wait=? WHERE id=1', (wait,))
+            import json
+            first, second = store.get(1), store.list()[0]
+            assert first.wait == second.wait == json.loads(wait)
+            assert first is not second and first.wait is not second.wait
+            first.wait['reason'] = 'mutated'
+            assert second.wait == store.get(1).wait == json.loads(wait)
+        assert set(asdict(filled)) == set(js.RECORD_FIELDS)
+        assert 'queue_order' not in asdict(filled)
+        assert 'next_start_at' not in asdict(filled)
+        saved = store.list()
+    with open_store(tmp_path) as store:
+        assert store.list() == saved
+
+
+@pytest.mark.parametrize('value', [*(chr(i) for i in range(32)), chr(127), "'\"\\", 'é', 'e\u0301', '😀', '-UA', ''])
+def test_literal_control_sweep_through_real_sqlite_and_reopen(tmp_path, value):
+    url = 'literal' + value
+    with open_store(tmp_path) as store:
+        if value in ('\r', '\n', '\0'):
+            with pytest.raises(DownloadinuxError):
+                store.submit('video', [url], user_agent='okay')
+            with pytest.raises(DownloadinuxError):
+                store.submit('video', ['okay'], user_agent=value)
+            assert contents(store) == ([], [], [(1, 0)])
+            return
+        job_id = store.submit('video', [url], user_agent=value).created[0].id
+        assert store.get(job_id).url == url
+        assert store.get(job_id).user_agent == value
+    with open_store(tmp_path) as store:
+        assert store.get(job_id).url == url
+        assert store.get(job_id).user_agent == value
+
+
+@pytest.mark.parametrize('wait', ['SENTINEL', '[]', 'null', '{"reason":"other"}',
+                                 '{"reason":"vpn","extra":"SENTINEL"}',
+                                 '{"reason":"throttle","until":"2026-02-30T00:00:00Z"}', '[' * 2000])
+def test_invalid_stored_wait_is_safe_operation_error(tmp_path, wait):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'])
+        store._connection.execute('UPDATE jobs SET wait=?', (wait,))
+        with pytest.raises(DownloadinuxError, match='invalid stored job wait') as error:
+            store.get(1)
+        assert 'SENTINEL' not in str(error.value)
+
+
+def test_read_errors_are_safe(tmp_path):
+    store = open_store(tmp_path)
+    store.submit('video', ['one'])
+    for call in (lambda: store.get(2 ** 100), lambda: store.list(submission=2 ** 100),
+                 lambda: store.list(state='SENTINEL\ud800')):
+        with pytest.raises(DownloadinuxError, match='jobs.sqlite3') as error:
+            call()
+        assert 'SENTINEL' not in str(error.value)
+    store.close()
+    with pytest.raises(DownloadinuxError, match='jobs.sqlite3'):
+        store.list()
+
+
+def test_isolated_stdlib_only_open_submit_read_without_host_roots(tmp_path):
+    root = tmp_path / 'isolated-state'
+    root.mkdir()
+    script = '''
+import importlib.abc, sys
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        top = name.split('.')[0]
+        if top not in sys.stdlib_module_names and top != 'downloadinux':
+            raise ImportError('non-stdlib import: ' + name)
+        if top == 'downloadinux' and name not in ('downloadinux', 'downloadinux.job_store', 'downloadinux.errors'):
+            raise ImportError('host import: ' + name)
+sys.meta_path.insert(0, Block())
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from downloadinux import job_store as js
+root = Path(sys.argv[2])
+with js.open_store(root) as store:
+    a = store.submit('video', ['anon'], user_agent='')
+    b = store.submit('gallery', ['named'], source='alpha', revision='a' * 32, user_agent='-literal')
+    assert store.get(a.created[0].id).source is None
+    assert store.get(b.created[0].id).revision == 'a' * 32
+    assert len(store.list()) == 2
+with js.open_store(root) as store:
+    assert [j.url for j in store.list()] == ['anon', 'named']
+assert sorted(p.name for p in root.iterdir()) == ['jobs']
+print('stdlib boundary passed')
+'''
+    result = subprocess.run([sys.executable, '-I', '-c', script, str(SRC), str(root)],
+                            capture_output=True, text=True, timeout=10,
+                            env={'PATH': os.environ['PATH'], 'HOME': str(tmp_path / 'absent-home')})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'stdlib boundary passed\n'

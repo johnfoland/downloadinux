@@ -16,8 +16,9 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-44, issue #64) but not implemented; Stage 4 remains
-proposed.
+jobs*, DEC-41 to DEC-45, issue #64). Only the internal job-store foundation
+in §2 is implemented; the worker service, lifecycle, scheduling, commands,
+and cutover remain unimplemented. Stage 4 remains proposed.
 
 ## Agreed decisions
 
@@ -1683,7 +1684,11 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-44); not yet implemented. Until the cutover (§7), batches run
+(DEC-41 to DEC-45). Only §2's internal store foundation is implemented:
+private versioned storage under worker ownership, atomic pinned submissions,
+active duplicates, and typed record reads. Lifecycle transitions/retry,
+reconciliation, scheduling, execution/cancellation/shutdown, the service,
+commands, and cutover remain unimplemented. Until the cutover (§7), batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
 planning pull request merged. Client request and reply shapes and human
@@ -1789,7 +1794,14 @@ first.
 
 #### Store foundation: version, ownership, and submission (DEC-45)
 
-These details settle the internal storage boundary before implementation.
+Implemented as the internal standard-library `downloadinux.job_store` library.
+Its tests cover ownership/private paths, versioning and durability settings,
+atomic submissions and exact duplicates, and independent typed reads;
+`tools/job_store_evidence.py` proves reopened ownership on a Docker Desktop
+state bind mount. This is the store foundation alone; §3–§5's lifecycle,
+scheduler, and runner execution remain unimplemented.
+
+These details settle the internal storage boundary.
 They do not define the socket's JSON protocol (§1), or activate the host
 commands (§6). The reusable standard-library module is
 `downloadinux.job_store`; only the container worker uses it in production.

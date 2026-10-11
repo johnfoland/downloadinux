@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import errno
 import fcntl
+import json
 import os
 from pathlib import Path
 import re
@@ -81,6 +82,56 @@ class SubmissionResult:
     submission: int
     created: tuple[JobReference, ...]
     duplicates: tuple[JobReference, ...]
+
+
+@dataclass(frozen=True)
+class JobRecord:
+    """Independent public projection; queue order and deadlines stay internal."""
+    id: int
+    submission: int
+    preset: str
+    url: str
+    lane: str | None
+    source: str | None
+    revision: str | None
+    user_agent: str
+    state: str
+    wait: dict[str, str] | None
+    attempt: int
+    cancel_requested: bool
+    created_at: str
+    queued_at: str
+    started_at: str | None
+    finished_at: str | None
+    exit_status: int | None
+    error: str | None
+
+
+def _positive_id(value: object) -> int:
+    if type(value) is not int or value <= 0:
+        raise DownloadinuxError('job or submission ID must be a positive integer')
+    return value
+
+
+def _decode_record(row, path: Path) -> JobRecord:
+    values = dict(zip(RECORD_FIELDS, row))
+    values['cancel_requested'] = bool(values['cancel_requested'])
+    if values['wait'] is not None:
+        try:
+            wait = json.loads(values['wait'])
+            valid = type(wait) is dict and wait == {'reason': 'vpn'}
+            if type(wait) is dict and set(wait) == {'reason', 'until'} and wait['reason'] == 'throttle':
+                until = wait['until']
+                if type(until) is str and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', until):
+                    datetime.strptime(until, '%Y-%m-%dT%H:%M:%SZ')
+                    valid = True
+            if not valid or values['state'] != 'queued':
+                raise ValueError('invalid wait')
+        except Exception:
+            # Unreadable stored JSON includes decoder recursion failures.
+            raise DownloadinuxError(f'{path}: invalid stored job wait') from None
+        values['wait'] = wait
+    return JobRecord(**values)
 
 
 def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tuple[str, ...]:
@@ -256,6 +307,40 @@ class JobStore:
                     (submission, preset, url, lane, source, revision, user_agent, timestamp, timestamp, order)).lastrowid
                 created.append(JobReference(job, url))
         return SubmissionResult(submission, tuple(created), tuple(duplicates))
+
+    def _read(self, where: str, parameters: tuple) -> list[JobRecord]:
+        try:
+            rows = self._connection.execute(
+                'SELECT ' + ', '.join(RECORD_FIELDS) + ' FROM jobs' + where + ' ORDER BY id', parameters)
+            return [_decode_record(row, self.path) for row in rows]
+        except sqlite3.Error as error:
+            raise _sqlite_error(self.path, error) from None
+        except (UnicodeError, OverflowError):
+            raise DownloadinuxError(f'{self.path}: SQLite value encoding failed') from None
+
+    def get(self, job_id: int) -> JobRecord:
+        """Return one record, or refuse an invalid/unknown positive ID (§2)."""
+        job_id = _positive_id(job_id)
+        records = self._read(' WHERE id=?', (job_id,))
+        if not records:
+            raise DownloadinuxError(f'{self.path}: unknown job ID {job_id}')
+        return records[0]
+
+    def list(self, *, state: str | None = None, preset: str | None = None,
+             submission: int | None = None) -> list[JobRecord]:
+        """ID-ordered records; every caller value, including filters, is bound."""
+        clauses, parameters = [], []
+        for field, value in (('state', state), ('preset', preset), ('submission', submission)):
+            if value is None:
+                continue
+            if field == 'submission':
+                _positive_id(value)
+            elif type(value) is not str:
+                raise DownloadinuxError(f'{field} filter must be a string')
+            clauses.append(field + '=?')
+            parameters.append(value)
+        where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        return self._read(where, tuple(parameters))
 
     @contextmanager
     def _transaction(self):
