@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from conftest import FAKE_TOKEN
-from downloadinux import cli, migrate
+from downloadinux import cli, compose, cookie_store, launch, migrate
+from test_container_commands import compose_args
 
 JAR = "# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tsid\tfake\n"
 
@@ -110,6 +111,51 @@ def test_full_import(capsys, full_env, source, paths):
     assert f'  paths.downloads = "{downloads}"' in out
     assert "  vpn.enabled = true" in out
     assert snapshot(source) == before
+
+
+def test_the_first_cookie_operation_registers_the_imported_jar(capsys, full_env, source, paths, monkeypatch):
+    """Named cookie sources §5: import-env keeps DEC-13's copy contract; the
+    first cookie-aware operation then registers that managed copy."""
+    calls = []
+
+    def record(argv, environ):
+        calls.append(list(argv))
+        return 0
+
+    monkeypatch.setattr(compose, "run_process", record)
+    monkeypatch.setattr(compose, "capture_process", lambda argv, environ: (0, ""))
+    env, downloads = full_env
+    before = snapshot(source)
+    jar = paths["cookies"] / "cookies.txt"
+    status, _, err = run(capsys, "config", "import-env", "--env", str(env))
+    assert status == 0, err
+
+    status, _, err = run(capsys, "config", "show", "--json")
+    assert status == 0, err
+    assert not (paths["cookies"] / "sources.json").exists()
+
+    status, listed, err = run(capsys, "cookies", "list", "--json")
+    assert status == 0, err
+    report = json.loads(listed)
+    [legacy] = report["sources"]
+    assert report["default"] == "legacy"
+    assert (legacy["name"], legacy["kind"], legacy["path"], legacy["is_default"]) == (
+        "legacy", "file", str(jar), True)
+
+    downloads.mkdir(parents=True, exist_ok=True)
+    url = "https://example.com/imported"
+    status, _, err = run(capsys, "dl", "video", url)
+    assert status == 0, err
+    [argv] = calls
+    program = compose_args(argv)[4:]
+    agent = program[program.index("--user-agent") + 1]
+    assert program == launch.runner_argv(
+        "download", cookie_store.Pinned("legacy", legacy["revision"]), agent, "video", [url])
+    assert program[program.index("--source"):program.index("--source") + 4] == [
+        "--source", "legacy", "--revision", legacy["revision"]]
+
+    assert snapshot(source) == before
+    assert jar.read_text() == JAR
 
 
 def test_settings_file_is_the_starter_file_with_imports(capsys, full_env, paths):
