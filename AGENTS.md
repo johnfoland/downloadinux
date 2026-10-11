@@ -43,6 +43,11 @@ run it; `docs/` holds the planning documents for the refactor, and
   whenever lock, lease, allocation, or cleanup code changes, on macOS Docker
   Desktop where possible. Only a Docker Desktop bind mount reproduces the
   lock behavior behind DEC-35; host tests and CI's native Linux cannot.
+- `uv run --locked python tools/job_store_evidence.py`: the same kind of
+  evidence for the job store's worker ownership (DEC-35, DEC-45): a contender
+  is busy before any SQLite open, changes nothing, and the store reopens once
+  the owner releases. Not in the gate; rerun it by hand on Docker Desktop
+  whenever `job_store` ownership or opening code changes.
 
 ## Workflow
 

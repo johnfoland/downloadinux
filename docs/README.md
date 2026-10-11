@@ -17,7 +17,11 @@ and doctor use named sources, and the container's download shortcuts are
 retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5), so Stage 2
 is implemented. Stage 3, a persistent worker and jobs in place of tmux, is
 settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
-(DEC-41 to DEC-44) but not implemented: batch runs still use tmux. Stage 4,
+(DEC-41 to DEC-45). Only its internal `downloadinux.job_store` foundation is
+implemented: private versioned SQLite ownership, atomic pinned submissions,
+exact active duplicates, and typed record reads. Lifecycle, scheduling,
+execution/cancellation/shutdown, worker service and commands, and cutover
+remain unimplemented; batch runs still use tmux. Stage 4,
 the Python + Textual TUI, remains a proposal.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
