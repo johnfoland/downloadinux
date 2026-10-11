@@ -1787,6 +1787,99 @@ blocks a resubmission: the gallery archive and yt-dlp's existing-file check
 govern redownloads, as today. Repeats within one submission collapse to the
 first.
 
+#### Store foundation: version, ownership, and submission (DEC-45)
+
+These details settle the internal storage boundary before implementation.
+They do not define the socket's JSON protocol (§1), or activate the host
+commands (§6). The reusable standard-library module is
+`downloadinux.job_store`; only the container worker uses it in production.
+
+*Ownership and opening.* Opening a store requires an existing directory at
+the supplied state root; retain its configured symlink spelling, as the
+snapshot library does. Create/enforce `jobs/` and `jobs/logs/` at 0700. These
+managed directories, `.worker.lock`, and `jobs.sqlite3` must be real
+directories or regular files as appropriate, never final symlinks or other
+file types. Do not chmod the state root or unrelated files. Create/find the
+lock, reopen it without `O_CREAT`, verify both descriptors identify the same
+regular file, and lock only the reopened descriptor (DEC-35). Keep the lock
+file permanently: closing a store releases its descriptor, never unlinks it.
+The library offers a nonblocking ownership attempt: contention is a distinct
+busy result, not a filesystem error; the service owns §1's waiting/message
+loop. A contender opens no database and changes no job or log data. Ownership
+must be held before database initialization or access, and the connection
+closes before the ownership descriptor, including on failed opening.
+
+Create the database at 0600 before SQLite opens it, and enforce that mode on
+an existing regular database. On each connection set and verify
+`journal_mode=DELETE`, `synchronous=FULL`, and `foreign_keys=ON`. The rollback
+journal must also be private when present; never use WAL. Use explicit
+transactions for schema initialization and each mutation, with a successful
+commit as the publication point. A failed write/commit attempts rollback and
+reports failure rather than returning a successful result. Do not delete or
+reset a database to recover from an error. Filesystem failures name the
+managed path and OS reason; SQLite failures name `jobs.sqlite3` and a safe
+error category, without echoing SQL parameters, URLs, user-agents, or raw
+exception text. Both use the shared operation-error type.
+
+*Version 1 structure.* `PRAGMA user_version=1` identifies the schema. A new
+or empty version-0 database with no application tables is initialized in one
+transaction; an unsupported version, a nonempty unversioned database, or a
+version-1 database missing its required structure fails without repair.
+Version 1 has these application tables (SQL constraints/index names are
+implementation details):
+
+| Table | Stored fields and invariants |
+| --- | --- |
+| `submissions` | `id INTEGER PRIMARY KEY AUTOINCREMENT`, `created_at` in §2's UTC form. IDs are independent of job IDs. Keep even submissions that create no job. |
+| `jobs` | Every §2 record field, plus internal positive integer `queue_order`. `id INTEGER PRIMARY KEY AUTOINCREMENT`; `submission` references `submissions.id`. Text fields use SQLite TEXT; integer fields use INTEGER, with `cancel_requested` stored as 0/1. Nullable fields use SQL NULL; `wait`, when present, is JSON text for exactly one of §2's objects. |
+| `lanes` | Exactly the canonical `video` and `gallery` rows: `preset` as the text primary key, and nullable UTC `next_start_at`, initially null. §4/§5 own subsequent deadline changes. |
+| `queue_counter` | One row, `id=1`, and integer `value`, initially 0. Increment transactionally for every entry into `queued`, including later retries; copy the value into that job's `queue_order`. |
+
+Committed job and submission IDs increase and are never reused; gaps are
+allowed, and IDs allocated only inside a rolled-back transaction were never
+published. Use a partial unique index on `(preset, url)` for rows whose state
+is `queued` or `running`, with SQLite's binary string comparison. Queue
+order is increasing `queue_order` within a lane or immediate submission:
+the second-resolution `queued_at` timestamp records time but cannot break
+ties or a backward wall-clock adjustment. Retry will allocate a new order
+and submission (§3); this foundation does not implement retry or transitions.
+The current job record describes its latest attempt; earlier logs remain by
+the §2 filename contract, without a separate attempt-history table.
+
+*Submission transaction.* The internal operation accepts one canonical
+preset, a nonempty ordered sequence of URLs, `lane` (null or that preset),
+`source`/`revision` (both null, or §1 of *Named cookie sources*' valid pair),
+and a string `user_agent` with no CR/LF (empty is allowed by that section's
+§4). Validate the whole input before allocating anything. Strings passed
+to a subprocess must contain no NUL, including the user-agent. Do not strip,
+case-fold, parse, or otherwise normalize URLs; §2's nonempty/CR/LF/NUL rule
+is the entire URL validation. The store accepts pinned identifiers without
+reading any cookie registry, revision, settings, or browser: the host pins,
+and the runner checks the exact material at startup (DEC-31).
+
+In one transaction, allocate a submission, collapse repeated URLs to their
+first occurrence, look up active duplicates across all lanes and immediate
+queues, and insert the remaining jobs in first-occurrence input order.
+Duplicates retain their existing record, selection, queue, timestamps, and
+submission; they are only referenced by the result. New jobs have state
+`queued`, attempt 1, `cancel_requested=false`, the same injected UTC instant
+for `created_at` and `queued_at`, and null `wait`, `started_at`, `finished_at`,
+`exit_status`, and `error`. No log file or private cookie jar is allocated
+while queued. A valid all-duplicate submission still commits its own ID.
+An invalid input or failed transaction creates no submission or jobs and
+does not advance the committed queue counter.
+
+The internal result holds `submission` and ordered `created` and `duplicates`
+collections, each entry holding `id` and `url`; each collection preserves
+first-occurrence input order. These are library results, not a pinned client
+JSON shape. Read operations return typed §2 records in ID order (all records,
+or filtered by state/preset/submission), or one record by positive integer ID;
+unknown IDs are operation errors. Return independent values, with
+`cancel_requested` a boolean and `wait` its object or null, never live SQLite
+rows. Queue order and lane deadlines are internal storage data, not additional
+public job-record fields. Caller-supplied values use SQL parameters, including
+filters. No public command opens the database directly.
+
 ### 3. States and transitions
 
 A job is `queued`, `running`, `succeeded`, `failed`, `cancelled`, or
