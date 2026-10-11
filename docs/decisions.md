@@ -822,7 +822,8 @@ preparation was cut.
 ## DEC-40: The cutover's option errors, recipes, and setup step have fixed shapes (2026-10)
 
 `dl` and `batch` take `--cookie-source`, `--anonymous`, and `--user-agent`
-anywhere among their arguments. `--cookie-source` reuses the `cookies`
+before or after their positional arguments, but not between two URLs, which
+argparse refuses. `--cookie-source` reuses the `cookies`
 commands' name check and shares an argparse mutually exclusive group with
 `--anonymous`, so those usage errors are argparse's own. The `--user-agent`
 check raises the project's usage error, which the CLI prints in the host's

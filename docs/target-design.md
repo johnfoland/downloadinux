@@ -1159,8 +1159,9 @@ Stage 3; Stage 2 does not add same-preset batch concurrency.
 
 Host launch (DEC-39). A malformed `--cookie-source` name, both selectors
 together, or an invalid `--user-agent` (§4) is a usage error, exit 2, before
-settings are loaded. The three options may appear anywhere among `dl`'s and
-`batch`'s arguments. `--cookie-source` checks its value with the `cookies`
+settings are loaded. The three options may precede `PRESET`, follow it, or
+follow the last URL; one placed between two URLs leaves the rest unrecognized,
+argparse's usage error. `--cookie-source` checks its value with the `cookies`
 commands' name rule and forms one argparse mutually exclusive group with
 `--anonymous`, so a malformed name or both selectors print argparse's own
 usage message. An invalid `--user-agent` prints `downloadinux: error:
