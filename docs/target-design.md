@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-47, issue #64). Only internal libraries are
+jobs*, DEC-41 to DEC-48, issue #64). Only internal libraries are
 implemented: the job store (§2's foundation and §5's store lifecycle
 operations) and §4's scheduler passes, VPN probe, and throttle seam helper
 (DEC-47). Runner execution, the worker service, commands, and cutover remain
@@ -1686,7 +1686,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-47). Only internal standard-library libraries are
+(DEC-41 to DEC-48). Only internal standard-library libraries are
 implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
@@ -2161,6 +2161,98 @@ every queued job's `wait`, so a previous run's waits do not linger until the
 scheduler sets current ones. Shutdown's final mark (§5) uses `worker stopped`.
 Opening a store does neither: the service runs reconciliation before it opens
 its socket.
+
+#### Runner execution, cancel signals, and the shutdown wait (DEC-48)
+
+Settled, not yet implemented. These details pin how the worker carries §4's
+*Execution* and §5's cancel and shutdown as an internal standard-library
+library that the service (§1) drives. It uses the owned store's public
+operations and the scheduler's launch callback and stop flag (DEC-47); it
+opens no SQLite of its own and reads no settings, cookie material, or host
+paths. Its calls run serially on the store's owning thread, as the
+scheduler's do.
+
+*Roots and argument list.* The library is given the cookie, state, and
+download roots the service was started with (`/cookies`, `/state`, and
+`/downloads` in the image), all required, with no defaults. For a started
+job it runs `downloadinux-runner download --cookies COOKIES --state STATE
+SELECTION --user-agent UA PRESET URL`, each item one list element:
+`SELECTION` is `--source NAME --revision REVISION` from the record's pinned
+pair, or `--anonymous` when both are null, and `UA` is the record's
+`user_agent` verbatim, possibly empty. With the image's roots the list
+equals the one the host builds for `downloadinux-runner download` with the
+same selection, user-agent, preset, and single URL, and it parses under the
+runner's rules (*Named cookie sources* §3, "Runner interface and process
+lifetime"). The program resolves through `PATH`, the runner inherits the
+worker's environment unchanged, and its working directory is the download
+root.
+
+*Attempt log.* Before starting the runner, the worker opens §2's
+`logs/<id>-<attempt>.log` for the record's `id` and `attempt`. It opens the
+store's `logs` directory without following a final symlink, then the log
+relative to it: write-only, appending, created at 0600 when absent,
+close-on-exec, not following a symlink, and nonblocking, so a planted FIFO
+cannot stall the worker. The opened file must be a regular file, and its
+mode is set to 0600 when it differs. An existing log is appended to, never
+truncated. The worker writes nothing into a log: its bytes are the
+runner's. The log stays whatever the attempt's outcome, empty when the
+runner wrote nothing, including after a launch failure.
+
+*Launch.* The runner starts in a new process group of its own, as the
+runner starts its downloader, with `/dev/null` as standard input, the log
+as both standard output and standard error, and no other descriptor passed.
+The worker registers the process under the job's ID as soon as it exists,
+then closes its own copy of the log descriptor; an error closing that copy
+does not fail the launch. The launch callback returns without waiting.
+Failures before the process exists are launch failures (§3, DEC-47), raised
+as the operation error with these reasons, which the scheduler records as
+the job's `error`: for the log, `<log path>: <OS reason>`, or `<log path>:
+not a regular file`; for the runner, `<path>: <OS reason>`, where `<path>`
+is the path the operating system names (the program or the working
+directory), else `downloadinux-runner`, as the runner reports its own
+downloader (*Named cookie sources* §3, "Exit status"). An OS failure with no
+reason text, or a start failure that is not an OS error, gives `launch
+failed` as the reason. A log descriptor opened for a launch that fails is
+closed.
+
+*Exits.* A poll checks every registered runner without blocking, in job ID
+order, and ends each one that has exited through the store with its status:
+a normal exit's status, or 128 plus N for a runner killed by signal N, as
+the runner maps its own child's signals. The end passes whether shutdown has
+begun (below), so §3's row order decides the outcome. A runner leaves the
+registry only after its end commits; a failed end propagates, and the next
+poll ends it again, since the process keeps its status. A poll returns the
+ended records in that order. When the service polls is the service's
+cadence, alongside the scheduler's (DEC-47).
+
+*Cancel signals.* Cancelling takes job IDs and calls the store's cancel
+("Store lifecycle" above). After that commit, for each outcome telling the
+worker to signal, in outcome order, it sends `SIGTERM` to that job's
+registered runner process, never to a process group: the runner forwards it
+to the downloader's group (DEC-36). A runner already known to have exited,
+or a job with no registered runner (its start committed, but its launch
+never ran), gets no signal; that job ends by its runner's exit or by a later
+interrupted mark. Every signal is attempted. An OS error other than a
+vanished process then fails the call with `cannot signal the runner of job
+<id>: <OS reason>`, naming the first, after the store's outcomes have
+committed. Otherwise the call returns the store's outcomes unchanged.
+
+*Shutdown.* Shutdown is one call that blocks for at most the wait. In order,
+it stops the scheduler (DEC-47), so nothing more starts; records that
+shutdown has begun, so every end from then on passes stopping; sends
+`SIGTERM` to every registered runner in job ID order, as cancel does; polls
+until no runner is registered or 20 seconds have passed since those signals
+on a monotonic clock, sleeping at most a tenth of a second between polls,
+never past that deadline, and polling once more at it; and then calls the
+store's shutdown mark, which records every job still running as
+`interrupted` with `worker stopped`, including one whose start committed but
+never launched. It returns the marked IDs. Runners still alive are left to
+the container's stop, with no `SIGKILL` (*Cancel* above). Once shutdown has
+returned, every further launch, poll, cancel, or shutdown raises the
+operation error `the worker has stopped`, changing nothing. Refusing
+submissions while stopping, handling the worker's own signals, and its exit
+status are the service's (§1). The monotonic clock and the sleep are
+injectable, with `time.monotonic` and `time.sleep` as the defaults.
 
 ### 6. Host commands
 
