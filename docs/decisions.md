@@ -1132,3 +1132,65 @@ runner the worker could not signal is worth reporting.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §5,
 "Runner execution, cancel signals, and the shutdown wait". Added on
 2026-10-12 in #76 for issue #64.
+
+## DEC-50: The worker service serves one request per tick and logs store failures in its loop rather than exiting (2026-10)
+
+`downloadinux-worker serve` reads `DL_VPN` and the throttle seam, installs
+stop handlers for `SIGTERM` and `SIGINT`, retries ownership each second
+with a log line once a minute, reconciles, replaces a stale socket, and
+listens at 0600. Each loop iteration waits at most half a second, serves at
+most one request, polls exited runners, and runs one scheduling pass. A
+store refusal from a pass or a poll is logged, at most once a minute when
+it repeats, and retried on the next iteration; an unexpected exception
+stops the worker as a signal would and exits 1. On a stop it closes and
+removes its socket first, then runs the execution library's one shutdown
+call, and exits 0, or 1 when the shutdown or the store's close fails.
+
+Exiting on any store failure, so the restart policy would start a fresh
+worker, was rejected (issue #74): a backward wall-clock step makes the
+store refuse a start with nothing wrong, and an exit would interrupt every
+running job for it. Telling guard refusals from real store failures was
+rejected as unnecessary: neither changes anything the store had not
+committed, a refusal clears on the next pass, and a lasting failure keeps
+its line in the container's log. A thread per connection, or a `SIGCHLD`
+wakeup, was rejected because store operations are serial on one thread
+(DEC-47) and a half-second tick is responsive enough for downloads. An
+option or environment variable for the socket path or download root was
+rejected: the image has one of each, and tests pass them to the service as
+arguments. Leaving a stale socket to the entrypoint alone was rejected
+because the container's filesystem outlives `docker restart`. Closing the
+socket before the shutdown wait is how the worker refuses submissions while
+stopping (target design §5): a client finds no worker, and nothing is half accepted.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Service lifecycle and failure handling". Added on 2026-10-12 for issue #64;
+settles issue #74 and fills service details without changing DEC-41 to
+DEC-49.
+
+## DEC-51: Worker clients print one versioned JSON object, and their exit status separates a refusal from an unreachable worker (2026-10)
+
+The client subcommands `status`, `submit`, and `show ID` send one request
+over the worker's socket and print its reply as one compact, ASCII-escaped
+JSON object with `version` 1 first: exit 0 for a success reply, 1 for an
+error reply `{"version":1,"error":REASON}`, 2 for a usage error, and 3 when
+the worker cannot be reached or does not reply properly. `submit` reads its
+inputs, URLs included, as one JSON object on standard input. The wire
+request is `{"version":1,"op":OP,"args":ARGS}`, one per connection, with a
+32 MiB limit each way, a 30-second client timeout, and 10-second worker
+timeouts that drop a stalled client. The worker refuses malformed requests,
+including strings with surrogate code points, as `invalid request`.
+
+Printing refusals on standard error only was rejected because the host and
+the Stage 4 TUI need the reason as data. One failure status for every error
+was rejected because §1 maps an unreachable worker to its own message.
+Passing URLs as arguments was rejected: a large batch can exceed the
+argument-size limit, and URLs and user-agents that begin with `-` would
+need option rules. Long-lived streaming connections are left to the
+following subcommands, pinned before the chunk that builds them. Accepting
+surrogate code points was rejected because SQLite cannot store them as
+UTF-8 text and an undecodable host argument could otherwise reach the
+store.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Client subcommands and replies". Added on 2026-10-12 for issue #64; fills
+the client shapes §1 leaves to planning without changing DEC-41 to DEC-49.

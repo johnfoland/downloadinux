@@ -115,7 +115,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-49 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-51 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 Only internal libraries are implemented. The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
@@ -249,6 +249,6 @@ integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
-implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-49);
+implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-51);
 only their internal libraries are implemented (*Stage 3* above); TUI styling
 and keybindings follow stable operations.

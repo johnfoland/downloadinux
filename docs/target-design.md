@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-49, issue #64). Only internal libraries are
+jobs*, DEC-41 to DEC-51, issue #64). Only internal libraries are
 implemented: the job store (§2's foundation and §5's store lifecycle
 operations), §4's scheduler passes, VPN probe, and throttle seam helper
 (DEC-47), and §5's runner execution: launch, attempt logs, exit polls,
@@ -1688,7 +1688,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-49). Only internal standard-library libraries are
+(DEC-41 to DEC-51). Only internal standard-library libraries are
 implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
@@ -1756,6 +1756,161 @@ its lifetime. When another worker holds it (two configurations sharing
 `paths.state`), the worker writes a line saying so to its standard output
 (the container's log) once a minute and keeps waiting, without opening its
 socket, so host operations report it as not answering.
+
+#### Service lifecycle and failure handling (DEC-50)
+
+Settled, not yet implemented. The standard-library module
+`downloadinux.worker` holds `main` and the service. The service drives the
+owned store (§2, §5's "Store lifecycle"), the scheduler (§4, DEC-47), and the
+execution library (§5, DEC-48) through their public operations, serially on
+one thread; it adds no thread, `SIGCHLD` handler, or second store
+connection.
+
+*Command line.* `serve --cookies DIR --state DIR` takes both options, each
+exactly once and in either order, each value the next list element and
+nonempty, and no operand. The download root is `/downloads` and the socket
+`/run/downloadinux/worker.sock`: no option, setting, or environment variable
+changes either. Tests pass other roots, the socket path, the environment
+mapping, and the clocks to the service as keyword-only arguments; `main`
+never does. A usage error prints `downloadinux: error: serve: <reason>` on
+standard error and exits 2, as the runner's do (DEC-36); DEC-51 gives the
+reasons.
+
+*Start*, in this order:
+
+1. Read the environment: `DL_VPN` exactly `on` turns §4's VPN gate on, and
+   anything else, or no value, leaves it off, as the entrypoint reads it.
+   `DOWNLOADINUX_TEST_THROTTLE_SECONDS` is read through DEC-47's helper.
+2. Install `SIGTERM` and `SIGINT` handlers that only record a one-way stop
+   request. Other signals keep their default actions.
+3. Take ownership: try `open_store` with any throttle override, and while it
+   reports another owner, try again each second. On the first such result
+   and every 60 seconds after it (monotonic), write `downloadinux-worker:
+   another worker holds STATE/jobs/.worker.lock; waiting`, with `STATE` the
+   `--state` value as given. A stop request during the wait ends it: the
+   worker exits 0 having opened no store and no socket.
+4. Reconcile (§5). When it marks any job, write `downloadinux-worker: marked
+   N running jobs interrupted (worker restarted)`.
+5. Unless a stop was requested, open the socket. An existing socket at the
+   path (the container's filesystem outlives a `docker restart`) is removed;
+   anything else there is a startup failure naming the path. Bind with a
+   0077 umask, set the socket's mode to 0600, listen, and write
+   `downloadinux-worker: listening on SOCKET`.
+
+The worker writes its log lines on standard output, one line each, flushed
+at once; none names a URL, user-agent, or cookie value. A startup failure
+after parsing (the throttle seam's error, a store that cannot be opened or
+reconciled, a socket that cannot be set up) prints `downloadinux: error:
+<reason>` on standard error, with an OS error as `<path>: <OS reason>`,
+closes whatever it opened, and exits 1; the Compose restart policy starts
+the container again.
+
+*Loop.* Until a stop is requested, each iteration waits at most half a
+second for a connection, serves at most one request (DEC-51), polls the
+execution library for exited runners, and runs one scheduling pass. A pass
+thus follows every request and every runner exit within half a second, and
+runs at least once a second while work is queued (DEC-47). A stop request
+ends the wait within the same bound.
+
+*Failures in the loop* (issue #74). A `DownloadinuxError` from a pass or a
+poll leaves only what the store had already committed: the worker writes
+`downloadinux-worker: scheduling failed: <reason>` or `downloadinux-worker:
+recording a runner exit failed: <reason>` and carries on, and the next
+iteration retries. A backward wall-clock step's start refusal clears on the
+next pass, which sees the deadline and sets the throttle wait, and a runner
+whose end failed stays registered for the next poll (DEC-48). A failure line
+identical to the last one written is not repeated until 60 seconds
+(monotonic) after it. A `DownloadinuxError` from a request's own operation
+becomes that request's error reply (DEC-51) and is not logged. Any other
+exception in the loop is an internal error: the worker prints `downloadinux:
+error: internal error` and the traceback on standard error, stops as below,
+and exits 1.
+
+*Stop* (§5 *Shutdown*). On a stop request or an internal error, the worker
+writes `downloadinux-worker: stopping`, closes its listening socket, and
+removes the socket path if it still names the socket it bound, so every
+later request, a submission included, finds no worker: that is how it
+refuses submissions while stopping. It then calls the execution library's
+shutdown once, closes the store, and exits 0 (1 after an internal error).
+A `DownloadinuxError` from the shutdown, whether a store failure during its
+wait (before the mark) or DEC-49's signal error (after it), is printed as
+`downloadinux: error: <reason>`; the worker then closes the store and exits
+1, and any job the mark did not record stays `running` for the next start's
+reconciliation. A failure to close the store prints the same way and exits
+1. Stop requests received while stopping change nothing.
+
+#### Client subcommands and replies (DEC-51)
+
+Settled, not yet implemented. `downloadinux.worker.main` also holds the
+client subcommands. This subsection pins `status`, `submit`, and `show`;
+the others §6's commands need (listing, cancel, retry, logs, and following)
+are pinned here before the chunk that builds them.
+
+| Subcommand | Input | Success reply |
+| --- | --- | --- |
+| `status` | no arguments | `{"version":1,"running":R,"queued":Q}`: how many jobs are in each state |
+| `submit` | no arguments; one JSON object on standard input | `{"version":1,"submission":S,"created":[{"id":I,"url":U},…],"duplicates":[…]}`, each list in the store's result order (§2) |
+| `show ID` | one job ID | `{"version":1,"job":RECORD}` |
+
+`submit`'s object has exactly the keys `preset`, `lane`, `source`,
+`revision`, `user_agent`, and `urls`: §2's submission inputs, with `lane`,
+`source`, and `revision` strings or null and `urls` an array of strings. The
+client reads at most 32 MiB from standard input, which must be UTF-8 text
+holding one JSON object with no repeated key and no `NaN` or `Infinity`;
+anything else is a usage error, `submit: standard input must be one JSON
+object`. The client passes the object on without examining its members: the
+worker validates them. URLs travel on standard input, not in the argument
+list, so a large batch meets no argument-size limit and a URL or user-agent
+that begins with `-` needs no option rules. `RECORD` holds every §2 field in
+§2's order (`id`, `submission`, `preset`, `url`, `lane`, `source`,
+`revision`, `user_agent`, `state`, `wait`, `attempt`, `cancel_requested`,
+`created_at`, `queued_at`, `started_at`, `finished_at`, `exit_status`,
+`error`), with `wait` its object or null and `cancel_requested` a boolean.
+`ID` is ASCII digits with no leading zero, from 1 to 9223372036854775807.
+
+*Exit status and output.* When the worker replied, the client prints exactly
+one JSON object on standard output and nothing on standard error: status 0
+with a success reply, 1 with an error reply, `{"version":1,"error":REASON}`.
+A usage error (status 2) prints `downloadinux: error: REASON` on standard
+error, nothing on standard output, and contacts no socket. With no
+subcommand, or an unknown one, `REASON` is `a subcommand is required: serve,
+status, submit, or show` or `unknown subcommand '<word>'; use serve, status,
+submit, or show`. `status` and `submit` refuse any argument, naming the
+first: `status: unexpected operand '<word>'`, and likewise for `submit`.
+`show` needs exactly one, `show: exactly one job ID is required`, of the
+form above, `show: job ID must be a positive integer`. `serve`'s reasons are the runner's `parse`
+messages with `serve` as the subcommand (`serve: --state is required`, and
+so on). Status 3 means the worker
+could not be reached or did not reply properly: `downloadinux: error: the
+worker is not answering: DETAIL` on standard error and nothing on standard
+output, where `DETAIL` is `SOCKET: <OS reason>` (`connection failed` when the
+OS error has no reason text), `no reply within 30 seconds`, or `unexpected
+reply`. Hosts map 3 to §1's "not answering".
+
+*Output form.* Each object is one line: JSON with non-ASCII characters
+escaped, `,` and `:` as separators without spaces, keys in the order shown,
+`version` first, then a newline. A reply is unexpected unless it is one
+UTF-8 JSON object with no repeated key whose `version` is 1 and which either
+has exactly `version` and a string `error`, or has no `error`; the client
+reprints an accepted reply in the output form.
+
+*Wire protocol.* The client connects to the socket, sends one request
+`{"version":1,"op":OP,"args":ARGS}` in the output form, and shuts down its
+sending side; the worker reads to end of file, sends one reply in the output
+form, and closes the connection. `ARGS` is `{}` for `status`, `{"id":ID}`
+for `show`, and `submit`'s object as read. Requests and replies are at most
+32 MiB. The client allows 30 seconds in all; the worker allows 10 seconds to
+read a request and 10 to send its reply, and on either timeout, or a client
+that goes away, drops the connection without a reply or a log line. The
+worker refuses with `invalid request` anything that is not one UTF-8 JSON
+object (no repeated key, no `NaN` or `Infinity`, and any exception while
+decoding counts) with exactly the keys `version`, `op`, and `args`; an
+unknown `op`; `args` not of the shape above, with each value of its JSON
+type (a boolean is not an integer); any string, key or value, that holds a
+surrogate code point; and a request over the limit. It refuses with
+`unsupported request version` an integer `version` other than 1. Values the
+store refuses carry the store's message, except an unknown `show` ID, which
+is `unknown job ID <id>`.
 
 ### 2. Job store and records
 
