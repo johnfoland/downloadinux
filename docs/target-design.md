@@ -1770,7 +1770,7 @@ connection.
 exactly once and in either order, each value the next list element and
 nonempty, and no operand. The download root is `/downloads` and the socket
 `/run/downloadinux/worker.sock`: no option, setting, or environment variable
-changes either. Tests pass other roots, the socket path, the environment
+changes either. Tests pass another download root, the socket path, the environment
 mapping, and the clocks to the service as keyword-only arguments; `main`
 never does. A usage error prints `downloadinux: error: serve: <reason>` on
 standard error and exits 2, as the runner's do (DEC-36); DEC-51 gives the
@@ -1880,14 +1880,14 @@ status, submit, or show` or `unknown subcommand '<word>'; use serve, status,
 submit, or show`. `status` and `submit` refuse any argument, naming the
 first: `status: unexpected operand '<word>'`, and likewise for `submit`.
 `show` needs exactly one, `show: exactly one job ID is required`, of the
-form above, `show: job ID must be a positive integer`. `serve`'s reasons are the runner's `parse`
-messages with `serve` as the subcommand (`serve: --state is required`, and
-so on). Status 3 means the worker
-could not be reached or did not reply properly: `downloadinux: error: the
-worker is not answering: DETAIL` on standard error and nothing on standard
-output, where `DETAIL` is `SOCKET: <OS reason>` (`connection failed` when the
-OS error has no reason text), `no reply within 30 seconds`, or `unexpected
-reply`. Hosts map 3 to §1's "not answering".
+form above, `show: job ID must be a positive integer`. `serve`'s reasons are
+the runner's `parse` messages with `serve` as the subcommand (`serve: --state
+is required`, and so on). Status 3 means the worker could not be reached or
+did not reply properly: `downloadinux: error: the worker is not answering:
+DETAIL` on standard error and nothing on standard output, where `DETAIL` is
+`SOCKET: <OS reason>` (`connection failed` when the OS error has no reason
+text), `no reply within 30 seconds`, or `unexpected reply`. Hosts map 3 to
+§1's "not answering".
 
 *Output form.* Each object is one line: JSON with non-ASCII characters
 escaped, `,` and `:` as separators without spaces, keys in the order shown,
@@ -1900,7 +1900,7 @@ reprints an accepted reply in the output form.
 `{"version":1,"op":OP,"args":ARGS}` in the output form, and shuts down its
 sending side; the worker reads to end of file, sends one reply in the output
 form, and closes the connection. `ARGS` is `{}` for `status`, `{"id":ID}`
-for `show`, and `submit`'s object as read. Requests and replies are at most
+for `show` (an integer in `ID`'s range), and `submit`'s object as read. Requests and replies are at most
 32 MiB. The client allows 30 seconds in all; the worker allows 10 seconds to
 read a request and 10 to send its reply, and on either timeout, or a client
 that goes away, drops the connection without a reply or a log line. The
