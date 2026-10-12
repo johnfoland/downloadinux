@@ -8,12 +8,13 @@ call its lifecycle operations.
 from contextlib import contextmanager
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import errno
 import fcntl
 import json
 import os
 from pathlib import Path
+import random
 import sqlite3
 import stat
 from typing import Callable
@@ -56,6 +57,7 @@ SCHEMA = (
         WHERE state IN ('queued', 'running')''',
 )
 TIMESTAMP_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+THROTTLE_SECONDS = (120, 289)  # §4: inclusive bounds of a lane's delay (DEC-6, DEC-43)
 TABLE_COLUMNS = {
     'submissions': {'id': 'INTEGER', 'created_at': 'TEXT'},
     'jobs': {name: ('INTEGER' if name in ('id', 'submission', 'attempt', 'cancel_requested',
@@ -125,6 +127,23 @@ class QueueHead:
     next_start_at: str | None
 
 
+CANCELLED, SIGNAL, REFUSED, UNKNOWN = 'cancelled', 'signal', 'refused', 'unknown'
+
+
+@dataclass(frozen=True)
+class CancelOutcome:
+    """One ID's cancel outcome (§5 *Cancel*).
+
+    `outcome` is CANCELLED (a queued job ended), SIGNAL (a running job's
+    cancel was requested; the worker signals its runner after the commit),
+    REFUSED (a finished job, `state` naming its state), or UNKNOWN. `state`
+    is the job's state after the call, None when unknown.
+    """
+    id: int
+    outcome: str
+    state: str | None
+
+
 def _positive_id(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise DownloadinuxError('job or submission ID must be a positive integer')
@@ -184,6 +203,17 @@ def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tu
             raise DownloadinuxError('submission URLs must be nonempty strings without CR, LF, or NUL')
     _validate_selection(source, revision, user_agent)
     return urls
+
+
+def _job_ids(job_ids, operation: str) -> tuple[int, ...]:
+    """A nonempty ordered sequence of positive IDs; repeats collapse to the first."""
+    if not isinstance(job_ids, Sequence) or isinstance(job_ids, (str, bytes, bytearray)) or not job_ids:
+        raise DownloadinuxError(f'{operation} requires a nonempty ordered sequence of job IDs')
+    return tuple(dict.fromkeys(_positive_id(job_id) for job_id in job_ids))
+
+
+def _default_delay() -> int:
+    return random.randint(*THROTTLE_SECONDS)
 
 
 def _os_error(path: Path, error: OSError) -> DownloadinuxError:
@@ -282,11 +312,12 @@ class JobStore:
     """An open connection whose lifetime is enclosed by worker ownership."""
 
     def __init__(self, path: Path, connection: sqlite3.Connection, lock_fd: int,
-                 clock: Callable[[], datetime]):
+                 clock: Callable[[], datetime], delay: Callable[[], int] = _default_delay):
         self.path = path
         self._connection = connection
         self._lock_fd = lock_fd
         self._clock = clock
+        self._delay = delay
         self._closed = False
 
     def __enter__(self):
@@ -452,6 +483,114 @@ class JobStore:
             c.execute('UPDATE jobs SET wait=? WHERE id=?', (wait, job_id))
             return self._job(c, job_id)
 
+    def end(self, job_id: int, *, exit_status: int | None = None, launch_failure: str | None = None,
+            stopping: bool = False) -> JobRecord:
+        """End a running job (§5 *End*, §3's rows in order); return its record.
+
+        Takes the runner's exit status (0 to 255) or a launch-failure reason,
+        never both, and whether the worker is stopping. A lane job draws its
+        lane's deadline in the same transaction (§5 *Lane deadline*). Raises
+        `DownloadinuxError`, changing nothing, unless the job is running.
+        """
+        job_id = _positive_id(job_id)
+        if (exit_status is None) == (launch_failure is None):
+            raise DownloadinuxError('ending a job takes either an exit status or a launch-failure reason')
+        if exit_status is not None and (type(exit_status) is not int or not 0 <= exit_status <= 255):
+            raise DownloadinuxError('job exit status must be an integer from 0 to 255')
+        if launch_failure is not None and (type(launch_failure) is not str or not launch_failure
+                                           or '\0' in launch_failure):
+            raise DownloadinuxError('job launch-failure reason must be a nonempty string without NUL')
+        if type(stopping) is not bool:
+            raise DownloadinuxError('job end stopping flag must be a boolean')
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'running':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a running job can end')
+            # The first matching row of §3 applies.
+            if launch_failure is not None:
+                state, error = 'failed', launch_failure
+            elif exit_status == 0:
+                state, error = 'succeeded', None
+            elif job.cancel_requested:
+                state, error = 'cancelled', None
+            elif stopping:
+                state, error = 'interrupted', 'worker stopped'
+            else:
+                state, error = 'failed', None
+            c.execute('UPDATE jobs SET state=?, finished_at=?, exit_status=?, error=? WHERE id=?',
+                      (state, now, exit_status, error, job_id))
+            if job.lane is not None:
+                self._draw_deadline(c, job.lane, now)
+            return self._job(c, job_id)
+
+    def cancel(self, job_ids: Sequence[int]) -> tuple[CancelOutcome, ...]:
+        """Cancel jobs in one transaction, one outcome per ID in order (§5 *Cancel*).
+
+        Repeats collapse to the first. A queued job becomes `cancelled` and
+        draws no lane delay (DEC-46); a running job gets `cancel_requested`
+        (again, if already set) and a SIGNAL outcome. Refused and unknown IDs
+        are returned, not raised, and change nothing.
+        """
+        job_ids = _job_ids(job_ids, 'cancel')
+        now = _timestamp(self._clock)
+        outcomes = []
+        with self._transaction() as c:
+            for job_id in job_ids:
+                row = c.execute('SELECT state FROM jobs WHERE id=?', (job_id,)).fetchone()
+                if row is None:
+                    outcomes.append(CancelOutcome(job_id, UNKNOWN, None))
+                elif row[0] == 'queued':
+                    c.execute("UPDATE jobs SET state='cancelled', cancel_requested=1, finished_at=?, wait=NULL"
+                              ' WHERE id=?', (now, job_id))
+                    outcomes.append(CancelOutcome(job_id, CANCELLED, 'cancelled'))
+                elif row[0] == 'running':
+                    c.execute('UPDATE jobs SET cancel_requested=1 WHERE id=?', (job_id,))
+                    outcomes.append(CancelOutcome(job_id, SIGNAL, 'running'))
+                else:
+                    outcomes.append(CancelOutcome(job_id, REFUSED, row[0]))
+        return tuple(outcomes)
+
+    def reconcile(self) -> tuple[int, ...]:
+        """Worker start: mark running jobs `interrupted` with `worker restarted`.
+
+        Also clears every queued job's wait (§5 *Interrupted marks*, DEC-46).
+        Returns the marked IDs in ID order. `open_store` never calls this.
+        """
+        return self._mark_interrupted('worker restarted', clear_waits=True)
+
+    def mark_stopped(self) -> tuple[int, ...]:
+        """Shutdown's final mark: running jobs become `interrupted` with `worker stopped`.
+
+        Queued waits are untouched. Returns the marked IDs in ID order.
+        """
+        return self._mark_interrupted('worker stopped', clear_waits=False)
+
+    def _mark_interrupted(self, error: str, *, clear_waits: bool) -> tuple[int, ...]:
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            running = c.execute("SELECT id, lane FROM jobs WHERE state='running' ORDER BY id").fetchall()
+            for job_id, lane in running:
+                c.execute("UPDATE jobs SET state='interrupted', finished_at=?, exit_status=NULL, error=?"
+                          ' WHERE id=?', (now, error, job_id))
+                if lane is not None:
+                    self._draw_deadline(c, lane, now)
+            if clear_waits:
+                c.execute("UPDATE jobs SET wait=NULL WHERE state='queued'")
+        return tuple(job_id for job_id, _ in running)
+
+    def _draw_deadline(self, c: sqlite3.Connection, lane: str, finished_at: str) -> None:
+        """Inside the ending transaction, so a crash cannot skip a throttle (DEC-46)."""
+        delay = self._delay()
+        if type(delay) is not int or delay < 0:
+            raise DownloadinuxError('job-store delay source must return a nonnegative integer')
+        try:
+            deadline = (datetime.strptime(finished_at, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+                        + timedelta(seconds=delay)).strftime(TIMESTAMP_FORMAT)
+        except OverflowError:
+            raise DownloadinuxError('job-store delay is out of range') from None
+        c.execute('UPDATE lanes SET next_start_at=? WHERE preset=?', (deadline, lane))
+
     def _job(self, c: sqlite3.Connection, job_id: int) -> JobRecord:
         row = c.execute('SELECT ' + ', '.join(RECORD_FIELDS) + ' FROM jobs WHERE id=?', (job_id,)).fetchone()
         if row is None:
@@ -497,6 +636,8 @@ class JobStore:
                 raise _sqlite_error(self.path, error) from None
             if isinstance(error, UnicodeError):
                 raise DownloadinuxError(f'{self.path}: SQLite text encoding failed') from None
+            if isinstance(error, OverflowError):
+                raise DownloadinuxError(f'{self.path}: SQLite integer out of range') from None
             raise
 
     def _initialize(self) -> None:
@@ -539,9 +680,13 @@ class JobStore:
             raise DownloadinuxError(f'{self.path}: damaged job store')
 
 
-def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
-               ) -> JobStore | Busy:
-    """Try nonblocking ownership, then open/initialize. Never create state."""
+def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+               delay: Callable[[], int] = _default_delay) -> JobStore | Busy:
+    """Try nonblocking ownership, then open/initialize. Never create state.
+
+    `delay` draws a lane's throttle delay in whole seconds (§4, §5 *Lane
+    deadline*); tests inject it.
+    """
     state = Path(state)
     path = state / DIRECTORY
     lock_fd = None
@@ -580,7 +725,7 @@ def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.
         if (connection.execute('PRAGMA synchronous').fetchone() != (2,)
                 or connection.execute('PRAGMA foreign_keys').fetchone() != (1,)):
             raise DownloadinuxError(f'{current_path}: SQLite durability settings unavailable')
-        store = JobStore(current_path, connection, lock_fd, clock)
+        store = JobStore(current_path, connection, lock_fd, clock, delay)
         store._initialize()
         # Close directory handles before transferring the connection/owner, so
         # a failed directory close still takes the failed-open cleanup path.

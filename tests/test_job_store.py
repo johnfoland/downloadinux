@@ -20,7 +20,8 @@ NOW = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
 
 
 def open_store(root, **kwargs):
-    store = js.open_store(root, clock=kwargs.get('clock', lambda: NOW))
+    kwargs.setdefault('clock', lambda: NOW)
+    store = js.open_store(root, **kwargs)
     assert isinstance(store, js.JobStore)
     return store
 
@@ -893,3 +894,258 @@ def test_wait_refusals_change_nothing(tmp_path, case):
             with pytest.raises(DownloadinuxError, match=expected):
                 store.set_wait(job, reason)
         assert snapshot(store) == before
+
+
+def running_job(store, *, lane='video', cancel_requested=False, url='one'):
+    job = store.submit('video', [url], lane=lane).created[0].id
+    store.start(job)
+    if cancel_requested:
+        sql(store, 'UPDATE jobs SET cancel_requested=1 WHERE id=?', job)
+    return job
+
+
+END_TABLE = [
+    (status, cancel, stopping)
+    for status in (0, 1, 143, 255, 'launch') for cancel in (False, True) for stopping in (False, True)
+]
+
+
+def expected_end(status, cancel, stopping):
+    if status == 'launch':
+        return 'failed', 'runner could not start', None
+    if status == 0:
+        return 'succeeded', None, 0
+    if cancel:
+        return 'cancelled', None, status
+    if stopping:
+        return 'interrupted', 'worker stopped', status
+    return 'failed', None, status
+
+
+@pytest.mark.parametrize('lane', ['video', None])
+@pytest.mark.parametrize('status,cancel,stopping', END_TABLE)
+def test_end_precedence_table(tmp_path, lane, status, cancel, stopping):
+    clock = [NOW]
+    delay = (lambda: 150) if lane else (lambda: pytest.fail('immediate job drew a delay'))
+    with open_store(tmp_path, clock=lambda: clock[0], delay=delay) as store:
+        job = running_job(store, lane=lane, cancel_requested=cancel)
+        clock[0] = datetime(2026, 10, 11, 12, 30, tzinfo=timezone.utc)
+        before = store.get(job)
+        arguments = (dict(launch_failure='runner could not start') if status == 'launch'
+                     else dict(exit_status=status))
+        ended = store.end(job, stopping=stopping, **arguments)
+        state, error, exit_status = expected_end(status, cancel, stopping)
+        assert asdict(ended) == dict(asdict(before), state=state, error=error, exit_status=exit_status,
+                                     finished_at='2026-10-11T12:30:00Z')
+        deadline = sql(store, "SELECT next_start_at FROM lanes WHERE preset='video'")[0][0]
+        assert deadline == ('2026-10-11T12:32:30Z' if lane else None)
+    with open_store(tmp_path) as store:
+        assert store.get(job) == ended
+
+
+@pytest.mark.parametrize('state', ['queued', 'succeeded', 'failed', 'cancelled', 'interrupted'])
+def test_end_refuses_unless_running(tmp_path, state):
+    with open_store(tmp_path, delay=lambda: pytest.fail('drew a delay')) as store:
+        job = store.submit('video', ['one'], lane='video').created[0].id
+        sql(store, 'UPDATE jobs SET state=? WHERE id=?', state, job)
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match=f'job {job} is {state}; only a running job can end'):
+            store.end(job, exit_status=0)
+        assert snapshot(store) == before
+
+
+@pytest.mark.parametrize('arguments', [
+    dict(), dict(exit_status=0, launch_failure='both'), dict(exit_status=True), dict(exit_status=False),
+    dict(exit_status=-1), dict(exit_status=256), dict(exit_status=1.0), dict(exit_status='0'),
+    dict(launch_failure=''), dict(launch_failure='bad\0'), dict(launch_failure=b'bytes'),
+    dict(launch_failure=True), dict(exit_status=1, stopping=1), dict(exit_status=1, stopping=None)])
+def test_end_input_validation_changes_nothing(tmp_path, arguments):
+    with open_store(tmp_path, delay=lambda: pytest.fail('drew a delay')) as store:
+        job = running_job(store)
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError):
+            store.end(job, **arguments)
+        assert snapshot(store) == before
+        with pytest.raises(DownloadinuxError, match='positive integer'):
+            store.end(True, exit_status=0)
+        with pytest.raises(DownloadinuxError, match='unknown job ID 9'):
+            store.end(9, exit_status=0)
+
+
+def test_default_delay_bounds(monkeypatch):
+    import random
+    rng = random.Random(46)
+    monkeypatch.setattr(js.random, 'randint', rng.randint)
+    draws = [js._default_delay() for _ in range(5000)]
+    assert min(draws) == 120 and max(draws) == 289
+    assert all(type(d) is int for d in draws)
+    calls = []
+    monkeypatch.setattr(js.random, 'randint', lambda a, b: calls.append((a, b)) or a)
+    assert js._default_delay() == 120 and calls == [(120, 289)]
+
+
+def test_default_delay_lands_within_bounds_through_end(tmp_path):
+    with open_store(tmp_path) as store:
+        assert store._delay is js._default_delay
+        job = running_job(store)
+        store.end(job, exit_status=0)
+        deadline = datetime.strptime(sql(store, "SELECT next_start_at FROM lanes WHERE preset='video'")[0][0],
+                                     js.TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+        assert 120 <= (deadline - NOW).total_seconds() <= 289
+
+
+@pytest.mark.parametrize('draw', ['raise', 'str', 'bool', 'negative', 'float', 'none', 'overflow'])
+def test_failed_draw_leaves_job_running_and_lane_unchanged(tmp_path, draw):
+    def source():
+        if draw == 'raise':
+            raise RuntimeError('delay source failed')
+        return {'str': '150', 'bool': True, 'negative': -1, 'float': 150.0, 'none': None,
+                'overflow': 10 ** 12}[draw]
+    with open_store(tmp_path, delay=source) as store:
+        job = running_job(store)
+        set_lane_deadline(store, 'video', '2026-10-11T11:00:00Z')
+        before = snapshot(store)
+        for call in (lambda: store.end(job, exit_status=1), lambda: store.reconcile(),
+                     lambda: store.mark_stopped()):
+            with pytest.raises(RuntimeError if draw == 'raise' else DownloadinuxError):
+                call()
+            assert snapshot(store) == before
+            assert not store._connection.in_transaction
+    with open_store(tmp_path) as store:
+        assert store.get(job).state == 'running'
+        assert sql(store, "SELECT next_start_at FROM lanes WHERE preset='video'") == [('2026-10-11T11:00:00Z',)]
+
+
+@pytest.mark.parametrize('operation', ['end', 'cancel', 'reconcile', 'mark_stopped', 'start', 'set_wait'])
+@pytest.mark.parametrize('failure', ['trigger', 'deferred-commit'])
+def test_real_sqlite_failures_roll_back_lifecycle_operations(tmp_path, operation, failure):
+    with open_store(tmp_path, delay=lambda: 150) as store:
+        c = store._connection
+        queued = store.submit('video', ['queued'], lane='video').created[0].id
+        immediate = store.submit('gallery', ['running']).created[0].id
+        lane_running = store.submit('gallery', ['lane'], lane='gallery').created[0].id
+        store.start(immediate)
+        store.start(lane_running)
+        store.set_wait(queued, 'vpn')
+        if failure == 'trigger':
+            # The lane update is the last write of end and the marks; jobs for the rest.
+            target = 'lanes' if operation in ('end', 'reconcile', 'mark_stopped') else 'jobs'
+            c.execute(f'''CREATE TRIGGER fail_update AFTER UPDATE ON {target}
+                          BEGIN SELECT RAISE(ABORT, 'SENTINEL secret'); END''')
+        else:
+            c.execute('''CREATE TABLE deferred_failure (submission INTEGER REFERENCES submissions(id)
+                         DEFERRABLE INITIALLY DEFERRED)''')
+            c.execute('''CREATE TRIGGER fail_commit AFTER UPDATE ON jobs
+                         BEGIN INSERT INTO deferred_failure VALUES(-1); END''')
+        before = snapshot(store)
+        call = {'end': lambda: store.end(lane_running, exit_status=1),
+                'cancel': lambda: store.cancel([queued, immediate]),
+                'reconcile': store.reconcile, 'mark_stopped': store.mark_stopped,
+                'start': lambda: store.start(queued), 'set_wait': lambda: store.set_wait(queued, None)}[operation]
+        with pytest.raises(DownloadinuxError, match='jobs.sqlite3: SQLite') as error:
+            call()
+        assert 'SENTINEL' not in str(error.value)
+        assert snapshot(store) == before
+        assert not c.in_transaction
+
+
+def test_cancel_every_outcome_order_and_repeats(tmp_path):
+    clock = [NOW]
+    with open_store(tmp_path, clock=lambda: clock[0], delay=lambda: pytest.fail('drew a delay')) as store:
+        queued = store.submit('video', ['queued'], lane='video').created[0].id
+        store.set_wait(queued, 'vpn')
+        running = running_job(store, lane=None, url='running')
+        requested = running_job(store, lane=None, url='requested', cancel_requested=True)
+        finished = {}
+        for state in ('succeeded', 'failed', 'cancelled', 'interrupted'):
+            finished[state] = store.submit('video', [state]).created[0].id
+            sql(store, 'UPDATE jobs SET state=? WHERE id=?', state, finished[state])
+        clock[0] = datetime(2026, 10, 11, 12, 10, tzinfo=timezone.utc)
+        before = {job.id: job for job in store.list()}
+        lanes = sql(store, 'SELECT * FROM lanes')
+        ids = [running, 999, queued, finished['succeeded'], running, requested, finished['failed'],
+               queued, finished['cancelled'], finished['interrupted']]
+        outcomes = store.cancel(ids)
+        assert [(o.id, o.outcome, o.state) for o in outcomes] == [
+            (running, js.SIGNAL, 'running'), (999, js.UNKNOWN, None), (queued, js.CANCELLED, 'cancelled'),
+            (finished['succeeded'], js.REFUSED, 'succeeded'), (requested, js.SIGNAL, 'running'),
+            (finished['failed'], js.REFUSED, 'failed'), (finished['cancelled'], js.REFUSED, 'cancelled'),
+            (finished['interrupted'], js.REFUSED, 'interrupted')]
+        assert asdict(store.get(queued)) == dict(asdict(before[queued]), state='cancelled', cancel_requested=True,
+                                                 finished_at='2026-10-11T12:10:00Z', wait=None)
+        for job in (running, requested):
+            assert asdict(store.get(job)) == dict(asdict(before[job]), cancel_requested=True)
+        for job in finished.values():
+            assert store.get(job) == before[job]
+        assert sql(store, 'SELECT * FROM lanes') == lanes
+        # Cancelling a running job again is repeatable.
+        assert [(o.outcome, o.state) for o in store.cancel([running])] == [(js.SIGNAL, 'running')]
+    with open_store(tmp_path) as store:
+        assert store.get(queued).state == 'cancelled'
+        assert store.get(running).cancel_requested is True
+
+
+@pytest.mark.parametrize('invalid', [[], (), 'ab', b'1', {1}, (i for i in [1]), [1, 0], [1, True], [1, '2'],
+                                     [None], 1, None])
+def test_cancel_input_validation_changes_nothing(tmp_path, invalid):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'])
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match='job IDs|positive integer'):
+            store.cancel(invalid)
+        assert snapshot(store) == before
+
+
+def test_huge_ids_are_safe_errors(tmp_path):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'])
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match='jobs.sqlite3: SQLite integer out of range'):
+            store.cancel([1, 2 ** 100])
+        assert snapshot(store) == before
+
+
+@pytest.mark.parametrize('mark,error,clears', [('reconcile', 'worker restarted', True),
+                                               ('mark_stopped', 'worker stopped', False)])
+def test_interrupted_marks(tmp_path, mark, error, clears):
+    clock = [NOW]
+    draws = []
+    def delay():
+        draws.append(len(draws))
+        return 200 + len(draws)
+    with open_store(tmp_path, clock=lambda: clock[0], delay=delay) as store:
+        immediate = running_job(store, lane=None, url='immediate')
+        video = running_job(store, lane='video', url='video', cancel_requested=True)
+        gallery = store.submit('gallery', ['gallery'], lane='gallery').created[0].id
+        store.start(gallery)
+        waiting = store.submit('video', ['waiting'], lane='video').created[0].id
+        store.set_wait(waiting, 'vpn')
+        done = store.submit('video', ['done']).created[0].id
+        sql(store, "UPDATE jobs SET state='succeeded' WHERE id=?", done)
+        before = {job.id: job for job in store.list()}
+        clock[0] = datetime(2026, 10, 11, 13, 0, tzinfo=timezone.utc)
+        assert getattr(store, mark)() == (immediate, video, gallery)
+        assert len(draws) == 2  # lane jobs only
+        for job in (immediate, video, gallery):
+            assert asdict(store.get(job)) == dict(asdict(before[job]), state='interrupted', error=error,
+                                                  exit_status=None, finished_at='2026-10-11T13:00:00Z')
+        assert sql(store, 'SELECT * FROM lanes ORDER BY preset') == [
+            ('gallery', '2026-10-11T13:03:22Z'), ('video', '2026-10-11T13:03:21Z')]
+        assert store.get(waiting).wait == (None if clears else {'reason': 'vpn'})
+        assert store.get(done) == before[done]
+        saved = store.list()
+        assert getattr(store, mark)() == ()
+        assert len(draws) == 2
+    with open_store(tmp_path) as store:
+        assert store.list() == saved
+
+
+def test_open_store_leaves_running_jobs_and_waits(tmp_path):
+    with open_store(tmp_path) as store:
+        job = running_job(store)
+        waiting = store.submit('gallery', ['waiting'], lane='gallery').created[0].id
+        store.set_wait(waiting, 'vpn')
+        saved = snapshot(store)
+    with open_store(tmp_path) as store:
+        assert snapshot(store) == saved
+        assert store.get(job).state == 'running'
