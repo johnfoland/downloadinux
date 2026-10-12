@@ -39,6 +39,9 @@ RETRY = 1  # seconds between ownership attempts while another worker holds the l
 REPEAT = 60  # seconds before the waiting line, or an identical failure line, repeats
 SERVER_TIMEOUT = 10  # seconds to read a request, and again to send its reply
 CLIENT_TIMEOUT = 30  # seconds a client allows in all (DEC-51 *Wire protocol*)
+MAX_ID = 9223372036854775807  # SQLite's largest integer key
+SUBMIT_KEYS = ('preset', 'lane', 'source', 'revision', 'user_agent', 'urls')  # §2's submission inputs
+SUBMIT_USAGE = 'submit: standard input must be one JSON object'
 INVALID = 'invalid request'
 UNSUPPORTED = 'unsupported request version'
 
@@ -64,14 +67,20 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
         command, rest = _subcommand(argv)
         if command == 'serve':
             cookies, state = parse_serve(rest)
+        elif command == 'show':
+            args = {'id': parse_show(rest)}
         elif rest:
             raise ConfigError(f'{command}: unexpected operand {rest[0]!r}')
+        elif command == 'submit':
+            args = read_submission(sys.stdin)
+        else:
+            args = {}
     except ConfigError as error:
         _error(str(error))
         return 2
     if command == 'serve':
         return serve(cookies, state, socket_path=socket_path, **service)
-    return request(socket_path, 'status', {}, timeout=timeout)
+    return request(socket_path, command, args, timeout=timeout)
 
 
 def _subcommand(argv: list[str]) -> tuple[str, list[str]]:
@@ -108,6 +117,35 @@ def parse_serve(rest: list[str]) -> tuple[str, str]:
     if index < len(rest):
         raise ConfigError(f'serve: unexpected operand {rest[index]!r}')
     return options['--cookies'], options['--state']
+
+
+def parse_show(rest: list[str]) -> int:
+    """One job ID: ASCII digits, no leading zero, from 1 to 9223372036854775807 (DEC-51)."""
+    if len(rest) != 1:
+        raise ConfigError('show: exactly one job ID is required')
+    word = rest[0]
+    if (not word or word[0] not in '123456789' or any(char not in '0123456789' for char in word)
+            or len(word) > len(str(MAX_ID)) or int(word) > MAX_ID):
+        raise ConfigError('show: job ID must be a positive integer')
+    return int(word)
+
+
+def read_submission(stdin) -> dict:
+    """`submit`'s standard input: at most LIMIT bytes of one strict UTF-8 JSON object.
+
+    Its members are not examined: the worker validates them (DEC-51).
+    Anything else, a read failure included, is a usage error.
+    """
+    try:
+        data = stdin.buffer.read(LIMIT + 1)
+        if len(data) > LIMIT:
+            raise ValueError('over the limit')
+        value = decode(data)
+    except Exception:
+        raise ConfigError(SUBMIT_USAGE) from None
+    if type(value) is not dict:
+        raise ConfigError(SUBMIT_USAGE)
+    return value
 
 
 def _error(reason: str) -> None:
@@ -549,12 +587,40 @@ class _Service:
             return {'version': VERSION, 'error': str(refusal)}
 
     def _operations(self) -> dict[str, Callable[[dict], dict]]:
-        return {'status': self._status}
+        return {'status': self._status, 'submit': self._submit, 'show': self._show}
 
     def _status(self, args: dict) -> dict:
         if args:
             raise _Refused(INVALID)
         return {'running': len(self.store.list(state='running')), 'queued': len(self.store.list(state='queued'))}
+
+    def _submit(self, args: dict) -> dict:
+        """Exactly §2's six inputs with their JSON types; the store validates their values."""
+        if (set(args) != set(SUBMIT_KEYS) or type(args['preset']) is not str
+                or type(args['user_agent']) is not str
+                or any(args[key] is not None and type(args[key]) is not str
+                       for key in ('lane', 'source', 'revision'))
+                or type(args['urls']) is not list or any(type(url) is not str for url in args['urls'])):
+            raise _Refused(INVALID)
+        result = self.store.submit(args['preset'], args['urls'], lane=args['lane'], source=args['source'],
+                                   revision=args['revision'], user_agent=args['user_agent'])
+        return {'submission': result.submission,
+                'created': [{'id': job.id, 'url': job.url} for job in result.created],
+                'duplicates': [{'id': job.id, 'url': job.url} for job in result.duplicates]}
+
+    def _show(self, args: dict) -> dict:
+        """One record with every §2 field in §2's order."""
+        if set(args) != {'id'} or not _is_int(args['id']) or not 1 <= args['id'] <= MAX_ID:
+            raise _Refused(INVALID)
+        job_id = args['id']
+        try:
+            record = self.store.get(job_id)
+        except DownloadinuxError as error:
+            # The store names its database; the reply names only the ID (DEC-51).
+            if str(error) == f'{self.store.path}: unknown job ID {job_id}':
+                raise _Refused(f'unknown job ID {job_id}') from None
+            raise
+        return {'job': {field: getattr(record, field) for field in job_store.RECORD_FIELDS}}
 
     # Stop (DEC-50 *Stop*, §5 *Shutdown*).
 

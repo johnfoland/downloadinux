@@ -936,3 +936,301 @@ def test_a_stop_before_the_socket_opens_still_shuts_down(rig, inprocess, monkeyp
     assert inprocess.run(lambda: None) == 0
     assert inprocess.lines == [STOPPING]
     assert not rig.socket.exists()
+
+
+# submit and show end to end (DEC-51; §2).
+
+ALPHA = '1' * 32
+
+
+def submission(urls, *, preset='video', lane=None, source=None, revision=None, user_agent=UA, **extra):
+    value = dict(preset=preset, lane=lane, source=source, revision=revision, user_agent=user_agent, urls=urls)
+    value.update(extra)
+    return value
+
+
+def submit(rig, value, **kwargs):
+    stdin = value if isinstance(value, bytes) else json.dumps(value).encode()
+    return rig.client('submit', stdin=stdin, **kwargs)
+
+
+def show(rig, job_id):
+    result = rig.client('show', str(job_id))
+    assert result.stderr == b''
+    return result
+
+
+def shown(rig, job_id):
+    result = show(rig, job_id)
+    assert result.returncode == 0
+    return json.loads(result.stdout)['job']
+
+
+def settled(rig, job_id, states=('succeeded', 'failed', 'cancelled', 'interrupted')):
+    wait_for(lambda: shown(rig, job_id)['state'] in states)
+    return shown(rig, job_id)
+
+
+def test_an_immediate_submission_runs_and_show_prints_its_record_byte_for_byte(rig):
+    serve = rig.start().listening()
+    result = submit(rig, submission(['output'], preset='gallery', source='alpha', revision=ALPHA,
+                                    user_agent='Mozilla/5.0 café'))
+    assert (result.returncode, result.stderr) == (0, b'')
+    assert result.stdout == b'{"version":1,"submission":1,"created":[{"id":1,"url":"output"}],"duplicates":[]}\n'
+    record = settled(rig, 1)
+    out = show(rig, 1).stdout
+    assert out == (
+        '{"version":1,"job":{"id":1,"submission":1,"preset":"gallery","url":"output","lane":null,'
+        f'"source":"alpha","revision":"{ALPHA}","user_agent":"Mozilla/5.0 caf\\u00e9","state":"succeeded",'
+        '"wait":null,"attempt":1,"cancel_requested":false,'
+        f'"created_at":"{record["created_at"]}","queued_at":"{record["queued_at"]}",'
+        f'"started_at":"{record["started_at"]}","finished_at":"{record["finished_at"]}",'
+        '"exit_status":0,"error":null}}\n').encode()
+    assert list(record) == list(js.RECORD_FIELDS)
+    log = rig.state / 'jobs' / 'logs' / '1-1.log'
+    assert log.read_bytes() == b'out-1\nerr-1 \xff\xfe\nout-2 \x80err-2\n'
+    assert rig.record('output')['argv'][1:] == [
+        'download', '--cookies', str(rig.cookies), '--state', str(rig.state), '--source', 'alpha',
+        '--revision', ALPHA, '--user-agent', 'Mozilla/5.0 café', 'gallery', 'output']
+    assert serve.stop() == 0
+    assert serve.lines() == [LISTENING.format(rig.socket), STOPPING]
+
+
+def test_a_lane_submission_runs_its_urls_in_order(rig):
+    serve = rig.start().listening()
+    result = submit(rig, submission(['wait=a', 'exit=0,n=2'], lane='video'))
+    assert json.loads(result.stdout) == {'version': 1, 'submission': 1, 'created': [
+        {'id': 1, 'url': 'wait=a'}, {'id': 2, 'url': 'exit=0,n=2'}], 'duplicates': []}
+    rig.record('wait=a')
+    time.sleep(1.2)  # passes run, but the lane runs one job at a time
+    assert [r['url'] for r in rig.records()] == ['wait=a']
+    assert rig.client('status').stdout == b'{"version":1,"running":1,"queued":1}\n'
+    rig.release('a')
+    first, second = settled(rig, 1), settled(rig, 2)
+    assert (first['state'], second['state']) == ('succeeded', 'succeeded')
+    assert second['started_at'] >= first['finished_at']
+    assert serve.stop() == 0
+
+
+def test_duplicates_are_reported_as_the_store_reports_them(rig):
+    serve = rig.start().listening()
+    first = submit(rig, submission(['wait=a', 'wait=a', 'exit=0,n=1', 'wait=a'], lane='video'))
+    assert first.stdout == (b'{"version":1,"submission":1,"created":[{"id":1,"url":"wait=a"},'
+                            b'{"id":2,"url":"exit=0,n=1"}],"duplicates":[]}\n')
+    rig.record('wait=a')
+    again = submit(rig, submission(['exit=0,n=3', 'wait=a', 'exit=0,n=1']))
+    assert again.stdout == (b'{"version":1,"submission":2,"created":[{"id":3,"url":"exit=0,n=3"}],'
+                            b'"duplicates":[{"id":1,"url":"wait=a"},{"id":2,"url":"exit=0,n=1"}]}\n')
+    other_preset = submit(rig, submission(['wait=a'], preset='gallery', lane='gallery'))
+    assert json.loads(other_preset.stdout)['created'] == [{'id': 4, 'url': 'wait=a'}]
+    rig.release()
+    assert serve.stop() == 0
+
+
+def test_a_failing_runner_fails_its_job(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['exit=3']))
+    record = settled(rig, 1)
+    assert (record['state'], record['exit_status'], record['error']) == ('failed', 3, None)
+    assert serve.stop() == 0
+
+
+def test_a_restart_interrupts_the_running_job_and_its_lane_continues(rig):
+    """D2: SIGKILL the worker mid-job; the next start reconciles and the lane runs on."""
+    serve = rig.start().listening()
+    submit(rig, submission(['wait=a', 'exit=0,n=2'], lane='video'))
+    fixture = rig.record('wait=a')
+    serve.process.kill()
+    serve.process.wait(30)
+    os.kill(fixture['pid'], signal.SIGKILL)
+    assert rig.socket.exists()  # a killed worker leaves its socket behind
+    again = rig.start().listening()
+    assert again.lines() == ['downloadinux-worker: marked 1 running jobs interrupted (worker restarted)',
+                             LISTENING.format(rig.socket)]
+    interrupted = shown(rig, 1)
+    assert (interrupted['state'], interrupted['error'], interrupted['exit_status']) == (
+        'interrupted', 'worker restarted', None)
+    second = settled(rig, 2)
+    assert second['state'] == 'succeeded'
+    assert second['started_at'] >= interrupted['finished_at']
+    assert again.stop() == 0
+
+
+SUBMIT_USAGE = b'downloadinux: error: submit: standard input must be one JSON object\n'
+
+
+@pytest.mark.parametrize('stdin', [
+    b'',
+    b'   ',
+    b'\xff{}',
+    b'{"preset":"\xc3"}',
+    b'[]',
+    b'null',
+    b'"text"',
+    b'{"a":1,"a":2}',
+    b'{"a":NaN}',
+    b'{"a":-Infinity}',
+    b'{"a":1e999}',
+    b'{} {}',
+    b'{}\n{}',
+    b'\xef\xbb\xbf{}',
+    b'{"a":' + b'[' * 100000 + b']' * 100000 + b'}',
+    b' ' * worker.LIMIT + b'{}',
+], ids=range(16))
+def test_submit_refuses_bad_standard_input_without_contacting_the_socket(rig, stdin):
+    result = submit(rig, stdin)  # no listener: contacting the socket would exit 3
+    assert (result.returncode, result.stdout, result.stderr) == (2, b'', SUBMIT_USAGE)
+
+
+def test_submit_reads_exactly_the_limit(rig, capsys, monkeypatch):
+    """A 32 MiB object is read and sent; the client never examines its members."""
+    value = b'{"pad":"' + b'x' * (worker.LIMIT - 10) + b'"}'
+    assert len(value) == worker.LIMIT
+    sent = []
+    monkeypatch.setattr(worker, 'request', lambda path, op, args, timeout: sent.append((op, args)) or 0)
+
+    class Stdin:
+        buffer = __import__('io').BytesIO(value)
+    monkeypatch.setattr(sys, 'stdin', Stdin)
+    assert worker.run(['submit'], socket_path=rig.socket) == 0
+    assert sent[0][0] == 'submit' and len(sent[0][1]['pad']) == worker.LIMIT - 10
+
+
+def test_submit_with_no_standard_input_is_a_usage_error(rig, capsys, monkeypatch):
+    monkeypatch.setattr(sys, 'stdin', None)
+    assert worker.run(['submit'], socket_path=rig.socket) == 2
+    assert capsys.readouterr() == ('', SUBMIT_USAGE.decode())
+
+
+def test_submit_refuses_an_operand(rig):
+    result = rig.client('submit', '-', stdin=b'{}')
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2, b'', b"downloadinux: error: submit: unexpected operand '-'\n")
+
+
+@pytest.mark.parametrize('value, reason', [
+    (submission([]), 'submission URLs must be a nonempty ordered sequence'),
+    (submission(['https://a.invalid/\r']), 'submission URLs must be nonempty strings without CR, LF, or NUL'),
+    (submission(['https://a.invalid/\n']), 'submission URLs must be nonempty strings without CR, LF, or NUL'),
+    (submission(['https://a.invalid/\0']), 'submission URLs must be nonempty strings without CR, LF, or NUL'),
+    (submission(['']), 'submission URLs must be nonempty strings without CR, LF, or NUL'),
+    (submission(['x'], preset='audio'), 'submission preset must be video or gallery'),
+    (submission(['x'], lane='gallery'), 'submission lane must be null or its preset'),
+    (submission(['x'], source='alpha'), 'cookie selection requires both valid source and revision identifiers'),
+    (submission(['x'], revision=ALPHA), 'cookie selection requires both valid source and revision identifiers'),
+    (submission(['x'], source='Bad Name', revision=ALPHA),
+     'cookie selection requires both valid source and revision identifiers'),
+    (submission(['x'], user_agent='a\nb'), 'user-agent must be a string without CR, LF, or NUL'),
+])
+def test_store_refusals_reach_the_client_as_error_replies(rig, serving, value, reason):
+    result = submit(rig, value)
+    assert (result.returncode, result.stderr) == (1, b'')
+    assert result.stdout == worker.encode({'version': 1, 'error': reason})
+    # Nothing was allocated: the next valid submission is the first.
+    ok = submit(rig, submission(['exit=0,ok']))
+    assert json.loads(ok.stdout)['submission'] == 1
+
+
+@pytest.mark.parametrize('value', [
+    {key: value for key, value in submission(['x']).items() if key != 'lane'},
+    submission(['x'], extra=1),
+    submission('x'),
+    submission([1]),
+    submission([None]),
+    submission([['x']]),
+    submission(['x'], preset=None),
+    submission(['x'], user_agent=None),
+    submission(['x'], lane=0),
+    submission(['x'], source=False, revision=False),
+    submission(['x'], revision=1),
+    submission({'0': 'x'}),
+    {},
+])
+def test_submit_args_of_the_wrong_shape_are_invalid_requests(rig, serving, value):
+    result = submit(rig, value)
+    assert (result.returncode, result.stdout, result.stderr) == (1, INVALID, b'')
+    assert rig.client('status').stdout == EMPTY_STATUS
+
+
+SWEEP = [chr(code) for code in range(0x20) if code not in (0x00, 0x0a, 0x0d)] + ['\x7f', 'é', ' ',
+                                                                                 '﻿', '\U0001f600']
+
+
+@pytest.mark.parametrize('ensure_ascii', [True, False])
+def test_urls_and_user_agents_round_trip_through_submit_store_and_show(rig, ensure_ascii):
+    """Every C0 control the store allows, DEL, non-ASCII, and astral, swept (DEC-51)."""
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()  # no nordvpn on PATH: jobs wait, none runs
+    urls = [f'https://example.invalid/{char}/{ord(char)}' for char in SWEEP]
+    agents = [f'UA {char} {ord(char)}' for char in SWEEP] + [''.join(SWEEP), '-starts-with-a-dash']
+    stdin = json.dumps(submission(urls, user_agent=agents[0]), ensure_ascii=ensure_ascii).encode()
+    result = submit(rig, stdin)
+    assert result.returncode == 0, result
+    assert max(result.stdout) < 0x80
+    created = json.loads(result.stdout)['created']
+    assert [job['url'] for job in created] == urls
+    for index, agent in enumerate(agents[1:], 1):
+        one = submit(rig, json.dumps(submission([f'ua-{index}'], user_agent=agent), ensure_ascii=ensure_ascii).encode())
+        created.append(json.loads(one.stdout)['created'][0])
+    expected_agents = [agents[0]] * len(urls) + agents[1:]
+    for job, agent in zip(created, expected_agents):
+        out = show(rig, job['id']).stdout
+        assert max(out) < 0x80
+        record = json.loads(out)['job']
+        assert (record['url'], record['user_agent']) == (job['url'], agent)
+        assert out == worker.encode({'version': 1, 'job': record})
+    assert serve.stop() == 0
+    logged = serve.out.read_bytes() + serve.err.read_bytes()
+    assert serve.lines() == [LISTENING.format(rig.socket), STOPPING]
+    for value in urls + agents:
+        assert value.encode('utf-8', 'surrogatepass') not in logged
+    with rig.open() as store:
+        assert [(r.url, r.user_agent) for r in store.list()] == [
+            (job['url'], agent) for job, agent in zip(created, expected_agents)]
+
+
+@pytest.mark.parametrize('stdin', [
+    b'{"preset":"video","lane":null,"source":null,"revision":null,"user_agent":"UA","urls":["https://a.invalid/\\ud800"]}',
+    b'{"preset":"video","lane":null,"source":null,"revision":null,"user_agent":"UA \\udfff","urls":["x"]}',
+    b'{"preset":"video","lane":null,"source":null,"revision":null,"user_agent":"UA","urls":["x"],"\\udc80":1}',
+    b'{"preset":"video","lane":null,"source":null,"revision":null,"user_agent":"UA","urls":["\\ud83d x"]}',
+])
+def test_a_lone_surrogate_is_an_invalid_request_and_creates_nothing(rig, serving, stdin):
+    result = submit(rig, stdin)
+    assert (result.returncode, result.stdout, result.stderr) == (1, INVALID, b'')
+    ok = submit(rig, submission(['exit=0,ok']))
+    assert json.loads(ok.stdout)['submission'] == 1
+
+
+@pytest.mark.parametrize('argv, reason', [
+    (['show'], 'show: exactly one job ID is required'),
+    (['show', '1', '2'], 'show: exactly one job ID is required'),
+    (['show', ''], 'show: job ID must be a positive integer'),
+    (['show', '0'], 'show: job ID must be a positive integer'),
+    (['show', '01'], 'show: job ID must be a positive integer'),
+    (['show', '-1'], 'show: job ID must be a positive integer'),
+    (['show', '+1'], 'show: job ID must be a positive integer'),
+    (['show', '1.0'], 'show: job ID must be a positive integer'),
+    (['show', ' 1'], 'show: job ID must be a positive integer'),
+    (['show', '1_0'], 'show: job ID must be a positive integer'),
+    (['show', '١'], 'show: job ID must be a positive integer'),
+    (['show', '１'], 'show: job ID must be a positive integer'),
+    (['show', 'abc'], 'show: job ID must be a positive integer'),
+    (['show', '9223372036854775808'], 'show: job ID must be a positive integer'),
+    (['show', '1' * 5000], 'show: job ID must be a positive integer'),
+])
+def test_show_usage_errors(rig, capsys, argv, reason):
+    assert worker.run(argv, socket_path=rig.socket) == 2
+    assert capsys.readouterr() == ('', f'downloadinux: error: {reason}\n')
+
+
+@pytest.mark.parametrize('job_id', [1, 9223372036854775807])
+def test_show_of_an_unknown_id_is_an_error_reply(rig, serving, job_id):
+    result = show(rig, job_id)
+    assert result.returncode == 1
+    assert result.stdout == f'{{"version":1,"error":"unknown job ID {job_id}"}}\n'.encode()
+
+
+@pytest.mark.parametrize('args', [{}, {'id': 0}, {'id': -1}, {'id': 2 ** 63}, {'id': True}, {'id': '1'},
+                                  {'id': 1.0}, {'id': None}, {'id': 1, 'x': 1}, {'ID': 1}])
+def test_show_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
+    assert ask(rig.socket, request_bytes('show', args)) == INVALID
