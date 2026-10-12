@@ -1836,8 +1836,10 @@ A `DownloadinuxError` from the shutdown, whether a store failure during its
 wait (before the mark) or DEC-49's signal error (after it), is printed as
 `downloadinux: error: <reason>`; the worker then closes the store and exits
 1, and any job the mark did not record stays `running` for the next start's
-reconciliation. A failure to close the store prints the same way and exits
-1. Stop requests received while stopping change nothing.
+reconciliation. An OS error closing or removing the socket prints the same
+way, as `<path>: <OS reason>`, without skipping the shutdown, and so does a
+failure to close the store; either makes the exit status 1. Stop requests
+received while stopping change nothing.
 
 #### Client subcommands and replies (DEC-51)
 
