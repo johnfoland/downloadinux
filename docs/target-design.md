@@ -16,9 +16,10 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-45, issue #64). Only the internal job-store foundation
-in §2 is implemented; the worker service, lifecycle, scheduling, commands,
-and cutover remain unimplemented. Stage 4 remains proposed.
+jobs*, DEC-41 to DEC-46, issue #64). Only the internal job store is
+implemented: §2's foundation and §5's store lifecycle operations; the
+scheduler, runner execution, worker service, commands, and cutover remain
+unimplemented. Stage 4 remains proposed.
 
 ## Agreed decisions
 
@@ -1684,10 +1685,12 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-45). Only §2's internal store foundation is implemented:
-private versioned storage under worker ownership, atomic pinned submissions,
-active duplicates, and typed record reads. Lifecycle transitions/retry,
-reconciliation, scheduling, execution/cancellation/shutdown, the service,
+(DEC-41 to DEC-46). Only the internal job store is implemented: §2's
+foundation (private versioned storage under worker ownership, atomic pinned
+submissions, active duplicates, and typed record reads) and §5's store
+lifecycle operations (queue heads, start, waits, ends and lane deadlines,
+cancel, retry, and interrupted marks). The scheduler and VPN gate, runner
+execution and logs, signal delivery and the shutdown wait, the service,
 commands, and cutover remain unimplemented. Until the cutover (§7), batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
@@ -1798,8 +1801,8 @@ Implemented as the internal standard-library `downloadinux.job_store` library.
 Its tests cover ownership/private paths, versioning and durability settings,
 atomic submissions and exact duplicates, and independent typed reads;
 `tools/job_store_evidence.py` proves reopened ownership on a Docker Desktop
-state bind mount. This is the store foundation alone; §3–§5's lifecycle,
-scheduler, and runner execution remain unimplemented.
+state bind mount. §5's "Store lifecycle" subsection adds the transitions;
+the scheduler and runner execution remain unimplemented.
 
 These details settle the internal storage boundary.
 They do not define the socket's JSON protocol (§1), or activate the host
@@ -1854,7 +1857,7 @@ is `queued` or `running`, with SQLite's binary string comparison. Queue
 order is increasing `queue_order` within a lane or immediate submission:
 the second-resolution `queued_at` timestamp records time but cannot break
 ties or a backward wall-clock adjustment. Retry will allocate a new order
-and submission (§3); this foundation does not implement retry or transitions.
+and submission (§3); §5's "Store lifecycle" carries retry and the transitions.
 The current job record describes its latest attempt; earlier logs remain by
 the §2 filename contract, without a separate attempt-history table.
 
@@ -1987,7 +1990,10 @@ yt-dlp continue a partial `.part` file, as far as the downloader can.
 
 #### Store lifecycle: queues, transitions, and retry (DEC-46)
 
-Not yet implemented. These details pin how `downloadinux.job_store` carries
+Implemented in `downloadinux.job_store`, whose tests drive every §3 row
+through real SQLite, including failed transactions and the stdlib-only
+boundary; the scheduler and service that call it are not yet implemented.
+These details pin how `downloadinux.job_store` carries
 §3 to §5's lifecycle, so the scheduler and the service decide only *when* to
 call it. Each operation below is one explicit transaction whose commit is its
 publication, as in §2's store foundation; it takes every timestamp from the

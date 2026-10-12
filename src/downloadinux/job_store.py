@@ -144,6 +144,32 @@ class CancelOutcome:
     state: str | None
 
 
+REQUEUED, SHADOWED = 'requeued', 'shadowed'
+RETRYABLE = ('failed', 'cancelled', 'interrupted')
+
+
+@dataclass(frozen=True)
+class RetryOutcome:
+    """One ID's retry outcome (§3 *Retry*, §5 *Retry*).
+
+    `outcome` is REQUEUED, REFUSED (a queued, running, or succeeded job,
+    `state` naming its state), SHADOWED (`holder` is the queued or running
+    job holding its preset and URL, DEC-46), or UNKNOWN. `state` is the
+    job's state after the call, None when unknown.
+    """
+    id: int
+    outcome: str
+    state: str | None
+    holder: int | None = None
+
+
+@dataclass(frozen=True)
+class RetryResult:
+    """The new shared submission, None when nothing was requeued."""
+    submission: int | None
+    outcomes: tuple[RetryOutcome, ...]
+
+
 def _positive_id(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise DownloadinuxError('job or submission ID must be a positive integer')
@@ -210,6 +236,21 @@ def _job_ids(job_ids, operation: str) -> tuple[int, ...]:
     if not isinstance(job_ids, Sequence) or isinstance(job_ids, (str, bytes, bytearray)) or not job_ids:
         raise DownloadinuxError(f'{operation} requires a nonempty ordered sequence of job IDs')
     return tuple(dict.fromkeys(_positive_id(job_id) for job_id in job_ids))
+
+
+def _retry_entries(entries) -> dict[int, tuple[str | None, str | None, str]]:
+    """Validate every entry before anything changes; repeats collapse to the first."""
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes, bytearray)) or not entries:
+        raise DownloadinuxError('retry requires a nonempty ordered sequence of entries')
+    validated = {}
+    for entry in entries:
+        if not isinstance(entry, Sequence) or isinstance(entry, (str, bytes, bytearray)) or len(entry) != 4:
+            raise DownloadinuxError('retry entries must be (job ID, source, revision, user-agent)')
+        job_id, source, revision, user_agent = entry
+        _positive_id(job_id)
+        _validate_selection(source, revision, user_agent)
+        validated.setdefault(job_id, (source, revision, user_agent))
+    return validated
 
 
 def _default_delay() -> int:
@@ -550,6 +591,51 @@ class JobStore:
                 else:
                     outcomes.append(CancelOutcome(job_id, REFUSED, row[0]))
         return tuple(outcomes)
+
+    def retry(self, entries: Sequence[tuple[int, str | None, str | None, str]]) -> RetryResult:
+        """Requeue finished jobs as one new submission (§3 *Retry*, §5 *Retry*, DEC-46).
+
+        Each entry is (job ID, source, revision, user-agent): the selection
+        the host pinned, validated as for a submission. Repeats collapse to
+        the first. In request order, a failed, cancelled, or interrupted job
+        whose preset and URL no queued or running job holds is requeued at
+        the back of its queue; its lane is unchanged, so immediate jobs
+        retried together form one queue keyed by the new submission, which
+        is allocated only when something is requeued. Refused, shadowed, and
+        unknown IDs are returned, not raised, and change nothing.
+        """
+        entries = _retry_entries(entries)
+        now = _timestamp(self._clock)
+        submission = None
+        outcomes = []
+        with self._transaction() as c:
+            for job_id, (source, revision, user_agent) in entries.items():
+                row = c.execute('SELECT state, preset, url FROM jobs WHERE id=?', (job_id,)).fetchone()
+                if row is None:
+                    outcomes.append(RetryOutcome(job_id, UNKNOWN, None))
+                    continue
+                state, preset, url = row
+                if state not in RETRYABLE:
+                    outcomes.append(RetryOutcome(job_id, REFUSED, state))
+                    continue
+                # Look before updating, with the active index's exact binary
+                # comparison, so the index never fires on a valid request and
+                # a job this retry requeued already shadows later IDs.
+                holder = c.execute('''SELECT id FROM jobs WHERE preset=? AND url=?
+                                      AND state IN ('queued', 'running') ORDER BY id''', (preset, url)).fetchone()
+                if holder is not None:
+                    outcomes.append(RetryOutcome(job_id, SHADOWED, state, holder[0]))
+                    continue
+                if submission is None:
+                    submission = c.execute('INSERT INTO submissions(created_at) VALUES (?)', (now,)).lastrowid
+                c.execute('UPDATE queue_counter SET value=value+1 WHERE id=1')
+                order = c.execute('SELECT value FROM queue_counter WHERE id=1').fetchone()[0]
+                c.execute('''UPDATE jobs SET state='queued', submission=?, attempt=attempt+1, queue_order=?,
+                             queued_at=?, source=?, revision=?, user_agent=?, cancel_requested=0, wait=NULL,
+                             started_at=NULL, finished_at=NULL, exit_status=NULL, error=NULL WHERE id=?''',
+                          (submission, order, now, source, revision, user_agent, job_id))
+                outcomes.append(RetryOutcome(job_id, REQUEUED, 'queued'))
+        return RetryResult(submission, tuple(outcomes))
 
     def reconcile(self) -> tuple[int, ...]:
         """Worker start: mark running jobs `interrupted` with `worker restarted`.

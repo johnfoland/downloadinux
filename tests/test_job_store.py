@@ -425,17 +425,21 @@ def test_exact_binary_comparison_and_presets(tmp_path):
         assert store.submit('video', list(reversed(urls))).duplicates == tuple(reversed(first.created))
 
 
+# Selection and user-agent cases drive both submission and retry (one validator).
+INVALID_SELECTION = [
+    dict(source='alpha'), dict(revision='a' * 32), dict(source='', revision='a' * 32),
+    dict(source='Alpha', revision='a' * 32), dict(source='é', revision='a' * 32),
+    dict(source='a' * 65, revision='a' * 32), dict(source=True, revision='a' * 32),
+    dict(source='alpha', revision='A' * 32), dict(source='alpha', revision='a' * 31),
+    dict(source='alpha', revision=True), dict(source='alpha٣', revision='a' * 32),
+    dict(source='alpha', revision='a' * 31 + '３'), dict(user_agent=None), dict(user_agent=True),
+    dict(user_agent='bad\r'), dict(user_agent='bad\n'), dict(user_agent='bad\0')]
 INVALID = [dict(urls=[]), dict(urls='url'), dict(urls=b'url'), dict(urls={'url'}), dict(urls=(u for u in ['a'])),
            dict(urls=['valid', '']), dict(urls=['valid', None]), dict(urls=['valid', True]),
            dict(urls=['valid', 1]), dict(urls=['valid', 'bad\r']), dict(urls=['valid', 'bad\n']),
            dict(urls=['valid', 'bad\0']), dict(preset='mp4'), dict(preset=True), dict(preset=[]),
            dict(lane='gallery'), dict(lane='immediate'), dict(lane=True), dict(lane=[]),
-           dict(source='alpha'), dict(revision='a' * 32), dict(source='', revision='a' * 32),
-           dict(source='Alpha', revision='a' * 32), dict(source='é', revision='a' * 32),
-           dict(source='a' * 65, revision='a' * 32), dict(source=True, revision='a' * 32),
-           dict(source='alpha', revision='A' * 32), dict(source='alpha', revision='a' * 31),
-           dict(source='alpha', revision=True), dict(user_agent=None), dict(user_agent=True),
-           dict(user_agent='bad\r'), dict(user_agent='bad\n'), dict(user_agent='bad\0')]
+           *INVALID_SELECTION]
 
 
 @pytest.mark.parametrize('invalid', INVALID)
@@ -673,8 +677,20 @@ with js.open_store(root) as store:
     assert store.get(a.created[0].id).source is None
     assert store.get(b.created[0].id).revision == 'a' * 32
     assert len(store.list()) == 2
+    lane = store.submit('video', ['lane'], lane='video').created[0].id
+    assert store.start(a.created[0].id).state == 'running'
+    assert store.start(lane).state == 'running'
+    assert store.end(a.created[0].id, exit_status=1).state == 'failed'
+    assert store.end(lane, launch_failure='no runner').state == 'failed'
+    assert [o.outcome for o in store.cancel([b.created[0].id])] == [js.CANCELLED]
+    retried = store.retry([(a.created[0].id, None, None, ''), (lane, 'alpha', 'b' * 32, '')])
+    assert [o.outcome for o in retried.outcomes] == [js.REQUEUED, js.REQUEUED]
+    assert store.queue_heads()[0].next_start_at is not None
+    assert store.start(a.created[0].id).state == 'running'
+    assert store.reconcile() == (a.created[0].id,)
 with js.open_store(root) as store:
-    assert [j.url for j in store.list()] == ['anon', 'named']
+    assert [j.url for j in store.list()] == ['anon', 'named', 'lane']
+    assert [j.state for j in store.list()] == ['interrupted', 'cancelled', 'queued']
 assert sorted(p.name for p in root.iterdir()) == ['jobs']
 print('stdlib boundary passed')
 '''
@@ -1149,3 +1165,192 @@ def test_open_store_leaves_running_jobs_and_waits(tmp_path):
     with open_store(tmp_path) as store:
         assert snapshot(store) == saved
         assert store.get(job).state == 'running'
+
+
+def finished_job(store, url, state='failed', *, preset='video', lane='video', **selection):
+    job = store.submit(preset, [url], lane=lane, **selection).created[0].id
+    sql(store, '''UPDATE jobs SET state=?, cancel_requested=1, started_at='2026-10-11T12:00:01Z',
+                  finished_at='2026-10-11T12:00:02Z', exit_status=1, error='diagnostic' WHERE id=?''', state, job)
+    if state == 'queued':
+        sql(store, '''UPDATE jobs SET cancel_requested=0, started_at=NULL, finished_at=NULL, exit_status=NULL,
+                      error=NULL WHERE id=?''', job)
+    return job
+
+
+@pytest.mark.parametrize('state', js.RETRYABLE)
+@pytest.mark.parametrize('selection', [('alpha', 'b' * 32, 'new UA'), (None, None, ''), (None, None, 'anon UA')])
+def test_retry_requeues_every_field(tmp_path, state, selection):
+    clock = [NOW]
+    with open_store(tmp_path, clock=lambda: clock[0]) as store:
+        job = finished_job(store, 'url', state, source='old', revision='a' * 32, user_agent='old UA')
+        other = store.submit('gallery', ['other'], lane='gallery').created[0].id
+        before = store.get(job)
+        orders = sql(store, 'SELECT MAX(queue_order) FROM jobs')[0][0]
+        clock[0] = datetime(2026, 10, 11, 14, 0, tzinfo=timezone.utc)
+        result = store.retry([(job, *selection)])
+        assert result.submission == 3
+        assert result.outcomes == (js.RetryOutcome(job, js.REQUEUED, 'queued'),)
+        source, revision, user_agent = selection
+        assert asdict(store.get(job)) == dict(
+            asdict(before), state='queued', submission=3, attempt=2, queued_at='2026-10-11T14:00:00Z',
+            source=source, revision=revision, user_agent=user_agent, cancel_requested=False, wait=None,
+            started_at=None, finished_at=None, exit_status=None, error=None)
+        assert store.get(job).created_at == '2026-10-11T12:00:00Z'
+        assert sql(store, 'SELECT queue_order FROM jobs WHERE id=?', job)[0][0] > orders
+        assert sql(store, 'SELECT value FROM queue_counter') == [(orders + 1,)]
+        assert sql(store, 'SELECT * FROM submissions WHERE id=3') == [(3, '2026-10-11T14:00:00Z')]
+        assert store.get(other).state == 'queued'
+    with open_store(tmp_path) as store:
+        assert store.get(job).attempt == 2
+
+
+def test_retry_outcomes_mixed_order_repeats_and_no_submission(tmp_path):
+    with open_store(tmp_path) as store:
+        failed = finished_job(store, 'failed', 'failed')
+        interrupted = finished_job(store, 'interrupted', 'interrupted', lane=None)
+        refused = {state: finished_job(store, state, state) for state in ('queued', 'succeeded')}
+        running = running_job(store, lane=None, url='running')
+        shadowed = finished_job(store, 'shadow', 'cancelled', lane=None)
+        holder = store.submit('video', ['shadow'], lane='video').created[0].id
+        entries = [(failed, None, None, 'first'), (999, None, None, ''), (refused['queued'], None, None, ''),
+                   (failed, 'alpha', 'a' * 32, 'repeat ignored'), (running, None, None, ''),
+                   (refused['succeeded'], None, None, ''), (shadowed, None, None, ''),
+                   (interrupted, None, None, 'second')]
+        before = {job.id: job for job in store.list()}
+        result = store.retry(entries)
+        assert result.outcomes == (
+            js.RetryOutcome(failed, js.REQUEUED, 'queued'), js.RetryOutcome(999, js.UNKNOWN, None),
+            js.RetryOutcome(refused['queued'], js.REFUSED, 'queued'),
+            js.RetryOutcome(running, js.REFUSED, 'running'),
+            js.RetryOutcome(refused['succeeded'], js.REFUSED, 'succeeded'),
+            js.RetryOutcome(shadowed, js.SHADOWED, 'cancelled', holder),
+            js.RetryOutcome(interrupted, js.REQUEUED, 'queued'))
+        assert store.get(failed).user_agent == 'first' and store.get(failed).source is None
+        assert store.get(failed).submission == store.get(interrupted).submission == result.submission
+        for job in (refused['queued'], running, refused['succeeded'], shadowed, holder):
+            assert store.get(job) == before[job]
+        # Nothing requeued: no submission row, counter unchanged.
+        submissions, counter = sql(store, 'SELECT COUNT(*) FROM submissions'), sql(store, 'SELECT * FROM queue_counter')
+        nothing = store.retry([(999, None, None, ''), (shadowed, None, None, ''), (running, None, None, '')])
+        assert nothing.submission is None
+        assert [o.outcome for o in nothing.outcomes] == [js.UNKNOWN, js.SHADOWED, js.REFUSED]
+        assert sql(store, 'SELECT COUNT(*) FROM submissions') == submissions
+        assert sql(store, 'SELECT * FROM queue_counter') == counter
+
+
+def test_retried_lane_job_rejoins_back_and_immediate_jobs_form_one_queue(tmp_path):
+    with open_store(tmp_path) as store:
+        retried = finished_job(store, 'retried', 'failed')
+        waiting = [r.id for r in store.submit('video', ['w1', 'w2'], lane='video').created]
+        first = finished_job(store, 'i1', 'failed', lane=None)
+        second = finished_job(store, 'i2', 'interrupted', lane=None)
+        result = store.retry([(second, None, None, ''), (retried, None, None, ''), (first, None, None, '')])
+        assert [o.outcome for o in result.outcomes] == [js.REQUEUED] * 3
+        heads = store.queue_heads()
+        assert [(h.lane, h.submission, h.head.id) for h in heads] == [
+            ('video', None, waiting[0]), (None, result.submission, second)]
+        # The lane's order: the waiting jobs, then the retried job.
+        for job in waiting:
+            store.start(job)
+            store.end(job, exit_status=0)
+            set_lane_deadline(store, 'video', None)
+        assert store.queue_heads()[0].head.id == retried
+        store.start(second)
+        store.end(second, exit_status=0)
+        assert store.queue_heads()[-1].head.id == first
+
+
+def test_in_retry_shadow_requeues_first_and_names_it(tmp_path):
+    with open_store(tmp_path) as store:
+        a = finished_job(store, 'same', 'failed')
+        b = finished_job(store, 'same', 'cancelled', lane=None)
+        result = store.retry([(b, None, None, ''), (a, None, None, '')])
+        assert result.outcomes == (js.RetryOutcome(b, js.REQUEUED, 'queued'),
+                                   js.RetryOutcome(a, js.SHADOWED, 'failed', b))
+        assert store.get(a).state == 'failed'
+
+
+@pytest.mark.parametrize('holder_lane,retried_lane', [('video', None), (None, 'video'), (None, None), ('video', 'video')])
+@pytest.mark.parametrize('holder_state', ['queued', 'running'])
+def test_retry_shadowing_across_queues(tmp_path, holder_lane, retried_lane, holder_state):
+    with open_store(tmp_path) as store:
+        job = finished_job(store, 'url', lane=retried_lane)
+        holder = store.submit('video', ['url'], lane=holder_lane).created[0].id
+        if holder_state == 'running':
+            store.start(holder)
+        before = snapshot(store)
+        result = store.retry([(job, None, None, '')])
+        assert result == js.RetryResult(None, (js.RetryOutcome(job, js.SHADOWED, 'failed', holder),))
+        assert snapshot(store) == before
+
+
+@pytest.mark.parametrize('held,retried', [('https://EXAMPLE/a', 'https://example/a'),
+                                          ('https://example/a', 'https://example/a '),
+                                          ('é', 'é'), ('url', ' url')])
+def test_retry_shadowing_is_exact_binary_and_per_preset(tmp_path, held, retried):
+    with open_store(tmp_path) as store:
+        job = finished_job(store, retried)
+        store.submit('video', [held], lane='video')
+        store.submit('gallery', [retried], lane='gallery')  # other preset never shadows
+        assert store.retry([(job, None, None, '')]).outcomes[0].outcome == js.REQUEUED
+
+
+def retry_entry(invalid):
+    selection = dict(source=None, revision=None, user_agent='')
+    selection.update(invalid)
+    return selection['source'], selection['revision'], selection['user_agent']
+
+
+@pytest.mark.parametrize('invalid', INVALID_SELECTION)
+@pytest.mark.parametrize('position', ['first', 'last', 'repeat'])
+def test_retry_invalid_selection_anywhere_refuses_whole_request(tmp_path, invalid, position):
+    with open_store(tmp_path) as store:
+        a, b = finished_job(store, 'a'), finished_job(store, 'b')
+        bad = (b, *retry_entry(invalid))
+        entries = {'first': [bad, (a, None, None, '')], 'last': [(a, None, None, ''), bad],
+                   'repeat': [(a, None, None, ''), (b, None, None, ''), bad]}[position]
+        if position == 'repeat':
+            entries[-1] = (a, *retry_entry(invalid))
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match='cookie selection|user-agent'):
+            store.retry(entries)
+        assert snapshot(store) == before
+
+
+@pytest.mark.parametrize('invalid', [[], (), 'abc', b'x', None, 1, {(1, None, None, '')},
+                                     [(1, None, None)], [(1, None, None, '', 'extra')], ['1abc'],
+                                     [(0, None, None, '')], [(True, None, None, '')], [('1', None, None, '')]])
+def test_retry_shape_validation(tmp_path, invalid):
+    with open_store(tmp_path) as store:
+        finished_job(store, 'a')
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match='retry|positive integer'):
+            store.retry(invalid)
+        assert snapshot(store) == before
+
+
+def test_retry_list_entries_accepted(tmp_path):
+    with open_store(tmp_path) as store:
+        job = finished_job(store, 'a')
+        assert store.retry([[job, None, None, '']]).outcomes[0].outcome == js.REQUEUED
+
+
+@pytest.mark.parametrize('failure', ['trigger', 'deferred-commit'])
+def test_retry_real_sqlite_failure_publishes_nothing(tmp_path, failure):
+    with open_store(tmp_path) as store:
+        c = store._connection
+        a, b = finished_job(store, 'a'), finished_job(store, 'b')
+        if failure == 'trigger':
+            c.execute(f'''CREATE TRIGGER fail_update AFTER UPDATE ON jobs WHEN NEW.id={b}
+                          BEGIN SELECT RAISE(ABORT, 'SENTINEL secret'); END''')
+        else:
+            c.execute('''CREATE TABLE deferred_failure (submission INTEGER REFERENCES submissions(id)
+                         DEFERRABLE INITIALLY DEFERRED)''')
+            c.execute('''CREATE TRIGGER fail_commit AFTER UPDATE ON jobs
+                         BEGIN INSERT INTO deferred_failure VALUES(-1); END''')
+        before = snapshot(store)
+        with pytest.raises(DownloadinuxError, match='jobs.sqlite3: SQLite') as error:
+            store.retry([(a, None, None, 'SENTINEL ua'), (b, None, None, '')])
+        assert 'SENTINEL' not in str(error.value)
+        assert snapshot(store) == before
+        assert not c.in_transaction
