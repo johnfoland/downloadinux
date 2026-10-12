@@ -1198,3 +1198,54 @@ the client shapes §1 leaves to planning without changing DEC-41 to DEC-49.
 *Amended 2026-10-12, in PR #78's review:* an integer `version` other than
 1 is `unsupported request version` before the key and shape checks, so a
 later version's request is never called invalid.
+
+## DEC-52: A stop drops the client being served, so the worker's stop fits the grace period (2026-10)
+
+While the worker reads a request or sends a reply, it checks for a stop
+request at least every half second; on one, it drops the connection
+without a reply or a log line, as on a timeout, and stops. An operation
+that already ran keeps its effect, so a submission committed before the
+stop stays queued, as it does when a client times out.
+
+Leaving the 10-second read and send bounds in force during a stop was
+rejected (issue #81): a stalled client could delay the stop by 20 seconds,
+which with the 20-second shutdown wait overruns the 30-second
+`stop_grace_period`, and Docker's `SIGKILL` would then leave running jobs
+to be reconciled as `worker restarted` instead of `worker stopped`.
+Shortening the bounds once a stop arrives was rejected as a second set of
+limits to test for the same outcome. Raising the grace period was rejected
+because §1 and §5 settle it at 30 seconds and the delay serves no client:
+only a process inside the container can stall the socket.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Service lifecycle and failure handling" (*Loop*) and "Client subcommands
+and replies" (*Wire protocol*). Added on 2026-10-13 for issue #64; settles
+issue #81 and fills a gap in DEC-50 and DEC-51 without changing them.
+
+## DEC-53: Host worker calls share the client's reply rule and map every other status to a fixed failure (2026-10)
+
+Every host worker operation runs one host-side call: the running check,
+then `exec -T -u dl downloadinux downloadinux-worker ARGS…` captured with
+optional standard-input text (empty otherwise). Besides §1's three
+messages, status 0 with a success reply returns it and status 1 with an
+error reply fails with its reason; other output on 0 or 1 is
+`downloadinux-worker SUB printed unexpected output`, and any other status
+`downloadinux-worker SUB failed in the container (exit N)`, as `cookies
+cleanup` reports its runner (DEC-37). Replies are accepted by the client's
+own rule in `downloadinux.worker`, imported by the host, not a copy.
+`doctor`'s `worker.running` uses the same rule on `status`'s output but its
+own running row and texts, and needs non-negative integer counts for `ok`.
+
+A host-side copy of the acceptance rule was rejected because the two would
+drift with nothing failing. Trusting status 0 or 1 without reading the
+output was rejected: a wrong image or a broken client would reach the TUI as
+data. Routing `doctor` through the host call was rejected because `doctor`
+already reports the running check as its own row and §8 gives it its own
+texts. Inheriting the terminal's standard input when there is no text was
+rejected: Compose's `exec` forwards standard input, so a host command run
+in a pipeline could hand the client data it never reads.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Host invocation and reply handling", and §8. Added on 2026-10-13 for issue
+#64; fills details §1 and §8 leave open without changing DEC-41, DEC-44, or
+DEC-51.

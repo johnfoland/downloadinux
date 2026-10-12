@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-51, issue #64). Only internal libraries are
+jobs*, DEC-41 to DEC-53, issue #64). Only internal libraries are
 implemented: the job store (§2's foundation and §5's store lifecycle
 operations), §4's scheduler passes, VPN probe, and throttle seam helper
 (DEC-47), §5's runner execution: launch, attempt logs, exit polls, cancel
@@ -1690,7 +1690,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-51). Only internal standard-library libraries are
+(DEC-41 to DEC-53). Only internal standard-library libraries are
 implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
@@ -1733,6 +1733,20 @@ as `dl` through `gosu`. `compose/base.yaml` adds `init: true`, so Docker's init
 is PID 1, reaps orphans, and passes `docker stop`'s `SIGTERM` to the worker,
 and `stop_grace_period: 30s` (§5). The worker reads `DL_VPN`, as the
 entrypoint does, for §4's readiness gate.
+
+Pinned before the packaging chunk: `scripts/downloadinux-worker` is the
+runner's wrapper with the worker's module (`#!/usr/bin/python3 -I`,
+`/opt/downloadinux` inserted first on `sys.path`, `from downloadinux.worker
+import main`, `sys.exit(main())`), copied beside the runner to
+`/usr/local/bin/downloadinux-worker` at mode 0755. The Dockerfile's command
+is the exec form `["downloadinux-worker", "serve", "--cookies", "/cookies",
+"--state", "/state"]`. The entrypoint runs `install -d -m 0700 -o "$uid" -g
+"$gid" /run/downloadinux` after the runtime home repair and before the VPN
+start, so an existing directory (the container's filesystem outlives a
+`docker restart`) gets its mode and owner back too; a failure stops the
+entrypoint before `Ready.`. Commands given to `compose run` replace the
+worker as they replaced `sleep infinity`; the entrypoint prepares the
+directory for them all the same.
 
 *Interface.* The worker listens on a Unix socket,
 `/run/downloadinux/worker.sock`, in the container's own filesystem and never on
@@ -1820,7 +1834,8 @@ second for a connection, serves at most one request (DEC-51), polls the
 execution library for exited runners, and runs one scheduling pass. A pass
 thus follows every request and every runner exit within half a second, and
 runs at least once a second while work is queued (DEC-47). A stop request
-ends the wait within the same bound.
+ends the wait within the same bound, and ends a request being served the
+same way (DEC-51 *Wire protocol*, DEC-52).
 
 *Failures in the loop* (issue #74). A `DownloadinuxError` from a pass or a
 poll leaves only what the store had already committed: the worker writes
@@ -1915,7 +1930,14 @@ form, and closes the connection. `ARGS` is `{}` for `status`, `{"id":ID}`
 for `show` (an integer in `ID`'s range), and `submit`'s object as read. Requests and replies are at most
 32 MiB. The client allows 30 seconds in all; the worker allows 10 seconds to
 read a request and 10 to send its reply, and on either timeout, or a client
-that goes away, drops the connection without a reply or a log line. The
+that goes away, drops the connection without a reply or a log line. A stop
+request (DEC-50 *Stop*) while the worker reads a request or sends a reply
+drops the connection the same way within half a second, and the worker
+then stops; an operation that already ran keeps its effect, as when a
+client times out, so a committed submission stays queued (DEC-52). A stop
+thus begins within about half a second of the signal, plus at most one
+store operation, and with §5's 20-second wait fits the 30-second grace
+period. The
 worker refuses with `invalid request` anything that is not one UTF-8 JSON
 object (no repeated key, no `NaN` or `Infinity`, and any exception while
 decoding counts) with exactly the keys `version`, `op`, and `args`; an
@@ -1927,6 +1949,37 @@ decoded JSON object, whatever its other keys hold, so a later protocol
 version with another shape still gets that reply. Values the
 store refuses carry the store's message, except an unknown `show` ID, which
 is `unknown job ID <id>`.
+
+#### Host invocation and reply handling (DEC-53)
+
+Every host worker operation goes through one host-side call (not yet
+implemented). Given the effective settings, the client's argument list,
+and optional standard-input text, it:
+
+1. Runs *Host application*'s running check. When the service is not
+   running it runs nothing else and fails with §1's `the container is not
+   running; start it with dlx up`.
+2. Runs `exec -T -u dl downloadinux downloadinux-worker ARGS…` captured,
+   with the text as standard input, or empty standard input when there is
+   none. Standard error, the client's and Compose's, stays on the terminal
+   (DEC-17).
+3. Maps the exit status. 126 or 127 is §1's `the running container has no
+   downloadinux-worker; rebuild and recreate it with dlx build and dlx
+   restart`; 3 is §1's `the worker in the container is not answering; see
+   dlx compose -- logs downloadinux`. Status 0 with a success reply returns
+   the reply object; status 1 with an error reply fails with the reply's
+   reason as the message. Status 0 or 1 with anything else on standard
+   output fails with `downloadinux-worker SUB printed unexpected output`,
+   and any other status with `downloadinux-worker SUB failed in the
+   container (exit N)`, where `SUB` is the first argument.
+
+The reply is standard output less one final newline, accepted by the
+client's own rule (DEC-51 *Output form*) through one shared implementation
+in `downloadinux.worker`, which the host imports; the worker imports nothing
+from the host. A success reply has no `error`; an error reply is exactly
+`version` and a string `error`. Every failure is an operation error, exit 1,
+and an OS error starting Compose is the CLI's usual operation error.
+Per-operation reply shapes are checked by the operation that calls it.
 
 ### 2. Job store and records
 
@@ -2552,10 +2605,15 @@ automatically.
 
 `doctor` gains the row `worker.running` after `container.running` (DEC-44,
 amending DEC-22's list). It runs `downloadinux-worker status` as a container
-check. Status 0 with the client's reply is `ok`, `worker running (<r> running,
-<q> queued)`; status 126 or 127 is `fail`, `the running image has no worker`,
-fix `dlx build, then dlx restart`; anything else is `fail`, `worker not
-answering`, fix `dlx restart`. It is `skip` under the existing container rules
+check: captured like the other container checks, not through §1's host call,
+since `doctor` has its own running row and texts (DEC-53). Status 0 with a
+standard output that §1's shared rule accepts as a success reply whose
+`running` and `queued` are non-negative integers (not booleans) is `ok`,
+`worker running (<r> running, <q> queued)`; status 126 or 127 is `fail`,
+`the running image has no worker`, fix `dlx build, then dlx restart`;
+anything else is `fail`, `worker not answering`, fix `dlx restart`,
+including status 0 with any other output and an OS error running Compose.
+It is `skip` under the existing container rules
 (*Health checks*): `Docker daemon not reachable`, then `container not running`.
 The gate's smoke test expects it `ok`.
 
