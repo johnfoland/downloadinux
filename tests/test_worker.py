@@ -1234,3 +1234,94 @@ def test_show_of_an_unknown_id_is_an_error_reply(rig, serving, job_id):
                                   {'id': 1.0}, {'id': None}, {'id': 1, 'x': 1}, {'ID': 1}])
 def test_show_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
     assert ask(rig.socket, request_bytes('show', args)) == INVALID
+
+
+# Standard-library boundary (§1, DEC-41, DEC-50, DEC-51).
+
+BOUNDARY = r'''
+import importlib.abc, sys
+ALLOWED = ('downloadinux', 'downloadinux.worker', 'downloadinux.worker_execution',
+           'downloadinux.worker_scheduler', 'downloadinux.nordvpn_output', 'downloadinux.job_store',
+           'downloadinux.errors', 'downloadinux.cookie_store', 'downloadinux.cookiejar')
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        top = name.split('.')[0]
+        if top not in sys.stdlib_module_names and top != 'downloadinux':
+            raise ImportError('non-stdlib import: ' + name)
+        if top == 'downloadinux' and name not in ALLOWED:
+            raise ImportError('host import: ' + name)
+sys.meta_path.insert(0, Block())
+src, mode, sock = sys.argv[1:4]
+sys.path.insert(0, src)
+import io, json, os, signal, subprocess, time
+from pathlib import Path
+from downloadinux import worker
+for blocked in ('downloadinux.launch', 'downloadinux.cookie_runner', 'downloadinux.settings', 'tomlkit'):
+    try:
+        __import__(blocked)
+    except ImportError:
+        pass
+    else:
+        raise AssertionError('import not blocked: ' + blocked)
+
+def loaded():
+    names = sorted(name for name in sys.modules if name.split('.')[0] == 'downloadinux')
+    assert set(names) <= set(ALLOWED), names
+
+if mode == 'serve':
+    cookies, state, downloads = sys.argv[4:7]
+    code = worker.run(['serve', '--cookies', cookies, '--state', state],
+                      socket_path=Path(sock), downloads=Path(downloads))
+    loaded()
+    sys.exit(code)
+
+class Stdin:
+    def __init__(self, data):
+        self.buffer = io.BytesIO(data)
+
+def client(argv, stdin=b''):
+    out = io.TextIOWrapper(io.BytesIO(), encoding='ascii')
+    saved = sys.stdout, sys.stdin
+    sys.stdout, sys.stdin = out, Stdin(stdin)
+    try:
+        code = worker.run(argv, socket_path=Path(sock))
+    finally:
+        sys.stdout, sys.stdin = saved
+    out.flush()
+    return code, out.buffer.getvalue()
+
+service = subprocess.Popen([sys.executable, '-I', __file__, src, 'serve', sock, *sys.argv[4:7]],
+                           stdout=subprocess.PIPE)
+deadline = time.monotonic() + 20
+while not os.path.exists(sock):
+    assert time.monotonic() < deadline and service.poll() is None
+    time.sleep(0.02)
+assert client(['status']) == (0, b'{"version":1,"running":0,"queued":0}\n')
+request = dict(preset='video', lane='video', source=None, revision=None, user_agent='UA', urls=['exit=0'])
+assert client(['submit'], json.dumps(request).encode()) == (
+    0, b'{"version":1,"submission":1,"created":[{"id":1,"url":"exit=0"}],"duplicates":[]}\n')
+while True:
+    code, out = client(['show', '1'])
+    assert code == 0 and time.monotonic() < deadline
+    if json.loads(out)['job']['state'] == 'succeeded':
+        break
+    time.sleep(0.05)
+service.send_signal(signal.SIGTERM)
+assert service.wait(30) == 0
+assert service.stdout.read().decode().splitlines() == [
+    'downloadinux-worker: listening on ' + sock, 'downloadinux-worker: stopping']
+loaded()
+print('worker boundary passed')
+'''
+
+
+def test_isolated_stdlib_only_service_and_clients(rig):
+    script = rig.tmp / 'boundary.py'
+    script.write_text(BOUNDARY)
+    result = subprocess.run(
+        [sys.executable, '-I', str(script), str(SRC), 'client', str(rig.socket), str(rig.cookies),
+         str(rig.state), str(rig.downloads)],
+        capture_output=True, text=True, timeout=60, env=rig.env())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'worker boundary passed\n'
+    assert [r['url'] for r in rig.records()] == ['exit=0']
