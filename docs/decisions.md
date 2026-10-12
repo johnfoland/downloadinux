@@ -941,7 +941,8 @@ group except through the runner, and the presets' downloaders exit on
 
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §4
 and §5. Added on 2026-10-11 for issue #64, with the maintainer's choice of
-immediate `dl` jobs.
+immediate `dl` jobs. *Clarified 2026-10-12 (DEC-46):* a lane job
+cancelled while queued never ran and draws no delay.
 
 ## DEC-44: `dl` follows and detaches, `batch` consumes its queue file, and tmux goes (2026-10)
 
@@ -1003,3 +1004,34 @@ work; this pins the foundation without changing DEC-41 to DEC-44.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §2,
 "Store foundation: version, ownership, and submission". Added on 2026-10-11
 for issue #64.
+
+## DEC-46: The job store owns lifecycle transitions; queued cancels draw no throttle, and retries never shadow active work (2026-10)
+
+The job-store library carries the lifecycle of Persistent worker and jobs §3
+to §5 as transactional operations: start, waits, end, cancel, retry, and the
+interrupted marks of reconciliation and shutdown. An immediate job's queue is
+its submission. Starting is refused unless the job heads its queue, the queue
+has nothing running, and its lane's deadline has passed, so a scheduler fault
+cannot run two jobs of one queue at once or skip a throttle. A lane's deadline
+is drawn in the same transaction as the end that causes it. Reconciliation
+clears queued jobs' waits from the previous run.
+
+Cancelling a lane job while it is queued draws no throttle delay: the delay
+spaces requests to a site, and a job that never ran made none (maintainer,
+2026-10-12). A job whose runner could not be launched did enter `running`
+and still draws one, so a broken launch cannot fail a whole lane at once. Retrying a job whose preset and URL a queued or running job holds
+is refused for that ID, naming the holder: a retry names a specific job, and
+reporting it as a duplicate would leave that job terminal while the command
+appeared to succeed (maintainer, 2026-10-12).
+
+Enforcing queue order and the throttle in the scheduler alone was rejected:
+the store's transaction is the commit point, and the cheapest place to make
+an illegal start impossible. Drawing the delay after the end's commit was
+rejected because a crash in between would record the end with no throttle.
+Drawing a delay for a queued cancel and treating a shadowed retry as a
+duplicate were rejected with the maintainer.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §3,
+§4, and §5, "Store lifecycle: queues, transitions, and retry". Added on
+2026-10-12 for issue #64, with the maintainer's choices for queued cancels and
+shadowed retries.
