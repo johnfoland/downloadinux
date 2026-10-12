@@ -2031,7 +2031,8 @@ delay drawn in the same transaction from an injectable source of whole
 seconds, uniform over 120 to 289 inclusive by default (§4). A drawn value that
 is not a nonnegative integer fails the transaction. Immediate jobs set no
 deadline, and neither does cancelling a queued job: a job that never ran
-contacted no site (DEC-46).
+contacted no site (DEC-46). A launch failure still draws one, since the job
+ran: the delay keeps a broken launch from failing a whole lane at once.
 
 *Cancel.* Cancelling takes job IDs, repeats collapsing to the first, and
 returns one outcome per ID in that order from one transaction. A queued job

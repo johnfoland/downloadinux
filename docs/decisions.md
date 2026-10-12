@@ -1018,7 +1018,8 @@ clears queued jobs' waits from the previous run.
 
 Cancelling a lane job while it is queued draws no throttle delay: the delay
 spaces requests to a site, and a job that never ran made none (maintainer,
-2026-10-12). Retrying a job whose preset and URL a queued or running job holds
+2026-10-12). A job whose runner could not be launched did enter `running`
+and still draws one, so a broken launch cannot fail a whole lane at once. Retrying a job whose preset and URL a queued or running job holds
 is refused for that ID, naming the holder: a retry names a specific job, and
 reporting it as a duplicate would leave that job terminal while the command
 appeared to succeed (maintainer, 2026-10-12).
