@@ -1,22 +1,25 @@
-"""Worker-owned SQLite foundation, standard library only (DEC-41, DEC-45).
+"""Worker-owned SQLite job store, standard library only (DEC-41, DEC-45, DEC-46).
 
-Target design, Persistent worker and jobs §2. This library has no service,
-state transitions, cookie reads, or host configuration dependencies.
+Target design, Persistent worker and jobs §2 and §5, "Store lifecycle". This
+library has no service, scheduler, process, cookie reads, or host
+configuration dependencies; the scheduler and service decide only *when* to
+call its lifecycle operations.
 """
 from contextlib import contextmanager
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import errno
 import fcntl
 import json
 import os
 from pathlib import Path
-import re
+import random
 import sqlite3
 import stat
 from typing import Callable
 
+from . import cookie_store
 from .errors import DownloadinuxError
 
 DIRECTORY = 'jobs'
@@ -53,6 +56,8 @@ SCHEMA = (
     '''CREATE UNIQUE INDEX active_jobs ON jobs (preset COLLATE BINARY, url COLLATE BINARY)
         WHERE state IN ('queued', 'running')''',
 )
+TIMESTAMP_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+THROTTLE_SECONDS = (120, 289)  # §4: inclusive bounds of a lane's delay (DEC-6, DEC-43)
 TABLE_COLUMNS = {
     'submissions': {'id': 'INTEGER', 'created_at': 'TEXT'},
     'jobs': {name: ('INTEGER' if name in ('id', 'submission', 'attempt', 'cancel_requested',
@@ -107,10 +112,79 @@ class JobRecord:
     error: str | None
 
 
+@dataclass(frozen=True)
+class QueueHead:
+    """One queue holding a queued job (§5 "Store lifecycle", *Queues*).
+
+    A lane queue has `lane` set to its preset and `submission` None; an
+    immediate queue has `lane` None and its `submission`. `next_start_at` is
+    the lane's stored deadline, always None for an immediate queue.
+    """
+    lane: str | None
+    submission: int | None
+    head: JobRecord
+    running: bool
+    next_start_at: str | None
+
+
+CANCELLED, SIGNAL, REFUSED, UNKNOWN = 'cancelled', 'signal', 'refused', 'unknown'
+
+
+@dataclass(frozen=True)
+class CancelOutcome:
+    """One ID's cancel outcome (§5 *Cancel*).
+
+    `outcome` is CANCELLED (a queued job ended), SIGNAL (a running job's
+    cancel was requested; the worker signals its runner after the commit),
+    REFUSED (a finished job, `state` naming its state), or UNKNOWN. `state`
+    is the job's state after the call, None when unknown.
+    """
+    id: int
+    outcome: str
+    state: str | None
+
+
+REQUEUED, SHADOWED = 'requeued', 'shadowed'
+RETRYABLE = ('failed', 'cancelled', 'interrupted')
+
+
+@dataclass(frozen=True)
+class RetryOutcome:
+    """One ID's retry outcome (§3 *Retry*, §5 *Retry*).
+
+    `outcome` is REQUEUED, REFUSED (a queued, running, or succeeded job,
+    `state` naming its state), SHADOWED (`holder` is the queued or running
+    job holding its preset and URL, DEC-46), or UNKNOWN. `state` is the
+    job's state after the call, None when unknown.
+    """
+    id: int
+    outcome: str
+    state: str | None
+    holder: int | None = None
+
+
+@dataclass(frozen=True)
+class RetryResult:
+    """The new shared submission, None when nothing was requeued."""
+    submission: int | None
+    outcomes: tuple[RetryOutcome, ...]
+
+
 def _positive_id(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise DownloadinuxError('job or submission ID must be a positive integer')
     return value
+
+
+def _valid_timestamp(value: object) -> bool:
+    """Named cookie sources §1's UTC form, ASCII digits only (issue #69)."""
+    if type(value) is not str or cookie_store.TIMESTAMP.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, TIMESTAMP_FORMAT)
+    except ValueError:
+        return False
+    return True
 
 
 def _decode_record(row, path: Path) -> JobRecord:
@@ -121,10 +195,7 @@ def _decode_record(row, path: Path) -> JobRecord:
             wait = json.loads(values['wait'])
             valid = type(wait) is dict and wait == {'reason': 'vpn'}
             if type(wait) is dict and set(wait) == {'reason', 'until'} and wait['reason'] == 'throttle':
-                until = wait['until']
-                if type(until) is str and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', until):
-                    datetime.strptime(until, '%Y-%m-%dT%H:%M:%SZ')
-                    valid = True
+                valid = _valid_timestamp(wait['until'])
             if not valid or values['state'] != 'queued':
                 raise ValueError('invalid wait')
         except Exception:
@@ -132,6 +203,16 @@ def _decode_record(row, path: Path) -> JobRecord:
             raise DownloadinuxError(f'{path}: invalid stored job wait') from None
         values['wait'] = wait
     return JobRecord(**values)
+
+
+def _validate_selection(source, revision, user_agent) -> None:
+    """Pinned selection and user-agent, shared by submission and retry (DEC-45, DEC-46)."""
+    if source is not None or revision is not None:
+        if (type(source) is not str or cookie_store.NAME.fullmatch(source) is None
+                or type(revision) is not str or cookie_store.REVISION.fullmatch(revision) is None):
+            raise DownloadinuxError('cookie selection requires both valid source and revision identifiers')
+    if type(user_agent) is not str or any(char in user_agent for char in '\r\n\0'):
+        raise DownloadinuxError('user-agent must be a string without CR, LF, or NUL')
 
 
 def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tuple[str, ...]:
@@ -146,13 +227,34 @@ def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tu
     for url in urls:
         if type(url) is not str or not url or any(char in url for char in '\r\n\0'):
             raise DownloadinuxError('submission URLs must be nonempty strings without CR, LF, or NUL')
-    if source is not None or revision is not None:
-        if (type(source) is not str or re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', source) is None
-                or type(revision) is not str or re.fullmatch(r'[a-f0-9]{32}', revision) is None):
-            raise DownloadinuxError('submission requires both valid source and revision identifiers')
-    if type(user_agent) is not str or any(char in user_agent for char in '\r\n\0'):
-        raise DownloadinuxError('submission user-agent must be a string without CR, LF, or NUL')
+    _validate_selection(source, revision, user_agent)
     return urls
+
+
+def _job_ids(job_ids, operation: str) -> tuple[int, ...]:
+    """A nonempty ordered sequence of positive IDs; repeats collapse to the first."""
+    if not isinstance(job_ids, Sequence) or isinstance(job_ids, (str, bytes, bytearray)) or not job_ids:
+        raise DownloadinuxError(f'{operation} requires a nonempty ordered sequence of job IDs')
+    return tuple(dict.fromkeys(_positive_id(job_id) for job_id in job_ids))
+
+
+def _retry_entries(entries) -> dict[int, tuple[str | None, str | None, str]]:
+    """Validate every entry before anything changes; repeats collapse to the first."""
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes, bytearray)) or not entries:
+        raise DownloadinuxError('retry requires a nonempty ordered sequence of entries')
+    validated = {}
+    for entry in entries:
+        if not isinstance(entry, Sequence) or isinstance(entry, (str, bytes, bytearray)) or len(entry) != 4:
+            raise DownloadinuxError('retry entries must be (job ID, source, revision, user-agent)')
+        job_id, source, revision, user_agent = entry
+        _positive_id(job_id)
+        _validate_selection(source, revision, user_agent)
+        validated.setdefault(job_id, (source, revision, user_agent))
+    return validated
+
+
+def _default_delay() -> int:
+    return random.randint(*THROTTLE_SECONDS)
 
 
 def _os_error(path: Path, error: OSError) -> DownloadinuxError:
@@ -244,18 +346,19 @@ def _timestamp(clock: Callable[[], datetime]) -> str:
     instant = clock()
     if not isinstance(instant, datetime) or instant.utcoffset() is None:
         raise DownloadinuxError('job-store clock must return a timezone-aware time')
-    return instant.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return instant.astimezone(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
 class JobStore:
     """An open connection whose lifetime is enclosed by worker ownership."""
 
     def __init__(self, path: Path, connection: sqlite3.Connection, lock_fd: int,
-                 clock: Callable[[], datetime]):
+                 clock: Callable[[], datetime], delay: Callable[[], int] = _default_delay):
         self.path = path
         self._connection = connection
         self._lock_fd = lock_fd
         self._clock = clock
+        self._delay = delay
         self._closed = False
 
     def __enter__(self):
@@ -342,6 +445,267 @@ class JobStore:
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
         return self._read(where, tuple(parameters))
 
+    def queue_heads(self) -> tuple[QueueHead, ...]:
+        """Every queue holding a queued job, with its head (§5 *Queues*, DEC-46).
+
+        The head is the queued job with the least queue order. Entries list
+        the lanes by preset name (`gallery`, then `video`), then immediate
+        queues by submission ID; queues with only running or finished jobs
+        are absent.
+        """
+        heads = []
+        with self._transaction() as c:
+            for preset in sorted(PRESETS):
+                entry = self._queue_head(c, 'lane=?', (preset,))
+                if entry is not None:
+                    heads.append(QueueHead(preset, None, *entry, self._deadline(c, preset)))
+            submissions = [row[0] for row in c.execute(
+                "SELECT DISTINCT submission FROM jobs WHERE lane IS NULL AND state='queued' ORDER BY submission")]
+            for submission in submissions:
+                head, running = self._queue_head(c, 'lane IS NULL AND submission=?', (submission,))
+                heads.append(QueueHead(None, submission, head, running, None))
+        return tuple(heads)
+
+    def start(self, job_id: int) -> JobRecord:
+        """Move a queued job to `running` (§5 *Start*, DEC-46); return its record.
+
+        Raises `DownloadinuxError`, changing nothing, unless the job is
+        queued, heads its queue, its queue has no running job, and, for a
+        lane job, the lane's deadline is null or not after now. Unknown or
+        invalid IDs are refused as `get` refuses them. The VPN gate is the
+        scheduler's.
+        """
+        job_id = _positive_id(job_id)
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'queued':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a queued job can start')
+            where, parameters = self._queue_of(job)
+            head, _ = self._queue_head(c, where, parameters)
+            if head.id != job_id:
+                raise DownloadinuxError(f'job {job_id} does not head its queue; job {head.id} does')
+            running = c.execute(f"SELECT id FROM jobs WHERE {where} AND state='running' ORDER BY id",
+                                parameters).fetchone()
+            if running is not None:
+                raise DownloadinuxError(f'job {job_id} cannot start while job {running[0]} runs in its queue')
+            if job.lane is not None:
+                deadline = self._deadline(c, job.lane)
+                if deadline is not None and deadline > now:
+                    raise DownloadinuxError(f'job {job_id} cannot start before its lane deadline {deadline}')
+            c.execute("UPDATE jobs SET state='running', started_at=?, wait=NULL WHERE id=?", (now, job_id))
+            return self._job(c, job_id)
+
+    def set_wait(self, job_id: int, reason: str | None) -> JobRecord:
+        """Set (`'vpn'`, `'throttle'`) or clear (None) a queued job's wait (§5 *Waits*).
+
+        A throttle wait copies its `until` from the lane's stored deadline.
+        Raises `DownloadinuxError`, changing nothing, for a job that is not
+        queued, and for a throttle wait on an immediate job or a lane with
+        no deadline. Returns the updated record.
+        """
+        job_id = _positive_id(job_id)
+        if reason is not None and (type(reason) is not str or reason not in ('vpn', 'throttle')):
+            raise DownloadinuxError('job wait reason must be vpn, throttle, or null')
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'queued':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a queued job can wait')
+            wait = None
+            if reason == 'vpn':
+                wait = json.dumps({'reason': 'vpn'})
+            elif reason == 'throttle':
+                if job.lane is None:
+                    raise DownloadinuxError(f'job {job_id} is immediate; only a lane job waits for the throttle')
+                deadline = self._deadline(c, job.lane)
+                if deadline is None:
+                    raise DownloadinuxError(f'job {job_id} cannot wait for the throttle: its lane has no deadline')
+                wait = json.dumps({'reason': 'throttle', 'until': deadline})
+            c.execute('UPDATE jobs SET wait=? WHERE id=?', (wait, job_id))
+            return self._job(c, job_id)
+
+    def end(self, job_id: int, *, exit_status: int | None = None, launch_failure: str | None = None,
+            stopping: bool = False) -> JobRecord:
+        """End a running job (§5 *End*, §3's rows in order); return its record.
+
+        Takes the runner's exit status (0 to 255) or a launch-failure reason,
+        never both, and whether the worker is stopping. A lane job draws its
+        lane's deadline in the same transaction (§5 *Lane deadline*). Raises
+        `DownloadinuxError`, changing nothing, unless the job is running.
+        """
+        job_id = _positive_id(job_id)
+        if (exit_status is None) == (launch_failure is None):
+            raise DownloadinuxError('ending a job takes either an exit status or a launch-failure reason')
+        if exit_status is not None and (type(exit_status) is not int or not 0 <= exit_status <= 255):
+            raise DownloadinuxError('job exit status must be an integer from 0 to 255')
+        if launch_failure is not None and (type(launch_failure) is not str or not launch_failure
+                                           or '\0' in launch_failure):
+            raise DownloadinuxError('job launch-failure reason must be a nonempty string without NUL')
+        if type(stopping) is not bool:
+            raise DownloadinuxError('job end stopping flag must be a boolean')
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'running':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a running job can end')
+            # The first matching row of §3 applies.
+            if launch_failure is not None:
+                state, error = 'failed', launch_failure
+            elif exit_status == 0:
+                state, error = 'succeeded', None
+            elif job.cancel_requested:
+                state, error = 'cancelled', None
+            elif stopping:
+                state, error = 'interrupted', 'worker stopped'
+            else:
+                state, error = 'failed', None
+            c.execute('UPDATE jobs SET state=?, finished_at=?, exit_status=?, error=? WHERE id=?',
+                      (state, now, exit_status, error, job_id))
+            if job.lane is not None:
+                self._draw_deadline(c, job.lane, now)
+            return self._job(c, job_id)
+
+    def cancel(self, job_ids: Sequence[int]) -> tuple[CancelOutcome, ...]:
+        """Cancel jobs in one transaction, one outcome per ID in order (§5 *Cancel*).
+
+        Repeats collapse to the first. A queued job becomes `cancelled` and
+        draws no lane delay (DEC-46); a running job gets `cancel_requested`
+        (again, if already set) and a SIGNAL outcome. Refused and unknown IDs
+        are returned, not raised, and change nothing.
+        """
+        job_ids = _job_ids(job_ids, 'cancel')
+        now = _timestamp(self._clock)
+        outcomes = []
+        with self._transaction() as c:
+            for job_id in job_ids:
+                row = c.execute('SELECT state FROM jobs WHERE id=?', (job_id,)).fetchone()
+                if row is None:
+                    outcomes.append(CancelOutcome(job_id, UNKNOWN, None))
+                elif row[0] == 'queued':
+                    c.execute("UPDATE jobs SET state='cancelled', cancel_requested=1, finished_at=?, wait=NULL"
+                              ' WHERE id=?', (now, job_id))
+                    outcomes.append(CancelOutcome(job_id, CANCELLED, 'cancelled'))
+                elif row[0] == 'running':
+                    c.execute('UPDATE jobs SET cancel_requested=1 WHERE id=?', (job_id,))
+                    outcomes.append(CancelOutcome(job_id, SIGNAL, 'running'))
+                else:
+                    outcomes.append(CancelOutcome(job_id, REFUSED, row[0]))
+        return tuple(outcomes)
+
+    def retry(self, entries: Sequence[tuple[int, str | None, str | None, str]]) -> RetryResult:
+        """Requeue finished jobs as one new submission (§3 *Retry*, §5 *Retry*, DEC-46).
+
+        Each entry is (job ID, source, revision, user-agent): the selection
+        the host pinned, validated as for a submission. Repeats collapse to
+        the first. In request order, a failed, cancelled, or interrupted job
+        whose preset and URL no queued or running job holds is requeued at
+        the back of its queue; its lane is unchanged, so immediate jobs
+        retried together form one queue keyed by the new submission, which
+        is allocated only when something is requeued. Refused, shadowed, and
+        unknown IDs are returned, not raised, and change nothing.
+        """
+        entries = _retry_entries(entries)
+        now = _timestamp(self._clock)
+        submission = None
+        outcomes = []
+        with self._transaction() as c:
+            for job_id, (source, revision, user_agent) in entries.items():
+                row = c.execute('SELECT state, preset, url FROM jobs WHERE id=?', (job_id,)).fetchone()
+                if row is None:
+                    outcomes.append(RetryOutcome(job_id, UNKNOWN, None))
+                    continue
+                state, preset, url = row
+                if state not in RETRYABLE:
+                    outcomes.append(RetryOutcome(job_id, REFUSED, state))
+                    continue
+                # Look before updating, with the active index's exact binary
+                # comparison, so the index never fires on a valid request and
+                # a job this retry requeued already shadows later IDs.
+                holder = c.execute('''SELECT id FROM jobs WHERE preset=? AND url=?
+                                      AND state IN ('queued', 'running') ORDER BY id''', (preset, url)).fetchone()
+                if holder is not None:
+                    outcomes.append(RetryOutcome(job_id, SHADOWED, state, holder[0]))
+                    continue
+                if submission is None:
+                    submission = c.execute('INSERT INTO submissions(created_at) VALUES (?)', (now,)).lastrowid
+                c.execute('UPDATE queue_counter SET value=value+1 WHERE id=1')
+                order = c.execute('SELECT value FROM queue_counter WHERE id=1').fetchone()[0]
+                c.execute('''UPDATE jobs SET state='queued', submission=?, attempt=attempt+1, queue_order=?,
+                             queued_at=?, source=?, revision=?, user_agent=?, cancel_requested=0, wait=NULL,
+                             started_at=NULL, finished_at=NULL, exit_status=NULL, error=NULL WHERE id=?''',
+                          (submission, order, now, source, revision, user_agent, job_id))
+                outcomes.append(RetryOutcome(job_id, REQUEUED, 'queued'))
+        return RetryResult(submission, tuple(outcomes))
+
+    def reconcile(self) -> tuple[int, ...]:
+        """Worker start: mark running jobs `interrupted` with `worker restarted`.
+
+        Also clears every queued job's wait (§5 *Interrupted marks*, DEC-46).
+        Returns the marked IDs in ID order. `open_store` never calls this.
+        """
+        return self._mark_interrupted('worker restarted', clear_waits=True)
+
+    def mark_stopped(self) -> tuple[int, ...]:
+        """Shutdown's final mark: running jobs become `interrupted` with `worker stopped`.
+
+        Queued waits are untouched. Returns the marked IDs in ID order.
+        """
+        return self._mark_interrupted('worker stopped', clear_waits=False)
+
+    def _mark_interrupted(self, error: str, *, clear_waits: bool) -> tuple[int, ...]:
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            running = c.execute("SELECT id, lane FROM jobs WHERE state='running' ORDER BY id").fetchall()
+            for job_id, lane in running:
+                c.execute("UPDATE jobs SET state='interrupted', finished_at=?, exit_status=NULL, error=?"
+                          ' WHERE id=?', (now, error, job_id))
+                if lane is not None:
+                    self._draw_deadline(c, lane, now)
+            if clear_waits:
+                c.execute("UPDATE jobs SET wait=NULL WHERE state='queued'")
+        return tuple(job_id for job_id, _ in running)
+
+    def _draw_deadline(self, c: sqlite3.Connection, lane: str, finished_at: str) -> None:
+        """Inside the ending transaction, so a crash cannot skip a throttle (DEC-46)."""
+        delay = self._delay()
+        if type(delay) is not int or delay < 0:
+            raise DownloadinuxError('job-store delay source must return a nonnegative integer')
+        try:
+            deadline = (datetime.strptime(finished_at, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+                        + timedelta(seconds=delay)).strftime(TIMESTAMP_FORMAT)
+        except OverflowError:
+            raise DownloadinuxError('job-store delay is out of range') from None
+        c.execute('UPDATE lanes SET next_start_at=? WHERE preset=?', (deadline, lane))
+
+    def _job(self, c: sqlite3.Connection, job_id: int) -> JobRecord:
+        row = c.execute('SELECT ' + ', '.join(RECORD_FIELDS) + ' FROM jobs WHERE id=?', (job_id,)).fetchone()
+        if row is None:
+            raise DownloadinuxError(f'{self.path}: unknown job ID {job_id}')
+        return _decode_record(row, self.path)
+
+    @staticmethod
+    def _queue_of(job: JobRecord) -> tuple[str, tuple]:
+        """A lane job's queue is its lane; an immediate job's is its submission."""
+        if job.lane is not None:
+            return 'lane=?', (job.lane,)
+        return 'lane IS NULL AND submission=?', (job.submission,)
+
+    def _queue_head(self, c: sqlite3.Connection, where: str, parameters: tuple
+                    ) -> tuple[JobRecord, bool] | None:
+        row = c.execute('SELECT ' + ', '.join(RECORD_FIELDS) + f" FROM jobs WHERE {where} AND state='queued'"
+                        ' ORDER BY queue_order LIMIT 1', parameters).fetchone()
+        if row is None:
+            return None
+        running = c.execute(f"SELECT EXISTS (SELECT 1 FROM jobs WHERE {where} AND state='running')",
+                            parameters).fetchone()[0]
+        return _decode_record(row, self.path), bool(running)
+
+    def _deadline(self, c: sqlite3.Connection, preset: str) -> str | None:
+        deadline = c.execute('SELECT next_start_at FROM lanes WHERE preset=?', (preset,)).fetchone()[0]
+        if deadline is not None and not _valid_timestamp(deadline):
+            raise DownloadinuxError(f'{self.path}: invalid stored lane deadline')
+        return deadline
+
     @contextmanager
     def _transaction(self):
         """Commit is publication. Rollback is attempted even after commit fails."""
@@ -358,6 +722,8 @@ class JobStore:
                 raise _sqlite_error(self.path, error) from None
             if isinstance(error, UnicodeError):
                 raise DownloadinuxError(f'{self.path}: SQLite text encoding failed') from None
+            if isinstance(error, OverflowError):
+                raise DownloadinuxError(f'{self.path}: SQLite integer out of range') from None
             raise
 
     def _initialize(self) -> None:
@@ -400,9 +766,13 @@ class JobStore:
             raise DownloadinuxError(f'{self.path}: damaged job store')
 
 
-def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
-               ) -> JobStore | Busy:
-    """Try nonblocking ownership, then open/initialize. Never create state."""
+def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+               delay: Callable[[], int] = _default_delay) -> JobStore | Busy:
+    """Try nonblocking ownership, then open/initialize. Never create state.
+
+    `delay` draws a lane's throttle delay in whole seconds (§4, §5 *Lane
+    deadline*); tests inject it.
+    """
     state = Path(state)
     path = state / DIRECTORY
     lock_fd = None
@@ -441,7 +811,7 @@ def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.
         if (connection.execute('PRAGMA synchronous').fetchone() != (2,)
                 or connection.execute('PRAGMA foreign_keys').fetchone() != (1,)):
             raise DownloadinuxError(f'{current_path}: SQLite durability settings unavailable')
-        store = JobStore(current_path, connection, lock_fd, clock)
+        store = JobStore(current_path, connection, lock_fd, clock, delay)
         store._initialize()
         # Close directory handles before transferring the connection/owner, so
         # a failed directory close still takes the failed-open cleanup path.
