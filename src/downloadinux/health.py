@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import stat
 import time
 from collections.abc import Mapping
@@ -17,7 +16,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookie_store, cookie_writer, cookiejar, credentials
+from downloadinux import (
+    compose, cookie_store, cookie_writer, cookiejar, credentials, nordvpn_output,
+)
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host, Settings
@@ -360,15 +361,6 @@ def _container_checks(
     return checks
 
 
-def _nordvpn_value(output: str, label: str) -> str | None:
-    prefix = f"{label}:".casefold()
-    for line in re.split(r"[\r\n]", output):
-        line = line.strip()
-        if line.casefold().startswith(prefix):
-            return line[len(prefix):].strip()
-    return None
-
-
 def _vpn_checks(
     settings: Settings,
     invocation: compose.Invocation | None,
@@ -398,16 +390,14 @@ def _vpn_checks(
     status, output = _container_capture(
         invocation, ["nordvpn", "status"], capture
     )
-    connected = (
-        status == 0
-        and (_nordvpn_value(output, "Status") or "").casefold() == "connected"
-    )
+    # The worker's VPN gate reads the same interpretation (DEC-47).
+    connected = nordvpn_output.connected(status, output)
     if connected:
         location = [
             value
             for value in (
-                _nordvpn_value(output, "Country"),
-                _nordvpn_value(output, "Server"),
+                nordvpn_output.value(output, "Country"),
+                nordvpn_output.value(output, "Server"),
             )
             if value
         ]
@@ -421,7 +411,7 @@ def _vpn_checks(
     status, output = _container_capture(
         invocation, ["nordvpn", "settings"], capture
     )
-    observed = _nordvpn_value(output, "Kill Switch") if status == 0 else None
+    observed = nordvpn_output.value(output, "Kill Switch") if status == 0 else None
     observed = observed.casefold() if observed is not None else None
     if observed not in {"enabled", "disabled"}:
         observed = None
