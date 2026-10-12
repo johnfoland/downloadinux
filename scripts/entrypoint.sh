@@ -51,6 +51,10 @@ for d in /home/dl/.local /home/dl/.local/share /home/dl/.local/share/downloadinu
   mkdir -p "$d"
   chown -h "$uid:$gid" "$d"
 done
+# The worker's socket directory (Persistent worker and jobs §1, "Packaging"),
+# in the container's own filesystem, on every start: an existing one (the
+# filesystem outlives a docker restart) gets its mode and owner back too.
+install -d -m 0700 -o "$uid" -g "$gid" /run/downloadinux
 
 # --- NordVPN ----------------------------------------------------------------
 start_nordvpn() {

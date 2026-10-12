@@ -7,7 +7,11 @@ Exec cannot set environment through dlx, so it logs to the fixed directory
 /downloads/route-smoke: per call, its argv NUL-separated, then a JSON record
 naming its cookie argument, that file's SHA-256, and the source and revision
 in the metadata.json beside it. It never records or prints cookie contents.
-It exits 7 when a URL ends in /exit7, else 0.
+Then it prints the line `route-smoke stub ran` (no argument or cookie
+material), so a worker job's log shows it ran (Persistent worker and jobs
+§1). When a URL ends in /hold it then polls every 0.1 s forever, keeping the
+default SIGTERM disposition, so a signal kills it. Otherwise it exits 7 when
+a URL ends in /exit7, else 0.
 """
 import hashlib
 import json
@@ -34,4 +38,8 @@ stem.with_suffix('.argv').write_bytes(b''.join(arg.encode() + b'\0' for arg in a
 staged = stem.with_suffix('.tmp')
 staged.write_text(json.dumps(record))
 staged.rename(stem.with_suffix('.json'))
+print('route-smoke stub ran', flush=True)
+if any(arg.endswith('/hold') for arg in args):
+    while True:
+        time.sleep(0.1)
 sys.exit(7 if any(arg.endswith('/exit7') for arg in args) else 0)

@@ -84,12 +84,14 @@ COPY --chown=1000:1000 zsh/ /home/dl/.zsh-custom/
 
 USER root
 # --- Cookie runner (Named cookie sources §3, "Packaging"; DEC-36) -------------
+# --- and worker (Persistent worker and jobs §1, "Packaging"; DEC-41) --------
 # The package, root-owned and read-only to dl, for the system interpreter
-# only: the runner imports nothing from /opt/venv.
+# only: the runner and the worker import nothing from /opt/venv.
 COPY src/downloadinux/ /opt/downloadinux/downloadinux/
 COPY scripts/downloadinux-runner /usr/local/bin/downloadinux-runner
+COPY scripts/downloadinux-worker /usr/local/bin/downloadinux-worker
 RUN chmod -R go-w /opt/downloadinux \
-    && chmod 755 /usr/local/bin/downloadinux-runner \
+    && chmod 755 /usr/local/bin/downloadinux-runner /usr/local/bin/downloadinux-worker \
     && /usr/bin/python3 -m compileall -q /opt/downloadinux
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -100,4 +102,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/vpn
 
 WORKDIR /downloads
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["sleep", "infinity"]
+# The worker is the main process, as dl through the entrypoint's gosu, under
+# Compose's init (Persistent worker and jobs §1, "Packaging").
+CMD ["downloadinux-worker", "serve", "--cookies", "/cookies", "--state", "/state"]
