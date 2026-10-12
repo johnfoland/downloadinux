@@ -2252,7 +2252,10 @@ returned, every further launch, poll, cancel, or shutdown raises the
 operation error `the worker has stopped`, changing nothing. Refusing
 submissions while stopping, handling the worker's own signals, and its exit
 status are the service's (§1). The monotonic clock and the sleep are
-injectable, with `time.monotonic` and `time.sleep` as the defaults.
+injectable, with `time.monotonic` and `time.sleep` as the defaults. A
+signal error is raised, with cancel's text, only once the wait and the mark
+are done; a signal or launch failure whose OS error has no reason text reads
+`signal failed` or `launch failed` (DEC-49).
 
 ### 6. Host commands
 

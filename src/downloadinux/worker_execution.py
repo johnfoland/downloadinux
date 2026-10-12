@@ -1,4 +1,4 @@
-"""The worker's runner execution: launch, attempt logs, and exit polls (DEC-48).
+"""The worker's runner execution: launch, logs, exits, cancel, and shutdown (DEC-48).
 
 Target design, *Persistent worker and jobs* §4 *Execution* and §5, "Runner
 execution, cancel signals, and the shutdown wait". Standard library only (§1,
@@ -9,6 +9,7 @@ owning thread.
 """
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import time
@@ -21,6 +22,9 @@ RUNNER = 'downloadinux-runner'
 LOG_FLAGS = (os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
              | os.O_CLOEXEC | os.O_NONBLOCK)  # a planted FIFO cannot stall a launch
 LAUNCH_FAILED = 'launch failed'
+STOPPED = 'the worker has stopped'
+SHUTDOWN_WAIT = 20  # seconds after the shutdown signals (§5 *Shutdown*)
+POLL_INTERVAL = 0.1  # the longest sleep between shutdown polls
 
 
 def runner_argv(record: job_store.JobRecord, cookies: Path, state: Path) -> list[str]:
@@ -63,7 +67,8 @@ class Executor:
         self._monotonic = monotonic
         self._sleep = sleep
         self._running: dict[int, subprocess.Popen] = {}
-        self._stopping = False
+        self._stopping = False  # shutdown has begun: every end passes stopping
+        self._stopped = False  # shutdown has returned: every call is refused
 
     @property
     def running(self) -> tuple[int, ...]:
@@ -81,6 +86,7 @@ class Executor:
         the process exists raise `DownloadinuxError` with DEC-48's reasons,
         which the scheduler records as the job's `error`; the log stays.
         """
+        self._refuse_stopped()
         log = self._store.logs / job_store.log_name(record.id, record.attempt)
         fd = self._open_log(log)
         try:
@@ -106,6 +112,10 @@ class Executor:
         its end commits: a failed end propagates, and a later poll ends it
         again. Returns the ended records in order.
         """
+        self._refuse_stopped()
+        return self._poll()
+
+    def _poll(self) -> tuple[job_store.JobRecord, ...]:
         ended = []
         for job_id in sorted(self._running):
             status = self._running[job_id].poll()
@@ -116,6 +126,86 @@ class Executor:
             del self._running[job_id]
             ended.append(record)
         return tuple(ended)
+
+    def cancel(self, job_ids) -> tuple[job_store.CancelOutcome, ...]:
+        """Cancel through the store, then `SIGTERM` each runner it says to signal (§5 *Cancel signals*).
+
+        After the store's commit, in outcome order, each SIGNAL outcome's
+        registered runner process gets `SIGTERM`, never its group: the runner
+        forwards it to the downloader's group (DEC-36). A runner known to
+        have exited, or a job with no registered runner, gets none. Every
+        signal is attempted; the first OS error other than a vanished
+        process then raises `cannot signal the runner of job <id>: <reason>`.
+        Otherwise returns the store's outcomes unchanged.
+        """
+        self._refuse_stopped()
+        outcomes = self._store.cancel(job_ids)
+        self._raise_first(self._signal(o.id for o in outcomes if o.outcome == job_store.SIGNAL))
+        return outcomes
+
+    def shutdown(self, scheduler) -> tuple[int, ...]:
+        """Stop, signal, wait at most 20 seconds, then mark (§5 *Shutdown*); one blocking call.
+
+        Stops the scheduler, so nothing more starts; from then on every end
+        passes stopping. Sends `SIGTERM` to every registered runner in job
+        ID order, as cancel does, then polls until none is registered or
+        20 seconds have passed since those signals on the monotonic clock,
+        sleeping at most 0.1 seconds between polls, never past that deadline,
+        and polling once more at it. The store's shutdown mark then records
+        every job still running as `interrupted` with `worker stopped`;
+        returns the marked IDs. Runners still alive are left to the
+        container's stop: no `SIGKILL`. A signal error is raised as cancel
+        raises it, once the wait and the mark are done (DEC-49). Afterwards
+        every launch, poll, cancel, and shutdown raises `the worker has
+        stopped`.
+        """
+        self._refuse_stopped()
+        scheduler.stop()
+        self._stopping = True
+        failure = self._signal(sorted(self._running))
+        deadline = self._monotonic() + SHUTDOWN_WAIT
+        while True:
+            self._poll()
+            if not self._running:
+                break
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                break
+            self._sleep(min(POLL_INTERVAL, remaining))
+        marked = self._store.mark_stopped()
+        self._stopped = True
+        self._raise_first(failure)
+        return marked
+
+    def _signal(self, job_ids) -> tuple[int, OSError] | None:
+        """`SIGTERM` each job's registered runner process; return the first failure."""
+        failure = None
+        for job_id in job_ids:
+            process = self._running.get(job_id)
+            if process is None or process.returncode is not None:
+                continue
+            try:
+                # Polls first, skipping a reaped runner, and ignores a
+                # vanished PID (ProcessLookupError).
+                process.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                if failure is None:
+                    failure = (job_id, error)
+        return failure
+
+    @staticmethod
+    def _raise_first(failure: tuple[int, OSError] | None) -> None:
+        if failure is not None:
+            job_id, error = failure
+            # A reasonless OS error reads `signal failed` (DEC-49).
+            raise DownloadinuxError(
+                f'cannot signal the runner of job {job_id}: {error.strerror or "signal failed"}') from None
+
+    def _refuse_stopped(self) -> None:
+        if self._stopped:
+            raise DownloadinuxError(STOPPED)
 
     def _open_log(self, log: Path) -> int:
         try:

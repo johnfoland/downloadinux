@@ -18,11 +18,13 @@ import time
 
 import pytest
 
-from downloadinux import cookie_runner, cookie_store, job_store as js, launch, worker_execution as we
+from downloadinux import cookie_runner, cookie_snapshot, cookie_store, job_store as js, launch
+from downloadinux import worker_execution as we
 from downloadinux import worker_scheduler as ws
 from downloadinux.errors import DownloadinuxError
 
-from snapshot_support import open_fds, wait_for
+from runner_support import STUB
+from snapshot_support import SRC, open_fds, roots, wait_for
 
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 UA = 'Mozilla/5.0 synthetic'
@@ -34,6 +36,7 @@ ALPHA = '1' * 32
 #   wait=NAME    wait until FIXTURE_LOG/release-NAME (or release-all) exists
 #   term=die     on SIGTERM, record it and die by it (the default)
 #   term=ignore  record SIGTERM and keep going
+#   term=ignoreN record SIGTERM; keep going for the first N, then die by it
 #   term=exitN   record SIGTERM and exit N
 #   kill=N       die by signal N
 #   exit=N       exit N (default 0)
@@ -44,11 +47,14 @@ url = sys.argv[-1]
 words = dict(word.partition('=')[::2] for word in url.split(',') if word)
 base = os.path.join(log, str(os.getpid()))
 
+received = []
+
 def on_term(number, frame):
     with open(base + '.signals', 'a') as handle:
         handle.write('%d\n' % number)
+    received.append(number)
     action = words.get('term', 'die')
-    if action == 'ignore':
+    if action == 'ignore' or (action.startswith('ignore') and len(received) <= int(action[6:])):
         return
     if action.startswith('exit'):
         os._exit(int(action[4:]))
@@ -527,3 +533,330 @@ def test_a_closed_store_fails_the_poll_and_keeps_the_runner(rig):
     with pytest.raises(DownloadinuxError):
         wait_for(lambda: executor.poll() and False)
     assert executor.running == (job,)
+
+
+# Cancel signals (§5 *Cancel signals*).
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def started(rig, store, executor, url, **submit):
+    job = store.submit('video', [url], **submit).created[0].id
+    executor.launch(store.start(job))
+    return job, rig.record(url)
+
+
+def test_cancel_signals_a_running_runner_which_ends_cancelled(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    job, record = started(rig, store, executor, 'wait=x')
+    outcomes = executor.cancel([job])
+    assert outcomes == (js.CancelOutcome(job, js.SIGNAL, 'running'),)
+    [ended] = poll_until(executor, 1)
+    assert (ended.state, ended.exit_status, ended.cancel_requested) == ('cancelled', 143, True)
+    assert rig.signals(record) == [signal.SIGTERM]
+
+
+def test_a_runner_exiting_0_after_cancel_succeeded(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    job, record = started(rig, store, executor, 'wait=x,term=exit0')
+    executor.cancel([job])
+    [ended] = poll_until(executor, 1)
+    assert (ended.state, ended.exit_status, ended.cancel_requested) == ('succeeded', 0, True)
+    assert rig.signals(record) == [signal.SIGTERM]
+
+
+def test_cancelling_again_signals_again(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    job, record = started(rig, store, executor, 'wait=x,term=ignore,exit=3')
+    executor.cancel([job])
+    wait_for(lambda: rig.signals(record) == [signal.SIGTERM])
+    assert executor.cancel([job, job]) == (js.CancelOutcome(job, js.SIGNAL, 'running'),)
+    wait_for(lambda: rig.signals(record) == [signal.SIGTERM] * 2)
+    assert executor.poll() == ()
+    rig.release('x')
+    [ended] = poll_until(executor, 1)
+    assert (ended.state, ended.exit_status) == ('cancelled', 3)
+    assert rig.signals(record) == [signal.SIGTERM] * 2
+
+
+class Kills:
+    """Record every os.kill while passing it to the real call."""
+
+    def __init__(self, monkeypatch):
+        self.calls = []
+        real = os.kill
+
+        def kill(pid, number):
+            self.calls.append((pid, number))
+            return real(pid, number)
+        monkeypatch.setattr(os, 'kill', kill)
+
+
+def test_cancel_outcomes_pass_through_and_only_registered_live_runners_are_signalled(rig, monkeypatch):
+    store = rig.open(delay=lambda: 0)
+    executor = rig.executor(store)
+    lane = store.submit('video', ['wait=x,exit=0', 'queued'], lane='video').created
+    executor.launch(store.start(lane[0].id))
+    running = rig.record('wait=x,exit=0')
+    finished, _ = started(rig, store, executor, 'exit=0')
+    poll_until(executor, 1)
+    exited, gone = started(rig, store, executor, 'exit=5')
+    # Exited but not yet reaped or polled: waitid peeks without reaping.
+    wait_for(lambda: os.waitid(os.P_PID, gone['pid'], os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None)
+    unlaunched = store.submit('gallery', ['unlaunched']).created[0].id
+    store.start(unlaunched)  # committed, never launched: no registered runner
+    kills = Kills(monkeypatch)
+    outcomes = executor.cancel([999, finished, lane[1].id, lane[0].id, exited, unlaunched])
+    assert outcomes == (
+        js.CancelOutcome(999, js.UNKNOWN, None),
+        js.CancelOutcome(finished, js.REFUSED, 'succeeded'),
+        js.CancelOutcome(lane[1].id, js.CANCELLED, 'cancelled'),
+        js.CancelOutcome(lane[0].id, js.SIGNAL, 'running'),
+        js.CancelOutcome(exited, js.SIGNAL, 'running'),
+        js.CancelOutcome(unlaunched, js.SIGNAL, 'running'),
+    )
+    assert kills.calls == [(running['pid'], signal.SIGTERM)]  # a process, never a group
+    assert deadline(store, 'video') is None  # a queued cancel draws no throttle
+    assert store.get(lane[1].id).finished_at is not None
+    ended = {r.id: r for r in poll_until(executor, 2)}
+    assert (ended[lane[0].id].state, ended[lane[0].id].exit_status) == ('cancelled', 143)
+    assert (ended[exited].state, ended[exited].exit_status) == ('cancelled', 5)
+    assert store.get(unlaunched).state == 'running'
+    assert executor.shutdown(rig.scheduler(store, executor)) == (unlaunched,)
+    assert (store.get(unlaunched).state, store.get(unlaunched).error) == ('interrupted', 'worker stopped')
+
+
+class Foreign:
+    """A registered runner whose PID belongs to another user: signalling it
+    makes the real kill(2) fail with EPERM."""
+
+    returncode = None
+    pid = 1
+
+    def poll(self):
+        return None
+
+    def send_signal(self, number):
+        os.kill(self.pid, number)
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='root may signal any process')
+def test_a_signal_error_is_raised_after_every_signal_and_the_commit(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    foreign = store.submit('video', ['foreign']).created[0].id
+    store.start(foreign)
+    executor._running[foreign] = Foreign()
+    job, record = started(rig, store, executor, 'wait=x')
+    with pytest.raises(DownloadinuxError) as error:
+        executor.cancel([foreign, job])
+    assert str(error.value) == f'cannot signal the runner of job {foreign}: {os.strerror(errno.EPERM)}'
+    assert store.get(foreign).cancel_requested and store.get(job).cancel_requested
+    wait_for(lambda: rig.signals(record) == [signal.SIGTERM])
+    [ended] = poll_until(executor, 1)
+    assert (ended.id, ended.state) == (job, 'cancelled')
+    del executor._running[foreign]
+
+
+def test_cancel_ends_the_runner_its_downloader_and_grandchild_and_removes_the_snapshot(tmp_path, monkeypatch):
+    """The process tree through the real runner (DEC-36, DEC-48)."""
+    cookies, state = roots(tmp_path)
+    bin_, log, downloads = tmp_path / 'tree-bin', tmp_path / 'stub-log', tmp_path / 'downloads'
+    for directory in (bin_, log, downloads):
+        directory.mkdir()
+    runner = bin_ / we.RUNNER
+    runner.write_text(f'#!{sys.executable} -I\nimport sys\nsys.path.insert(0, {str(SRC)!r})\n'
+                      'from downloadinux.cookie_runner import main\nsys.exit(main())\n')
+    runner.chmod(0o755)
+    for name in ('yt-dlp', 'gallery-dl'):
+        (bin_ / name).write_text(STUB.replace('{python}', sys.executable))
+        (bin_ / name).chmod(0o755)
+    for name, value in (('PATH', str(bin_)), ('STUB_LOG', str(log)), ('STUB_MODE', 'grandchild,wait'),
+                        ('STUB_GC_MODE', 'wait')):
+        monkeypatch.setenv(name, value)
+    store = js.open_store(state, clock=lambda: NOW)
+    executor = we.Executor(store, cookies=cookies, state=state, downloads=downloads)
+    try:
+        job = store.submit('video', ['https://example.com/v'], source='alpha', revision=ALPHA,
+                           user_agent=UA).created[0].id
+        executor.launch(store.start(job))
+        wait_for(lambda: len(list(log.glob('yt-dlp-child-*.json'))) == 1
+                 and len(list(log.glob('yt-dlp-grandchild-*.json'))) == 1)
+        [child] = [json.loads(p.read_text()) for p in log.glob('yt-dlp-child-*.json')]
+        [grandchild] = [json.loads(p.read_text()) for p in log.glob('yt-dlp-grandchild-*.json')]
+        jar = Path(child['jar'])
+        # The private snapshot exists during the run; no argv names the shared store.
+        assert jar.is_file() and jar.parent.parent == state / cookie_snapshot.DIRECTORY
+        runner_args = we.runner_argv(store.get(job), cookies, state)
+        assert str(cookies) not in ' '.join(child['argv'] + grandchild['argv'])
+        assert not [item for item in runner_args + child['argv'] if 'cookies.txt' in item and item != str(jar)]
+        assert child['pgid'] == child['pid'] and grandchild['pgid'] == child['pgid']
+        assert executor.cancel([job]) == (js.CancelOutcome(job, js.SIGNAL, 'running'),)
+        [ended] = poll_until(executor, 1)
+        assert (ended.state, ended.exit_status) == ('cancelled', 143)
+        for record in (child, grandchild):
+            role = 'child' if record is child else 'grandchild'
+            signals = (log / f'yt-dlp-{role}-{record["pid"]}.signals').read_text().split()
+            assert signals == [str(int(signal.SIGTERM))]
+            wait_for(lambda: not alive(record['pid']))
+        assert not jar.exists() and not jar.parent.exists()
+        assert store.logs.joinpath(js.log_name(job, 1)).read_bytes() == b''
+    finally:
+        (log / 'release').touch()
+        (log / 'release-gc').touch()
+        for process in executor._running.values():
+            process.kill()
+            process.wait()
+        store.close()
+
+
+# Shutdown (§5 *Shutdown*).
+
+class Clock:
+    """Fake monotonic time and sleep for the shutdown wait.
+
+    Every read costs `drift` seconds, as real polls do, so the wait is not a
+    whole number of tenths and its last sleep must be cut short. Each sleep
+    first waits, in real time, until every registered runner but the
+    `stubborn` ones has exited, so the fake 20 seconds never outrun a real
+    exit; then it advances the clock by exactly the requested amount. The
+    deadline is the first read after `arm`: the moment of the signals.
+    """
+
+    def __init__(self, start=1000.0, drift=0.013):
+        self.now = start
+        self.drift = drift
+        self.sleeps = []
+        self.executor = None
+        self.stubborn = set()
+        self.armed = False
+        self.deadline = None
+        self.read = None
+
+    def arm(self):
+        self.armed = True
+
+    def monotonic(self):
+        value = self.read = self.now
+        if self.armed and self.deadline is None:
+            self.deadline = value + 20
+        self.now += self.drift
+        return value
+
+    def sleep(self, seconds):
+        assert 0 < seconds <= 0.1
+        assert self.read + seconds <= self.deadline + 1e-9  # never past the deadline
+        wait_for(lambda: all(process.poll() is not None
+                             for job, process in self.executor._running.items() if job not in self.stubborn))
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def test_shutdown_signals_waits_at_most_20_seconds_and_marks_the_rest(rig):
+    clock = Clock()
+    store = rig.open(delay=lambda: 11)
+    executor = rig.executor(store, monotonic=clock.monotonic, sleep=clock.sleep)
+    clock.executor = executor
+    run = rig.scheduler(store, executor)
+    interrupted, a = started(rig, store, executor, 'wait=x')
+    succeeded, b = started(rig, store, executor, 'wait=x,term=exit0')
+    cancelled, c = started(rig, store, executor, 'wait=x,term=ignore1')
+    executor.cancel([cancelled])
+    wait_for(lambda: rig.signals(c) == [signal.SIGTERM])
+    stubborn = store.submit('video', ['wait=x,term=ignore'], lane='video').created[0].id
+    executor.launch(store.start(stubborn))
+    d = rig.record('wait=x,term=ignore')
+    unlaunched = store.submit('gallery', ['unlaunched'], lane='gallery').created[0].id
+    store.start(unlaunched)
+    queued = store.submit('gallery', ['queued']).created[0].id
+    clock.stubborn = {stubborn}
+    clock.arm()
+    rig.wall.advance(3)
+    marked = executor.shutdown(run)
+    assert marked == (stubborn, unlaunched)
+    assert run.stopping
+    # The last sleep was cut to land on the deadline, polled once more there.
+    assert 0 < clock.sleeps[-1] < 0.1
+    assert clock.deadline <= clock.read <= clock.deadline + clock.drift + 1e-9
+    assert len(clock.sleeps) >= 150
+    states = {job: store.get(job) for job in (interrupted, succeeded, cancelled, stubborn, unlaunched)}
+    assert (states[interrupted].state, states[interrupted].exit_status, states[interrupted].error) == \
+        ('interrupted', 143, 'worker stopped')
+    assert (states[succeeded].state, states[succeeded].exit_status) == ('succeeded', 0)
+    assert (states[cancelled].state, states[cancelled].exit_status) == ('cancelled', 143)
+    for job in (stubborn, unlaunched):
+        assert (states[job].state, states[job].exit_status, states[job].error) == \
+            ('interrupted', None, 'worker stopped')
+    assert deadline(store, 'video') == deadline(store, 'gallery') == '2026-10-12T12:00:14Z'
+    assert [rig.signals(r) for r in (a, b, d)] == [[signal.SIGTERM]] * 3
+    assert rig.signals(c) == [signal.SIGTERM] * 2
+    # Nothing starts during or after the wait, and the stubborn runner is the test's to kill.
+    assert store.get(queued).state == 'queued' and run.run_pass() == ()
+    assert len(rig.records()) == 4
+    assert alive(d['pid'])
+    process = executor._running.pop(stubborn)
+    process.kill()
+    process.wait()
+
+
+def test_after_shutdown_every_call_is_refused_and_changes_nothing(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    run = rig.scheduler(store, executor)
+    queued = store.submit('video', ['queued']).created[0].id
+    assert executor.shutdown(run) == ()
+    before = store.list()
+    for call in (lambda: executor.launch(store.get(queued)), executor.poll, lambda: executor.cancel([queued]),
+                 lambda: executor.shutdown(run)):
+        with pytest.raises(DownloadinuxError) as error:
+            call()
+        assert str(error.value) == 'the worker has stopped'
+    assert store.list() == before
+    assert not store.logs.joinpath(js.log_name(queued, 1)).exists()
+
+
+def test_shutdown_with_a_prompt_runner_returns_well_within_the_bound(rig):
+    store = rig.open()
+    executor = rig.executor(store)
+    job, _ = started(rig, store, executor, 'wait=x')
+    begun = time.monotonic()
+    assert executor.shutdown(rig.scheduler(store, executor)) == ()
+    assert time.monotonic() - begun < 5
+    assert (store.get(job).state, store.get(job).exit_status) == ('interrupted', 143)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='root may signal any process')
+def test_a_shutdown_signal_error_is_raised_after_the_wait_and_the_mark(rig):
+    clock = Clock()
+    store = rig.open()
+    executor = rig.executor(store, monotonic=clock.monotonic, sleep=clock.sleep)
+    clock.executor = executor
+    foreign = store.submit('video', ['foreign']).created[0].id
+    store.start(foreign)
+    executor._running[foreign] = Foreign()
+    clock.stubborn = {foreign}
+    clock.arm()
+    job, record = started(rig, store, executor, 'wait=x')
+    with pytest.raises(DownloadinuxError) as error:
+        executor.shutdown(rig.scheduler(store, executor))
+    assert str(error.value) == f'cannot signal the runner of job {foreign}: {os.strerror(errno.EPERM)}'
+    assert rig.signals(record) == [signal.SIGTERM]
+    assert (store.get(job).state, store.get(job).exit_status) == ('interrupted', 143)
+    assert (store.get(foreign).state, store.get(foreign).error) == ('interrupted', 'worker stopped')
+    with pytest.raises(DownloadinuxError, match='^the worker has stopped$'):
+        executor.poll()
+    del executor._running[foreign]

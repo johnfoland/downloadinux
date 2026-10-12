@@ -1110,3 +1110,25 @@ within Docker's 30-second grace period (§1).
 "Runner execution, cancel signals, and the shutdown wait". Added on
 2026-10-12 for issue #64; fills execution details without changing DEC-41 to
 DEC-47.
+
+## DEC-49: Shutdown reports a signal error only after its wait and mark (2026-10)
+
+When shutdown's `SIGTERM` to a registered runner fails with an OS error
+other than a vanished process, the worker still attempts every other
+signal, waits, and applies the store's shutdown mark, and only then raises
+the first failure with cancel's text, `cannot signal the runner of job
+<id>: <OS reason>`; the library counts as stopped from that point. A signal
+failure whose OS error carries no reason text reads `signal failed` in
+place of the reason, as a reasonless launch failure reads `launch failed`
+(DEC-48).
+
+DEC-48 says shutdown signals "as cancel does", and cancel raises after its
+store commit; shutdown's commit is the mark, so the error follows it.
+Raising at the signal was rejected: it would skip the wait and leave every
+running job unmarked for the next start's reconciliation, recording
+`worker restarted` for a stop. Ignoring the failure was rejected because a
+runner the worker could not signal is worth reporting.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §5,
+"Runner execution, cancel signals, and the shutdown wait". Added on
+2026-10-12 in #76 for issue #64.
