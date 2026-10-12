@@ -1,7 +1,9 @@
-"""Worker-owned SQLite foundation, standard library only (DEC-41, DEC-45).
+"""Worker-owned SQLite job store, standard library only (DEC-41, DEC-45, DEC-46).
 
-Target design, Persistent worker and jobs §2. This library has no service,
-state transitions, cookie reads, or host configuration dependencies.
+Target design, Persistent worker and jobs §2 and §5, "Store lifecycle". This
+library has no service, scheduler, process, cookie reads, or host
+configuration dependencies; the scheduler and service decide only *when* to
+call its lifecycle operations.
 """
 from contextlib import contextmanager
 from collections.abc import Sequence
@@ -12,11 +14,11 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import re
 import sqlite3
 import stat
 from typing import Callable
 
+from . import cookie_store
 from .errors import DownloadinuxError
 
 DIRECTORY = 'jobs'
@@ -53,6 +55,7 @@ SCHEMA = (
     '''CREATE UNIQUE INDEX active_jobs ON jobs (preset COLLATE BINARY, url COLLATE BINARY)
         WHERE state IN ('queued', 'running')''',
 )
+TIMESTAMP_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
 TABLE_COLUMNS = {
     'submissions': {'id': 'INTEGER', 'created_at': 'TEXT'},
     'jobs': {name: ('INTEGER' if name in ('id', 'submission', 'attempt', 'cancel_requested',
@@ -107,10 +110,36 @@ class JobRecord:
     error: str | None
 
 
+@dataclass(frozen=True)
+class QueueHead:
+    """One queue holding a queued job (§5 "Store lifecycle", *Queues*).
+
+    A lane queue has `lane` set to its preset and `submission` None; an
+    immediate queue has `lane` None and its `submission`. `next_start_at` is
+    the lane's stored deadline, always None for an immediate queue.
+    """
+    lane: str | None
+    submission: int | None
+    head: JobRecord
+    running: bool
+    next_start_at: str | None
+
+
 def _positive_id(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise DownloadinuxError('job or submission ID must be a positive integer')
     return value
+
+
+def _valid_timestamp(value: object) -> bool:
+    """Named cookie sources §1's UTC form, ASCII digits only (issue #69)."""
+    if type(value) is not str or cookie_store.TIMESTAMP.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, TIMESTAMP_FORMAT)
+    except ValueError:
+        return False
+    return True
 
 
 def _decode_record(row, path: Path) -> JobRecord:
@@ -121,10 +150,7 @@ def _decode_record(row, path: Path) -> JobRecord:
             wait = json.loads(values['wait'])
             valid = type(wait) is dict and wait == {'reason': 'vpn'}
             if type(wait) is dict and set(wait) == {'reason', 'until'} and wait['reason'] == 'throttle':
-                until = wait['until']
-                if type(until) is str and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', until):
-                    datetime.strptime(until, '%Y-%m-%dT%H:%M:%SZ')
-                    valid = True
+                valid = _valid_timestamp(wait['until'])
             if not valid or values['state'] != 'queued':
                 raise ValueError('invalid wait')
         except Exception:
@@ -132,6 +158,16 @@ def _decode_record(row, path: Path) -> JobRecord:
             raise DownloadinuxError(f'{path}: invalid stored job wait') from None
         values['wait'] = wait
     return JobRecord(**values)
+
+
+def _validate_selection(source, revision, user_agent) -> None:
+    """Pinned selection and user-agent, shared by submission and retry (DEC-45, DEC-46)."""
+    if source is not None or revision is not None:
+        if (type(source) is not str or cookie_store.NAME.fullmatch(source) is None
+                or type(revision) is not str or cookie_store.REVISION.fullmatch(revision) is None):
+            raise DownloadinuxError('cookie selection requires both valid source and revision identifiers')
+    if type(user_agent) is not str or any(char in user_agent for char in '\r\n\0'):
+        raise DownloadinuxError('user-agent must be a string without CR, LF, or NUL')
 
 
 def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tuple[str, ...]:
@@ -146,12 +182,7 @@ def _validate_submission(preset, urls, lane, source, revision, user_agent) -> tu
     for url in urls:
         if type(url) is not str or not url or any(char in url for char in '\r\n\0'):
             raise DownloadinuxError('submission URLs must be nonempty strings without CR, LF, or NUL')
-    if source is not None or revision is not None:
-        if (type(source) is not str or re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', source) is None
-                or type(revision) is not str or re.fullmatch(r'[a-f0-9]{32}', revision) is None):
-            raise DownloadinuxError('submission requires both valid source and revision identifiers')
-    if type(user_agent) is not str or any(char in user_agent for char in '\r\n\0'):
-        raise DownloadinuxError('submission user-agent must be a string without CR, LF, or NUL')
+    _validate_selection(source, revision, user_agent)
     return urls
 
 
@@ -244,7 +275,7 @@ def _timestamp(clock: Callable[[], datetime]) -> str:
     instant = clock()
     if not isinstance(instant, datetime) or instant.utcoffset() is None:
         raise DownloadinuxError('job-store clock must return a timezone-aware time')
-    return instant.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return instant.astimezone(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
 class JobStore:
@@ -341,6 +372,114 @@ class JobStore:
             parameters.append(value)
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
         return self._read(where, tuple(parameters))
+
+    def queue_heads(self) -> tuple[QueueHead, ...]:
+        """Every queue holding a queued job, with its head (§5 *Queues*, DEC-46).
+
+        The head is the queued job with the least queue order. Entries list
+        the lanes by preset name (`gallery`, then `video`), then immediate
+        queues by submission ID; queues with only running or finished jobs
+        are absent.
+        """
+        heads = []
+        with self._transaction() as c:
+            for preset in sorted(PRESETS):
+                entry = self._queue_head(c, 'lane=?', (preset,))
+                if entry is not None:
+                    heads.append(QueueHead(preset, None, *entry, self._deadline(c, preset)))
+            submissions = [row[0] for row in c.execute(
+                "SELECT DISTINCT submission FROM jobs WHERE lane IS NULL AND state='queued' ORDER BY submission")]
+            for submission in submissions:
+                head, running = self._queue_head(c, 'lane IS NULL AND submission=?', (submission,))
+                heads.append(QueueHead(None, submission, head, running, None))
+        return tuple(heads)
+
+    def start(self, job_id: int) -> JobRecord:
+        """Move a queued job to `running` (§5 *Start*, DEC-46); return its record.
+
+        Raises `DownloadinuxError`, changing nothing, unless the job is
+        queued, heads its queue, its queue has no running job, and, for a
+        lane job, the lane's deadline is null or not after now. Unknown or
+        invalid IDs are refused as `get` refuses them. The VPN gate is the
+        scheduler's.
+        """
+        job_id = _positive_id(job_id)
+        now = _timestamp(self._clock)
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'queued':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a queued job can start')
+            where, parameters = self._queue_of(job)
+            head, _ = self._queue_head(c, where, parameters)
+            if head.id != job_id:
+                raise DownloadinuxError(f'job {job_id} does not head its queue; job {head.id} does')
+            running = c.execute(f"SELECT id FROM jobs WHERE {where} AND state='running' ORDER BY id",
+                                parameters).fetchone()
+            if running is not None:
+                raise DownloadinuxError(f'job {job_id} cannot start while job {running[0]} runs in its queue')
+            if job.lane is not None:
+                deadline = self._deadline(c, job.lane)
+                if deadline is not None and deadline > now:
+                    raise DownloadinuxError(f'job {job_id} cannot start before its lane deadline {deadline}')
+            c.execute("UPDATE jobs SET state='running', started_at=?, wait=NULL WHERE id=?", (now, job_id))
+            return self._job(c, job_id)
+
+    def set_wait(self, job_id: int, reason: str | None) -> JobRecord:
+        """Set (`'vpn'`, `'throttle'`) or clear (None) a queued job's wait (§5 *Waits*).
+
+        A throttle wait copies its `until` from the lane's stored deadline.
+        Raises `DownloadinuxError`, changing nothing, for a job that is not
+        queued, and for a throttle wait on an immediate job or a lane with
+        no deadline. Returns the updated record.
+        """
+        job_id = _positive_id(job_id)
+        if reason is not None and (type(reason) is not str or reason not in ('vpn', 'throttle')):
+            raise DownloadinuxError('job wait reason must be vpn, throttle, or null')
+        with self._transaction() as c:
+            job = self._job(c, job_id)
+            if job.state != 'queued':
+                raise DownloadinuxError(f'job {job_id} is {job.state}; only a queued job can wait')
+            wait = None
+            if reason == 'vpn':
+                wait = json.dumps({'reason': 'vpn'})
+            elif reason == 'throttle':
+                if job.lane is None:
+                    raise DownloadinuxError(f'job {job_id} is immediate; only a lane job waits for the throttle')
+                deadline = self._deadline(c, job.lane)
+                if deadline is None:
+                    raise DownloadinuxError(f'job {job_id} cannot wait for the throttle: its lane has no deadline')
+                wait = json.dumps({'reason': 'throttle', 'until': deadline})
+            c.execute('UPDATE jobs SET wait=? WHERE id=?', (wait, job_id))
+            return self._job(c, job_id)
+
+    def _job(self, c: sqlite3.Connection, job_id: int) -> JobRecord:
+        row = c.execute('SELECT ' + ', '.join(RECORD_FIELDS) + ' FROM jobs WHERE id=?', (job_id,)).fetchone()
+        if row is None:
+            raise DownloadinuxError(f'{self.path}: unknown job ID {job_id}')
+        return _decode_record(row, self.path)
+
+    @staticmethod
+    def _queue_of(job: JobRecord) -> tuple[str, tuple]:
+        """A lane job's queue is its lane; an immediate job's is its submission."""
+        if job.lane is not None:
+            return 'lane=?', (job.lane,)
+        return 'lane IS NULL AND submission=?', (job.submission,)
+
+    def _queue_head(self, c: sqlite3.Connection, where: str, parameters: tuple
+                    ) -> tuple[JobRecord, bool] | None:
+        row = c.execute('SELECT ' + ', '.join(RECORD_FIELDS) + f" FROM jobs WHERE {where} AND state='queued'"
+                        ' ORDER BY queue_order LIMIT 1', parameters).fetchone()
+        if row is None:
+            return None
+        running = c.execute(f"SELECT EXISTS (SELECT 1 FROM jobs WHERE {where} AND state='running')",
+                            parameters).fetchone()[0]
+        return _decode_record(row, self.path), bool(running)
+
+    def _deadline(self, c: sqlite3.Connection, preset: str) -> str | None:
+        deadline = c.execute('SELECT next_start_at FROM lanes WHERE preset=?', (preset,)).fetchone()[0]
+        if deadline is not None and not _valid_timestamp(deadline):
+            raise DownloadinuxError(f'{self.path}: invalid stored lane deadline')
+        return deadline
 
     @contextmanager
     def _transaction(self):

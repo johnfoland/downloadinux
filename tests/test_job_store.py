@@ -658,7 +658,8 @@ class Block(importlib.abc.MetaPathFinder):
         top = name.split('.')[0]
         if top not in sys.stdlib_module_names and top != 'downloadinux':
             raise ImportError('non-stdlib import: ' + name)
-        if top == 'downloadinux' and name not in ('downloadinux', 'downloadinux.job_store', 'downloadinux.errors'):
+        if top == 'downloadinux' and name not in ('downloadinux', 'downloadinux.job_store', 'downloadinux.errors',
+                                                  'downloadinux.cookie_store', 'downloadinux.cookiejar'):
             raise ImportError('host import: ' + name)
 sys.meta_path.insert(0, Block())
 sys.path.insert(0, sys.argv[1])
@@ -681,3 +682,214 @@ print('stdlib boundary passed')
                             env={'PATH': os.environ['PATH'], 'HOME': str(tmp_path / 'absent-home')})
     assert result.returncode == 0, result.stderr
     assert result.stdout == 'stdlib boundary passed\n'
+
+
+# Store lifecycle (§5 "Store lifecycle", DEC-46).
+
+def sql(store, statement, *parameters):
+    return store._connection.execute(statement, parameters).fetchall()
+
+
+def set_lane_deadline(store, preset, value):
+    sql(store, 'UPDATE lanes SET next_start_at=? WHERE preset=?', value, preset)
+
+
+@pytest.mark.parametrize('until', ['٢٠٢٦-10-11T12:03:00Z', '２０２６-10-11T12:03:00Z', '2026-10-11T12:0٣:00Z'])
+def test_non_ascii_digit_stored_until_refuses(tmp_path, until):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'], lane='video')
+        import json
+        sql(store, 'UPDATE jobs SET wait=?', json.dumps({'reason': 'throttle', 'until': until}))
+        with pytest.raises(DownloadinuxError, match='invalid stored job wait'):
+            store.get(1)
+
+
+@pytest.mark.parametrize('source,revision', [('alpha٣', 'a' * 32), ('ａlpha', 'a' * 32), ('alpha', 'a' * 31 + '٣'),
+                                             ('alpha', 'a' * 31 + '３'), ('alpha\n', 'a' * 32)])
+def test_unicode_lookalike_identifiers_refuse(tmp_path, source, revision):
+    with open_store(tmp_path) as store:
+        with pytest.raises(DownloadinuxError, match='cookie selection'):
+            store.submit('video', ['one'], source=source, revision=revision)
+        assert contents(store) == ([], [], [(1, 0)])
+
+
+def test_job_store_uses_the_shared_identifier_patterns():
+    assert js.cookie_store.TIMESTAMP.flags & __import__('re').ASCII
+    source = (SRC / 'downloadinux' / 'job_store.py').read_text()
+    assert '\\d' not in source and 'import re' not in source
+
+
+def queue_fixture(store):
+    """Two lanes, three immediate submissions, a retried shape, mixed states."""
+    v = store.submit('video', ['v1', 'v2', 'v3'], lane='video').created
+    g = store.submit('gallery', ['g1', 'g2'], lane='gallery').created
+    i1 = store.submit('video', ['i1a', 'i1b']).created
+    i2 = store.submit('gallery', ['i2a']).created
+    i3 = store.submit('video', ['i3a']).created
+    # Video lane: v1 running; v3's order precedes v2's although queued_at runs backward.
+    sql(store, "UPDATE jobs SET state='running' WHERE id=?", v[0].id)
+    sql(store, "UPDATE jobs SET queue_order=100, queued_at='2026-10-11T11:00:00Z' WHERE id=?", v[1].id)
+    sql(store, "UPDATE jobs SET queue_order=50, queued_at='2026-10-11T13:00:00Z' WHERE id=?", v[2].id)
+    # Gallery lane: all queued, both with the same queued_at.
+    # i1: head running is absent; i1a finished, i1b queued.
+    sql(store, "UPDATE jobs SET state='succeeded' WHERE id=?", i1[0].id)
+    # i2: only finished jobs, so absent.
+    sql(store, "UPDATE jobs SET state='failed' WHERE id=?", i2[0].id)
+    # i3: its only job running, so absent.
+    sql(store, "UPDATE jobs SET state='running' WHERE id=?", i3[0].id)
+    # A retried immediate job formed a new submission 6, built by SQL.
+    sql(store, "INSERT INTO submissions(created_at) VALUES ('2026-10-11T12:00:00Z')")
+    sql(store, "UPDATE jobs SET submission=6, queue_order=200, attempt=2 WHERE id=?", i1[0].id)
+    sql(store, "UPDATE jobs SET state='queued' WHERE id=?", i1[0].id)
+    return v, g, i1, i2, i3
+
+
+def test_queue_heads_order_running_and_deadlines(tmp_path):
+    with open_store(tmp_path) as store:
+        v, g, i1, i2, i3 = queue_fixture(store)
+        set_lane_deadline(store, 'video', '2026-10-11T12:05:00Z')
+        heads = store.queue_heads()
+        assert [(h.lane, h.submission, h.head.id, h.running, h.next_start_at) for h in heads] == [
+            ('gallery', None, g[0].id, False, None),
+            ('video', None, v[2].id, True, '2026-10-11T12:05:00Z'),
+            (None, 3, i1[1].id, False, None),
+            (None, 6, i1[0].id, False, None),
+        ]
+        assert all(isinstance(h.head, js.JobRecord) for h in heads)
+        assert heads[1].head == store.get(v[2].id)
+        assert 'queue_order' not in asdict(heads[0].head)
+        # No queued jobs anywhere: no entries.
+        sql(store, "UPDATE jobs SET state='cancelled' WHERE state='queued'")
+        assert store.queue_heads() == ()
+
+
+def test_queue_heads_lane_with_only_running_absent(tmp_path):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'], lane='video')
+        sql(store, "UPDATE jobs SET state='running'")
+        set_lane_deadline(store, 'video', '2026-10-11T12:05:00Z')
+        assert store.queue_heads() == ()
+
+
+def test_invalid_stored_lane_deadline_is_safe(tmp_path):
+    with open_store(tmp_path) as store:
+        store.submit('video', ['one'], lane='video')
+        set_lane_deadline(store, 'video', 'SENTINEL٢')
+        with pytest.raises(DownloadinuxError, match='invalid stored lane deadline') as error:
+            store.queue_heads()
+        assert 'SENTINEL' not in str(error.value)
+        with pytest.raises(DownloadinuxError, match='invalid stored lane deadline'):
+            store.start(1)
+        assert store.get(1).state == 'queued'
+
+
+def test_start_success_fields(tmp_path):
+    clock = [NOW]
+    with open_store(tmp_path, clock=lambda: clock[0]) as store:
+        job = store.submit('video', ['one'], lane='video').created[0].id
+        store.set_wait(job, 'vpn')
+        clock[0] = datetime(2026, 10, 11, 12, 1, 30, 999, tzinfo=timezone.utc)
+        before = store.get(job)
+        started = store.start(job)
+        assert started == store.get(job)
+        assert asdict(started) == dict(asdict(before), state='running', started_at='2026-10-11T12:01:30Z',
+                                       wait=None)
+    with open_store(tmp_path) as store:
+        assert store.get(job) == started
+
+
+def snapshot(store):
+    return tuple(sql(store, f'SELECT * FROM {table}') for table in
+                 ('submissions', 'jobs', 'lanes', 'queue_counter'))
+
+
+@pytest.mark.parametrize('case', ['running', 'succeeded', 'failed', 'cancelled', 'interrupted',
+                                  'not-head', 'queue-busy', 'deadline-after'])
+def test_start_refusals_change_nothing(tmp_path, case):
+    with open_store(tmp_path) as store:
+        first, second = (r.id for r in store.submit('video', ['a', 'b'], lane='video').created)
+        target = first
+        if case in js.STATES:
+            sql(store, 'UPDATE jobs SET state=? WHERE id=?', case, first)
+        elif case == 'not-head':
+            target = second
+        elif case == 'queue-busy':
+            sql(store, "UPDATE jobs SET state='running' WHERE id=?", first)
+            target = second
+        elif case == 'deadline-after':
+            set_lane_deadline(store, 'video', '2026-10-11T12:00:01Z')
+        before = snapshot(store)
+        message = {'not-head': f'job {second} does not head its queue; job {first} does',
+                   'queue-busy': f'job {second} cannot start while job {first} runs',
+                   'deadline-after': 'before its lane deadline 2026-10-11T12:00:01Z'}.get(case, f'job {first} is {case}')
+        with pytest.raises(DownloadinuxError, match=message):
+            store.start(target)
+        assert snapshot(store) == before
+        assert not store._connection.in_transaction
+
+
+def test_start_deadline_equal_to_now_allowed_and_immediate_ignores_deadline(tmp_path):
+    with open_store(tmp_path) as store:
+        lane = store.submit('video', ['a'], lane='video').created[0].id
+        immediate = store.submit('video', ['b']).created[0].id
+        set_lane_deadline(store, 'video', '2026-10-11T12:00:00Z')
+        assert store.start(lane).state == 'running'
+        set_lane_deadline(store, 'video', '2030-01-01T00:00:00Z')
+        assert store.start(immediate).state == 'running'
+
+
+def test_start_lane_and_immediate_queues_are_independent(tmp_path):
+    with open_store(tmp_path) as store:
+        lane = [r.id for r in store.submit('video', ['l1', 'l2'], lane='video').created]
+        imm = [r.id for r in store.submit('video', ['i1', 'i2']).created]
+        other = store.submit('video', ['o1']).created[0].id
+        store.start(lane[0])
+        assert store.start(imm[0]).state == 'running'   # lane busy does not block immediate
+        assert store.start(other).state == 'running'    # one immediate busy does not block another
+        with pytest.raises(DownloadinuxError, match='runs in its queue'):
+            store.start(imm[1])
+        with pytest.raises(DownloadinuxError, match='runs in its queue'):
+            store.start(lane[1])
+        sql(store, "UPDATE jobs SET state='succeeded' WHERE id=?", lane[0])
+        assert store.start(lane[1]).state == 'running'  # immediate busy does not block the lane
+
+
+@pytest.mark.parametrize('invalid', [0, -1, True, 1.0, '1', None])
+def test_start_and_wait_id_validation(tmp_path, invalid):
+    with open_store(tmp_path) as store:
+        for call in (lambda: store.start(invalid), lambda: store.set_wait(invalid, 'vpn')):
+            with pytest.raises(DownloadinuxError, match='positive integer'):
+                call()
+        for call in (lambda: store.start(5), lambda: store.set_wait(5, None)):
+            with pytest.raises(DownloadinuxError, match='unknown job ID 5'):
+                call()
+
+
+def test_waits_set_copy_clear_and_reopen(tmp_path):
+    with open_store(tmp_path) as store:
+        job = store.submit('gallery', ['a'], lane='gallery').created[0].id
+        assert store.set_wait(job, 'vpn').wait == {'reason': 'vpn'}
+        set_lane_deadline(store, 'gallery', '2026-10-11T12:04:10Z')
+        assert store.set_wait(job, 'throttle').wait == {'reason': 'throttle', 'until': '2026-10-11T12:04:10Z'}
+    with open_store(tmp_path) as store:
+        assert store.get(job).wait == {'reason': 'throttle', 'until': '2026-10-11T12:04:10Z'}
+        assert store.set_wait(job, None).wait is None
+        assert store.get(job).wait is None
+
+
+@pytest.mark.parametrize('case', ['running', 'succeeded', 'cancelled', 'immediate', 'no-deadline', 'reason'])
+def test_wait_refusals_change_nothing(tmp_path, case):
+    with open_store(tmp_path) as store:
+        job = store.submit('video', ['a'], lane=None if case == 'immediate' else 'video').created[0].id
+        set_lane_deadline(store, 'video', None if case == 'no-deadline' else '2026-10-11T12:04:10Z')
+        reason = 'throttle'
+        if case in js.STATES:
+            sql(store, 'UPDATE jobs SET state=? WHERE id=?', case, job)
+        before = snapshot(store)
+        expected = {'immediate': 'is immediate', 'no-deadline': 'lane has no deadline',
+                    'reason': 'wait reason must be'}.get(case, f'job {job} is {case}')
+        for reason in (('Throttle', 'other', True, 1) if case == 'reason' else
+                       ('throttle', 'vpn', None) if case in js.STATES else ('throttle',)):
+            with pytest.raises(DownloadinuxError, match=expected):
+                store.set_wait(job, reason)
+        assert snapshot(store) == before
