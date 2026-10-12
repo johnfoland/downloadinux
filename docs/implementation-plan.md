@@ -17,8 +17,8 @@ migration and host-only list/inspect/default commands, finishing D1's build.
 PRs #45–#55 implement private execution and the remaining fronts, and PR #62
 the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
 Stage 2 is implemented. Stage 3 is settled
-([issue #64](https://github.com/johnfoland/downloadinux/issues/64)) but not
-implemented; Stage 4 remains a proposal.
+([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); only its
+internal libraries are implemented. Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -115,7 +115,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-48 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-49 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 Only internal libraries are implemented. The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
@@ -127,10 +127,14 @@ library implements target design §4's scheduler passes: gate precedence and
 waits, commit-before-launch through an injected callback, the bounded VPN
 probe with doctor's interpretation shared through
 `downloadinux.nordvpn_output`, monotonic VPN retry timing, and the throttle
-test seam helper (DEC-47). Real runner launch, attempt logs, signal delivery
-and the shutdown wait, reconciliation at service start, the service's pass
-cadence and `serve` reading the throttle seam, the client, host commands, and
-cutover remain unimplemented.
+test seam helper (DEC-47). The internal `downloadinux.worker_execution`
+library implements target design §5's runner execution: the scheduler's real
+launch callback with per-attempt private logs, non-blocking exit polls that
+end jobs through the store, cancel signals to the runner after the store's
+commit, and the bounded shutdown wait with its final mark (DEC-48, DEC-49).
+The service (its lock wait, reconciliation at start, socket, pass and poll
+cadence, signal handling, and `serve` reading the throttle seam), the
+client, packaging, host commands, and cutover remain unimplemented.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -245,5 +249,6 @@ integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
-implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-44)
-and not yet implemented; TUI styling and keybindings follow stable operations.
+implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-49);
+only their internal libraries are implemented (*Stage 3* above); TUI styling
+and keybindings follow stable operations.

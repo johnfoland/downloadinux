@@ -25,6 +25,7 @@ from .errors import DownloadinuxError
 DIRECTORY = 'jobs'
 DATABASE = 'jobs.sqlite3'
 LOCK = '.worker.lock'
+LOGS = 'logs'
 PRESETS = ('video', 'gallery')
 STATES = ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted')
 RECORD_FIELDS = ('id', 'submission', 'preset', 'url', 'lane', 'source', 'revision',
@@ -253,6 +254,13 @@ def _retry_entries(entries) -> dict[int, tuple[str | None, str | None, str]]:
     return validated
 
 
+def log_name(job_id: int, attempt: int) -> str:
+    """An attempt's log file name, `<id>-<attempt>.log`, inside `JobStore.logs` (§2)."""
+    if type(job_id) is not int or job_id <= 0 or type(attempt) is not int or attempt <= 0:
+        raise DownloadinuxError('job ID and attempt must be positive integers')
+    return f'{job_id}-{attempt}.log'
+
+
 def _default_delay() -> int:
     return random.randint(*THROTTLE_SECONDS)
 
@@ -360,6 +368,11 @@ class JobStore:
         self._clock = clock
         self._delay = delay
         self._closed = False
+
+    @property
+    def logs(self) -> Path:
+        """The owned store's attempt-log directory, `jobs/logs` beside the database (§2)."""
+        return self.path.parent / LOGS
 
     def __enter__(self):
         return self
@@ -793,8 +806,8 @@ def open_store(state: Path, *, clock: Callable[[], datetime] = lambda: datetime.
             if error.errno in (errno.EACCES, errno.EAGAIN):
                 return BUSY
             raise
-        current_path = path / 'logs'
-        logs_fd = _directory(jobs_fd, 'logs')
+        current_path = path / LOGS
+        logs_fd = _directory(jobs_fd, LOGS)
         os.close(logs_fd)
         current_path = path / DATABASE
         identity = _create_regular(jobs_fd, DATABASE)
