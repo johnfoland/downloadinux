@@ -115,7 +115,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-46 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-47 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 Only the internal `downloadinux.job_store` library is implemented: private
 versioned SQLite under reopened worker ownership, atomic pinned submissions,
 exact active duplicates, and typed record reads (target design §2, DEC-45),
@@ -124,7 +124,10 @@ with lane deadlines drawn in the same transaction, cancel, retry, and the
 reconciliation and shutdown interrupted marks (target design §5, "Store
 lifecycle", DEC-46). The scheduler/VPN/throttle loop, runner execution/logs,
 signal delivery and the shutdown wait, the service/client, host commands, and
-cutover remain unimplemented. The worker design is a standard-library program running as the
+cutover remain unimplemented. Scheduler passes, gate precedence, shared VPN
+parsing and retry timing, and the container-only throttle test seam are pinned
+in target design §4 (DEC-47); pinning is not implementation evidence.
+The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
 store under `paths.state/jobs/` (DEC-41). A job is one URL, with explicit

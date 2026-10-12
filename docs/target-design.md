@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-46, issue #64). Only the internal job store is
+jobs*, DEC-41 to DEC-47, issue #64). Only the internal job store is
 implemented: §2's foundation and §5's store lifecycle operations; the
 scheduler, runner execution, worker service, commands, and cutover remain
 unimplemented. Stage 4 remains proposed.
@@ -1685,7 +1685,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-46). Only the internal job store is implemented: §2's
+(DEC-41 to DEC-47). Only the internal job store is implemented: §2's
 foundation (private versioned storage under worker ownership, atomic pinned
 submissions, active duplicates, and typed record reads) and §5's store
 lifecycle operations (queue heads, start, waits, ends and lane deadlines,
@@ -1964,6 +1964,85 @@ processes receive signals only through the worker. Each attempt gets its own
 private jar, which the runner creates at startup and removes when it ends
 (DEC-31, amended). Every job uses the preset's one argument list (*Presets*):
 the gallery batch's `-q` ends with the zsh loop (§7).
+
+#### Scheduler passes, VPN probe, and throttle test seam (DEC-47)
+
+Not yet implemented. The internal standard-library module is
+`downloadinux.worker_scheduler`. It uses the owned `JobStore` through its
+public operations; it neither opens SQLite separately nor reads settings,
+cookie material, or host paths. Scheduling and client mutations run serially
+on the store's owning thread. A pass does not sleep or wait for a runner to
+finish; the later service calls it after submissions and runner exits and at
+least once a second while work is queued. The service's process polling,
+socket loop, and shutdown wait remain separate.
+
+*Pass and handoff.* Use the store's queue-head order (lanes by preset name,
+then immediate submissions by ID). At most one job per queue starts in a
+pass; every eligible queue is considered, without a global concurrency cap.
+Clear stale waits on queued jobs that are not heads and on heads whose queue
+already has a running job: these wait behind work, not for either gate. For
+an idle queue's head, first check its lane deadline against the injected UTC
+wall clock (the same clock supplied to the store). A future deadline sets
+the store's throttle wait and skips the VPN probe. Otherwise apply the VPN
+gate below; a failed or not-yet-due check sets the VPN wait. Thus throttle
+takes precedence when both gates would block. The deadline equal to now is
+eligible. Write a wait only when its value changes; a throttle wait copies
+the store's deadline, never a separately computed one.
+
+For an eligible head, call `JobStore.start` and only after its successful
+commit call the injected synchronous launch callback with the returned
+running record, including the pinned selection and user-agent unchanged.
+The callback launches and registers the runner without waiting for its exit.
+A callback's `DownloadinuxError` carries a nonempty, NUL-free safe reason
+that names no URL, user-agent, or cookie value. It is an expected launch
+failure: call `JobStore.end(launch_failure=...)`, then continue with other queues. This
+draws a lane deadline by §5; do not start another job of that queue in the
+same pass. Store failures propagate and prevent that job's callback; an
+unexpected callback exception propagates, leaving the committed running job
+for reconciliation rather than claiming success. The pass returns the IDs
+whose launch callback returned normally, in visit order. A one-way stop
+flag prevents further starts and callbacks; check it at entry, between
+queue visits, after a probe, and before the callback. If stopping is observed
+after the start commit, leave the unlaunched running record for §5's shutdown
+mark. A pass entered after stopping changes no waits and runs no
+VPN probe. Stop does not cancel or mark jobs: §5 owns those operations.
+
+*VPN probe and retry clock.* The default probe runs exactly
+`["nordvpn", "status"]`, with no shell, `/dev/null` input, captured standard
+output, discarded standard error, and a five-second timeout. Decode stdout
+as UTF-8 with undecodable bytes replaced. Success requires status 0 and the
+same case-insensitive `Status: Connected` field interpretation as doctor's
+`vpn.connected` check. Extract doctor's existing field parser and connection
+predicate into the shared standard-library `downloadinux.nordvpn_output`
+module, used by both paths without changing doctor's other VPN rows. An OS
+error, timeout, nonzero status, or absent/disconnected/unrecognized status is
+not ready; probe output and exceptions are never printed or stored in jobs.
+An injected probe returns a boolean under that same readiness contract.
+
+After a failed probe, no queue probes again until 15 seconds after that
+probe completed, measured by an injected monotonic clock. All otherwise
+eligible heads show `wait: vpn` during that interval, including new arrivals;
+throttled or busy queues keep the precedence above. At the deadline, the
+next eligible head probes again. A successful result clears the failure
+deadline and is not cached: each eligible start checks readiness afresh,
+including subsequent queues of the same pass. With VPN off, never call the
+probe. Do not stop already-running jobs when a later probe fails. Wall-clock
+adjustments affect persisted lane deadlines as in the store; they cannot
+shorten the monotonic VPN retry interval. Both clocks are injectable, with
+aware UTC time and `time.monotonic` as the defaults.
+
+*Test throttle.* The later `serve` boundary reads the optional environment
+variable `DOWNLOADINUX_TEST_THROTTLE_SECONDS` before opening the store. Absent
+means the store's existing uniform 120–289-second source; present must be a
+nonempty string of ASCII decimal digits denoting a whole number of seconds
+from 0 to 289 inclusive. Invalid input fails with `invalid
+DOWNLOADINUX_TEST_THROTTLE_SECONDS; expected an integer from 0 to 289`, without
+echoing it. A valid value supplies a constant delay callable to `open_store`;
+it changes future draws only, never existing deadlines. The internal helper
+takes an explicit environment mapping and returns that callable or no
+override; importing it reads no environment. The host CLI/settings/recipes
+never set or forward this variable; the gate may set it explicitly inside
+its fixture container. This seam adds no setting or command-line option.
 
 ### 5. Cancellation, shutdown, and reconciliation
 

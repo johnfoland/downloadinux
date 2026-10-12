@@ -1035,3 +1035,39 @@ duplicate were rejected with the maintainer.
 §4, and §5, "Store lifecycle: queues, transitions, and retry". Added on
 2026-10-12 for issue #64, with the maintainer's choices for queued cancels and
 shadowed retries.
+
+## DEC-47: Scheduler passes commit before launch, show the first blocking gate, and retry VPN failures on monotonic time (2026-10)
+
+The scheduler is a standard-library library using the owned store's public
+queue-head and lifecycle operations. Each pass considers every queue in
+store order without queue sleeps and starts at most its head, committing `running`
+before handing its unchanged record to a synchronous launch callback. An
+expected launch failure ends that job through the store; other queues still
+get considered. A stop flag prevents further starts without performing
+shutdown itself. The later service serializes store operations and calls
+passes after work changes and at least once a second while work is queued.
+
+Only idle queue heads show gate waits. A future lane deadline takes
+precedence over VPN readiness; busy heads and jobs behind a head have no gate
+wait. The VPN probe uses a five-second timeout and doctor's exact connection
+interpretation through a shared stdlib parser. A failed probe blocks new
+probes across queues for 15 seconds after completion on a monotonic clock;
+success is checked afresh before each eligible start. VPN off never probes,
+and failed checks do not stop running downloads. The explicit container-only
+`DOWNLOADINUX_TEST_THROTTLE_SECONDS` seam accepts ASCII whole seconds 0–289,
+overriding future delay draws while preserving stored deadlines. The host
+never forwards it; absent means the existing random bounds.
+
+Sleeping inside a queue's throttle was rejected because other queues and
+clients must progress. Setting VPN waits on every queued record was rejected
+because jobs behind running work are not yet blocked by that gate. Caching
+a positive connection result was rejected because DEC-43 checks before each
+start; a global negative retry deadline avoids probing once per waiting
+queue. Wall-clock retry timing was rejected because clock adjustments could
+shorten the interval. Duplicating doctor's parser was rejected because its
+connection interpretation must stay identical in the container. A CLI
+throttle setting was rejected because DEC-43 reserves shortening for tests.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §4,
+"Scheduler passes, VPN probe, and throttle test seam". Added on 2026-10-12
+for issue #64; fills scheduling details without changing DEC-41 to DEC-46.
