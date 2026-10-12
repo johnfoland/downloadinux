@@ -592,3 +592,83 @@ def test_defaults_are_aware_utc_monotonic_and_the_real_probe(tmp_path):
         run = ws.Scheduler(store, Launcher(), vpn=True)
         assert run._probe is ws.probe_vpn and run._monotonic is time.monotonic
         assert run._clock().utcoffset() == timedelta(0)
+
+
+# Standard-library boundary (§1, DEC-41; §4, DEC-47).
+
+BOUNDARY = '''
+import importlib.abc, sys
+ALLOWED = ('downloadinux', 'downloadinux.worker_scheduler', 'downloadinux.nordvpn_output',
+           'downloadinux.job_store', 'downloadinux.errors', 'downloadinux.cookie_store',
+           'downloadinux.cookiejar')
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        top = name.split('.')[0]
+        if top not in sys.stdlib_module_names and top != 'downloadinux':
+            raise ImportError('non-stdlib import: ' + name)
+        if top == 'downloadinux' and name not in ALLOWED:
+            raise ImportError('host import: ' + name)
+sys.meta_path.insert(0, Block())
+sys.path.insert(0, sys.argv[1])
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+# The seam's variable is invalid in this process: importing reads nothing.
+from downloadinux import job_store as js, nordvpn_output, worker_scheduler as ws
+from downloadinux.errors import DownloadinuxError
+assert os.environ[ws.THROTTLE_VARIABLE] == 'not-a-number'
+try:
+    ws.throttle_override(os.environ)
+except DownloadinuxError as error:
+    assert str(error) == ws.THROTTLE_ERROR
+else:
+    raise AssertionError('invalid seam accepted')
+delay = ws.throttle_override({ws.THROTTLE_VARIABLE: '030'})
+assert nordvpn_output.connected(0, 'spin\\rStatus: Connected\\n')
+assert ws.probe_vpn() is False  # no nordvpn on this PATH
+wall = [datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)]
+mono = [50.0]
+probes = [False, True, True]
+launched = []
+root = Path(sys.argv[2])
+with js.open_store(root, clock=lambda: wall[0], delay=delay) as store:
+    lane = store.submit('video', ['v1', 'v2'], lane='video').created
+    now = store.submit('gallery', ['i1']).created
+    run = ws.Scheduler(store, lambda record: launched.append(record.id), vpn=True,
+                       probe=lambda: probes.pop(0), clock=lambda: wall[0], monotonic=lambda: mono[0])
+    assert run.run_pass() == ()
+    assert [j.wait for j in store.list()] == [{'reason': 'vpn'}, None, {'reason': 'vpn'}]
+    mono[0] += 15
+    assert run.run_pass() == (lane[0].id, now[0].id) == tuple(launched)
+    store.end(lane[0].id, exit_status=0)
+    assert run.run_pass() == ()
+    assert store.get(lane[1].id).wait == {'reason': 'throttle', 'until': '2026-10-12T12:00:30Z'}
+with js.open_store(root, clock=lambda: wall[0]) as store:
+    assert store.reconcile() == (now[0].id,)
+    wall[0] += timedelta(seconds=30)
+    run = ws.Scheduler(store, lambda record: launched.append(record.id), vpn=False,
+                       clock=lambda: wall[0])
+    assert run.run_pass() == (lane[1].id,)
+    assert store.get(now[0].id).state == 'interrupted'
+assert 'downloadinux.health' not in sys.modules
+print('scheduler boundary passed')
+'''
+
+
+def test_isolated_stdlib_only_scheduler_probe_seam_and_store(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1] / 'src'
+    root = tmp_path / 'isolated-state'
+    root.mkdir()
+    empty = tmp_path / 'empty-bin'
+    empty.mkdir()
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', BOUNDARY, str(src), str(root)],
+        capture_output=True, text=True, timeout=20,
+        env={'PATH': str(empty), 'HOME': str(tmp_path / 'absent-home'),
+             'DOWNLOADINUX_TEST_THROTTLE_SECONDS': 'not-a-number'})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'scheduler boundary passed\n'

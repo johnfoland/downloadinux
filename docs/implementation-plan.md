@@ -116,17 +116,21 @@ Acceptance criteria:
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
 DEC-47 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
-Only the internal `downloadinux.job_store` library is implemented: private
-versioned SQLite under reopened worker ownership, atomic pinned submissions,
-exact active duplicates, and typed record reads (target design §2, DEC-45),
-and the store's lifecycle operations: queue heads, guarded start, waits, ends
-with lane deadlines drawn in the same transaction, cancel, retry, and the
-reconciliation and shutdown interrupted marks (target design §5, "Store
-lifecycle", DEC-46). The scheduler/VPN/throttle loop, runner execution/logs,
-signal delivery and the shutdown wait, the service/client, host commands, and
-cutover remain unimplemented. Scheduler passes, gate precedence, shared VPN
-parsing and retry timing, and the container-only throttle test seam are pinned
-in target design §4 (DEC-47); pinning is not implementation evidence.
+Only internal libraries are implemented. The `downloadinux.job_store` library
+holds private versioned SQLite under reopened worker ownership, atomic pinned
+submissions, exact active duplicates, and typed record reads (target design
+§2, DEC-45), and the store's lifecycle operations: queue heads, guarded start,
+waits, ends with lane deadlines drawn in the same transaction, cancel, retry,
+and the reconciliation and shutdown interrupted marks (target design §5,
+"Store lifecycle", DEC-46). The internal `downloadinux.worker_scheduler`
+library implements target design §4's scheduler passes: gate precedence and
+waits, commit-before-launch through an injected callback, the bounded VPN
+probe with doctor's interpretation shared through
+`downloadinux.nordvpn_output`, monotonic VPN retry timing, and the throttle
+test seam helper (DEC-47). Real runner launch, attempt logs, signal delivery
+and the shutdown wait, reconciliation at service start, the service's pass
+cadence and `serve` reading the throttle seam, the client, host commands, and
+cutover remain unimplemented.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
