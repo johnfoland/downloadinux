@@ -1195,3 +1195,6 @@ store.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
 "Client subcommands and replies". Added on 2026-10-12 for issue #64; fills
 the client shapes §1 leaves to planning without changing DEC-41 to DEC-49.
+*Amended 2026-10-12, in PR #78's review:* an integer `version` other than
+1 is `unsupported request version` before the key and shape checks, so a
+later version's request is never called invalid.

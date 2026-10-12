@@ -116,7 +116,7 @@ Acceptance criteria:
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
 DEC-51 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
-Only internal libraries are implemented. The `downloadinux.job_store` library
+Only internal modules are implemented. The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
 §2, DEC-45), and the store's lifecycle operations: queue heads, guarded start,
@@ -132,9 +132,16 @@ library implements target design §5's runner execution: the scheduler's real
 launch callback with per-attempt private logs, non-blocking exit polls that
 end jobs through the store, cancel signals to the runner after the store's
 commit, and the bounded shutdown wait with its final mark (DEC-48, DEC-49).
-The service (its lock wait, reconciliation at start, socket, pass and poll
-cadence, signal handling, and `serve` reading the throttle seam), the
-client, packaging, host commands, and cutover remain unimplemented.
+The internal `downloadinux.worker` module implements target design §1's
+service: the ownership wait, reconciliation at start, the socket, the
+half-second request, poll, and pass loop with issue #74's failure rules,
+signal handling, the stop ordering, and `serve` reading the throttle seam
+(DEC-50), and the `status`, `submit`, and `show` clients over the
+one-request wire protocol (DEC-51; PR #78). Packaging into the image (the
+`downloadinux-worker` command, the image's command, `init`, the
+entrypoint's socket directory), the host invocation layer, doctor's
+`worker.running`, the remaining clients, host commands, and cutover remain
+unimplemented.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -250,5 +257,6 @@ the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-51);
-only their internal libraries are implemented (*Stage 3* above); TUI styling
+only their internal modules are implemented, not yet packaged or reachable
+from the host (*Stage 3* above); TUI styling
 and keybindings follow stable operations.
