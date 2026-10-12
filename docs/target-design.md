@@ -1921,7 +1921,8 @@ and does not follow a changed default, which was resolved when the job was
 first submitted. `jobs retry`'s `--cookie-source`, `--anonymous`, and
 `--user-agent` replace those, as on `dl`. A retried batch job rejoins the back
 of its lane; immediate jobs retried together run as one new immediate
-submission (§4).
+submission (§4). Retrying a job whose preset and URL a queued or running job
+holds is refused for that ID, naming the job that holds it (DEC-46).
 
 ### 4. Scheduling, throttling, and VPN readiness
 
@@ -1934,7 +1935,8 @@ sessions and foreground `dl` runs do today. A multi-URL `dl` downloads its
 URLs one after another, as its single yt-dlp did.
 
 *Throttle.* Batch lanes keep today's spacing (DEC-6): whenever a lane's job
-ends, for any reason, the worker draws a whole number of seconds uniformly
+that ran ends, for any reason (a job cancelled while queued draws none,
+DEC-46), the worker draws a whole number of seconds uniformly
 from 120 to 289 and starts no job in that lane before the end plus that delay.
 The deadline is stored with the lane, so it survives a restart, and the lane's
 next job shows `wait: throttle` with it. Immediate queues are never throttled.
@@ -1982,6 +1984,86 @@ every job still marked `running` as `interrupted`, with the error `worker
 restarted`, and sets that job's lane deadline as for any end. Queued jobs keep
 their places and run under §4. Nothing is resumed on its own; a retry may let
 yt-dlp continue a partial `.part` file, as far as the downloader can.
+
+#### Store lifecycle: queues, transitions, and retry (DEC-46)
+
+Not yet implemented. These details pin how `downloadinux.job_store` carries
+§3 to §5's lifecycle, so the scheduler and the service decide only *when* to
+call it. Each operation below is one explicit transaction whose commit is its
+publication, as in §2's store foundation; it takes every timestamp from the
+store's injected UTC clock, and refuses wrong-typed or invalid input before
+changing anything. Its outcomes are library values, not a client JSON shape
+(§1). A job "ran" once it entered `running`.
+
+*Queues.* A lane job's queue is its preset's lane. An immediate job's queue is
+its submission: the jobs with null `lane` and that `submission`, so immediate
+jobs retried together form a new queue (§3). A queue's head is its queued job
+with the least queue order. The store offers a read of every queue holding a
+queued job: its head (a §2 record), whether the queue has a running job, and,
+for a lane, the lane's stored deadline (null or a §2 timestamp).
+
+*Start.* Starting a job sets `running`, `started_at`, and a null `wait`. It is
+refused, changing nothing, unless the job is queued, heads its queue, its
+queue has no running job, and, for a lane job, the lane's deadline is null or
+not after the current instant. The VPN gate stays the scheduler's (§4).
+
+*Waits.* The store sets or clears a queued job's `wait`: `{"reason": "vpn"}`,
+or a throttle wait whose `until` is the lane's stored deadline, refused for an
+immediate job or a lane with no deadline. Setting a wait on a job that is not
+queued is refused, and every transition out of `queued` clears it. Stored and
+decoded `until` values use *Named cookie sources* §1's timestamp form with
+ASCII digits only, and source and revision identifiers its name and revision
+rules, from the one shared definition (issue #69).
+
+*End.* Ending a running job takes either the runner's exit status, an integer
+from 0 to 255, or a launch-failure reason (a nonempty string without NUL), and
+whether the worker is stopping. In §3's row order: status 0 is `succeeded`;
+nonzero with `cancel_requested` is `cancelled`; nonzero while stopping is
+`interrupted` with the error `worker stopped`; any other nonzero status is
+`failed`; a launch failure is `failed` with that reason as `error` and a null
+`exit_status`. A given exit status is recorded whatever the state, and
+`finished_at` is the current instant. Ending a job that is not running is
+refused.
+
+*Lane deadline.* Every end of a lane job that ran, including the interrupted
+marks below, sets its lane's `next_start_at` to its `finished_at` plus a
+delay drawn in the same transaction from an injectable source of whole
+seconds, uniform over 120 to 289 inclusive by default (§4). A drawn value that
+is not a nonnegative integer fails the transaction. Immediate jobs set no
+deadline, and neither does cancelling a queued job: a job that never ran
+contacted no site (DEC-46).
+
+*Cancel.* Cancelling takes job IDs, repeats collapsing to the first, and
+returns one outcome per ID in that order from one transaction. A queued job
+becomes `cancelled`, with `cancel_requested` true, `finished_at` the current
+instant, and a null `wait`. A running job gets `cancel_requested` true (again,
+if already set) and an outcome telling the worker to signal its runner, which
+it does after the commit (§5). A finished job is refused, naming its state; an
+unknown ID is reported unknown. Neither changes anything or stops the other
+IDs.
+
+*Retry.* Retrying takes job IDs, each with the selection the host pinned for
+it (§3): a source and revision pair, or both null, and a user-agent, validated
+as for a submission. Repeats collapse to the first. In one transaction, in
+request order, each `failed`, `cancelled`, or `interrupted` job whose preset
+and URL no queued or running job holds is requeued: a new submission shared by
+every job this retry requeues, `attempt` plus 1, a new queue order, `queued_at`
+the current instant, the supplied selection and user-agent, `cancel_requested`
+false, and null `wait`, `started_at`, `finished_at`, `exit_status`, and
+`error`; `id`, `preset`, `url`, `lane`, and `created_at` stay. The submission
+is allocated only when at least one job is requeued. The other outcomes change
+nothing: an unknown ID; a queued, running, or succeeded job, refused naming
+its state; and a job whose preset and URL an active job holds, refused naming
+that job, including one an earlier ID of the same retry just requeued
+(DEC-46). Earlier attempts' logs stay.
+
+*Interrupted marks.* Two operations mark every running job `interrupted`, with
+`finished_at` the current instant, a null `exit_status`, and lane deadlines as
+above. Reconciliation (§5) uses the error `worker restarted` and also clears
+every queued job's `wait`, so a previous run's waits do not linger until the
+scheduler sets current ones. Shutdown's final mark (§5) uses `worker stopped`.
+Opening a store does neither: the service runs reconciliation before it opens
+its socket.
 
 ### 6. Host commands
 
