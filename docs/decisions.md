@@ -1160,7 +1160,8 @@ rejected: the image has one of each, and tests pass them to the service as
 arguments. Leaving a stale socket to the entrypoint alone was rejected
 because the container's filesystem outlives `docker restart`. Closing the
 socket before the shutdown wait is how the worker refuses submissions while
-stopping (target design §5): a client finds no worker, and nothing is half accepted.
+stopping (target design §5): a client finds no worker, and nothing is half
+accepted.
 
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
 "Service lifecycle and failure handling". Added on 2026-10-12 for issue #64;
