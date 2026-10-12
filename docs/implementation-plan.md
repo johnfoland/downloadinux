@@ -115,7 +115,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-47 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-48 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 Only internal libraries are implemented. The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design

@@ -1071,3 +1071,42 @@ throttle setting was rejected because DEC-43 reserves shortening for tests.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §4,
 "Scheduler passes, VPN probe, and throttle test seam". Added on 2026-10-12
 for issue #64; fills scheduling details without changing DEC-41 to DEC-46.
+
+## DEC-48: The worker runs each attempt into its own log, signals only runners, and bounds shutdown by one blocking wait (2026-10)
+
+The worker's execution library starts `downloadinux-runner download` per
+job with the roots the service was given, in its own process group, with
+`/dev/null` input and both output streams appended to the attempt's log,
+which it opens without following symlinks or blocking on a FIFO, requires to
+be a regular file, and keeps at 0600. It writes nothing into a log itself.
+It registers the runner before anything else can fail, and maps failures
+before the process exists to fixed path-bearing launch-failure reasons. A
+poll ends exited runners in job ID order, recording a runner killed by
+signal N as 128 plus N, and keeps a runner registered until its end commits.
+Cancel signals the registered runner process only, after the store's
+commit, and reports the first signal error after attempting every one.
+Shutdown stops the scheduler, signals every runner, polls on a monotonic
+clock for at most 20 seconds, then applies the store's shutdown mark; after
+it, the library refuses further calls.
+
+Recording a signalled runner's status as null or negative was rejected: the
+store records statuses from 0 to 255, and 128 plus N is what the runner
+itself reports for a signalled downloader. Signalling the runner's process
+group was rejected: the runner is alone in it, and naming the process keeps
+DEC-43's rule that the downloader is reached only through the runner. A
+`SIGCHLD` handler or a waiting thread per runner was rejected because store
+operations are serial on one thread (DEC-47), and a non-blocking poll the
+service already calls each second is enough. Truncating an existing log was
+rejected because §2's names never share a log between attempts, so an
+existing one holds bytes worth keeping. Writing worker diagnostics into the
+log was rejected because the log is the runner's output; the worker's reason
+belongs in the job's `error`. Dropping a runner from the registry before its
+end commits was rejected because a failed commit would lose the exit status.
+A shutdown driven step by step from the service loop was rejected for now:
+nothing starts during the wait, and a single call bounded by 20 seconds fits
+within Docker's 30-second grace period (§1).
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §5,
+"Runner execution, cancel signals, and the shutdown wait". Added on
+2026-10-12 for issue #64; fills execution details without changing DEC-41 to
+DEC-47.
