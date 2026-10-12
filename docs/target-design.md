@@ -1922,7 +1922,9 @@ decoding counts) with exactly the keys `version`, `op`, and `args`; an
 unknown `op`; `args` not of the shape above, with each value of its JSON
 type (a boolean is not an integer); any string, key or value, that holds a
 surrogate code point; and a request over the limit. It refuses with
-`unsupported request version` an integer `version` other than 1. Values the
+`unsupported request version` an integer `version` other than 1 in a
+decoded JSON object, whatever its other keys hold, so a later protocol
+version with another shape still gets that reply. Values the
 store refuses carry the store's message, except an unknown `show` ID, which
 is `unknown job ID <id>`.
 
