@@ -860,3 +860,141 @@ def test_a_shutdown_signal_error_is_raised_after_the_wait_and_the_mark(rig):
     with pytest.raises(DownloadinuxError, match='^the worker has stopped$'):
         executor.poll()
     del executor._running[foreign]
+
+
+# End-to-end D1 evidence: store, scheduler, and executor together.
+
+def test_lanes_and_immediate_queues_run_together_through_ends_retries_and_a_restart(rig):
+    seam = ws.throttle_override({ws.THROTTLE_VARIABLE: '0'})  # zero-delay draws
+    store = rig.open(delay=seam)
+    executor = rig.executor(store)
+    run = rig.scheduler(store, executor)
+    stamp = lambda: rig.wall.now.strftime(js.TIMESTAMP_FORMAT)
+    v1, v2 = (j.id for j in store.submit('video', ['v1,wait=v1', 'v2'], lane='video').created)
+    g1, g2 = (j.id for j in store.submit('gallery', ['g1,output,wait=g1,exit=2', 'g2,wait=g2'],
+                                          lane='gallery').created)
+    a1, a2 = (j.id for j in store.submit('video', ['a1,wait=a1', 'a2'], user_agent=UA).created)
+    b1 = store.submit('gallery', ['b1,wait=b1'], source='alpha', revision=ALPHA).created[0].id
+    # Both lanes and both immediate submissions run at once, one job per queue.
+    assert run.run_pass() == (g1, v1, a1, b1)
+    assert executor.running == (v1, g1, a1, b1)
+    assert run.run_pass() == ()
+    assert [store.get(j).state for j in (v2, g2, a2)] == ['queued'] * 3
+
+    # A lane end draws its deadline (zero delay: the end itself); a retry
+    # rejoins the back of its lane, behind g2.
+    rig.wall.advance(10)
+    rig.release('g1')
+    [ended] = poll_until(executor, 1)
+    assert (ended.id, ended.state, ended.exit_status) == (g1, 'failed', 2)
+    assert deadline(store, 'gallery') == ended.finished_at == stamp()
+    assert store.retry([(g1, None, None, '')]).outcomes[0].outcome == js.REQUEUED
+    assert run.run_pass() == (g2,)
+
+    # An immediate end draws no lane deadline; its queue's next job follows.
+    rig.wall.advance(10)
+    lanes = deadline(store, 'video'), deadline(store, 'gallery')
+    rig.release('a1')
+    assert [r.id for r in poll_until(executor, 1)] == [a1]
+    assert (deadline(store, 'video'), deadline(store, 'gallery')) == lanes
+    assert run.run_pass() == (a2,)
+    poll_until(executor, 1)
+
+    rig.wall.advance(10)
+    rig.release('v1')
+    assert [r.id for r in poll_until(executor, 1)] == [v1]
+    assert deadline(store, 'video') == stamp()
+    assert run.run_pass() == (v2,)
+    poll_until(executor, 1)
+    assert deadline(store, 'video') == stamp()
+
+    rig.wall.advance(10)
+    rig.release('g2')
+    assert [r.id for r in poll_until(executor, 1)] == [g2]
+    assert run.run_pass() == (g1,)
+    [again] = poll_until(executor, 1)
+    assert (again.id, again.attempt, again.state, again.exit_status) == (g1, 2, 'failed', 2)
+    rig.release('b1')
+    assert [r.state for r in poll_until(executor, 1)] == ['succeeded']
+    # Both attempts' logs are kept, each with its own bytes.
+    first, second = log_path(rig, g1, 1), log_path(rig, g1, 2)
+    assert first.read_bytes() == second.read_bytes() == b'out-1\nerr-1 \xff\xfe\nout-2 \x80err-2\n'
+
+    # A worker that stops without shutdown leaves a running job; the next
+    # store reconciles it, and the queue behind it runs after.
+    r1, r2 = (j.id for j in store.submit('video', ['r1,wait=r1', 'r2'], lane='video').created)
+    rig.wall.advance(10)
+    assert run.run_pass() == (r1,)
+    process = executor._running.pop(r1)
+    store.close()
+    process.kill()
+    process.wait()
+    rig.wall.advance(10)
+    store = rig.open(delay=seam)
+    executor = rig.executor(store)
+    run = rig.scheduler(store, executor)
+    assert store.reconcile() == (r1,)
+    record = store.get(r1)
+    assert (record.state, record.error, record.exit_status) == ('interrupted', 'worker restarted', None)
+    assert deadline(store, 'video') == stamp()
+    assert run.run_pass() == (r2,)
+    assert [r.state for r in poll_until(executor, 1)] == ['succeeded']
+    assert executor.shutdown(run) == ()
+
+
+# Standard-library boundary (§1, DEC-41; §5, DEC-48).
+
+BOUNDARY = '''
+import importlib.abc, sys
+ALLOWED = ('downloadinux', 'downloadinux.worker_execution', 'downloadinux.worker_scheduler',
+           'downloadinux.nordvpn_output', 'downloadinux.job_store', 'downloadinux.errors',
+           'downloadinux.cookie_store', 'downloadinux.cookiejar')
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        top = name.split('.')[0]
+        if top not in sys.stdlib_module_names and top != 'downloadinux':
+            raise ImportError('non-stdlib import: ' + name)
+        if top == 'downloadinux' and name not in ALLOWED:
+            raise ImportError('host import: ' + name)
+sys.meta_path.insert(0, Block())
+sys.path.insert(0, sys.argv[1])
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from downloadinux import job_store as js, worker_execution as we, worker_scheduler as ws
+for blocked in ('downloadinux.launch', 'downloadinux.cookie_runner', 'downloadinux.settings', 'tomlkit'):
+    try:
+        __import__(blocked)
+    except ImportError:
+        pass
+    else:
+        raise AssertionError('import not blocked: ' + blocked)
+state, downloads = Path(sys.argv[2]), Path(sys.argv[3])
+with js.open_store(state, clock=lambda: datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)) as store:
+    job = store.submit('video', ['exit=0'], lane='video').created[0].id
+    executor = we.Executor(store, cookies=Path('/cookies'), state=state, downloads=downloads)
+    run = ws.Scheduler(store, executor.launch, vpn=False,
+                       clock=lambda: datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc))
+    assert run.run_pass() == (job,)
+    deadline = time.monotonic() + 20
+    while not executor.poll():
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    assert store.get(job).state == 'succeeded'
+    assert executor.shutdown(run) == ()
+assert 'downloadinux.launch' not in sys.modules and 'downloadinux.cookie_runner' not in sys.modules
+print('execution boundary passed')
+'''
+
+
+def test_isolated_stdlib_only_execution_launches_polls_and_shuts_down(rig):
+    import subprocess
+    root = rig.tmp / 'isolated-state'
+    root.mkdir()
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', BOUNDARY, str(SRC), str(root), str(rig.downloads)],
+        capture_output=True, text=True, timeout=30,
+        env={'PATH': str(rig.bin), 'HOME': str(rig.tmp / 'absent-home'), 'FIXTURE_LOG': str(rig.log)})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'execution boundary passed\n'
+    assert [r['url'] for r in rig.records()] == ['exit=0']

@@ -16,11 +16,13 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-48, issue #64). Only internal libraries are
+jobs*, DEC-41 to DEC-49, issue #64). Only internal libraries are
 implemented: the job store (§2's foundation and §5's store lifecycle
-operations) and §4's scheduler passes, VPN probe, and throttle seam helper
-(DEC-47). Runner execution, the worker service, commands, and cutover remain
-unimplemented. Stage 4 remains proposed.
+operations), §4's scheduler passes, VPN probe, and throttle seam helper
+(DEC-47), and §5's runner execution: launch, attempt logs, exit polls,
+cancel signals, and the shutdown wait (DEC-48, DEC-49). The worker service,
+client, packaging, commands, and cutover remain unimplemented. Stage 4
+remains proposed.
 
 ## Agreed decisions
 
@@ -1686,15 +1688,17 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-48). Only internal standard-library libraries are
+(DEC-41 to DEC-49). Only internal standard-library libraries are
 implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
-waits, ends and lane deadlines, cancel, retry, and interrupted marks), and
-§4's scheduler passes, VPN gate, and throttle seam helper (DEC-47). Runner
-launch and logs, signal delivery and the shutdown wait, reconciliation at
-service start, the service and its client, commands, and cutover remain
-unimplemented. Until the cutover (§7), batches run
+waits, ends and lane deadlines, cancel, retry, and interrupted marks),
+§4's scheduler passes, VPN gate, and throttle seam helper (DEC-47), and
+§5's runner execution: runner launch, attempt logs, exit polls, cancel
+signals, and the shutdown wait (DEC-48, DEC-49). The service (its lock
+wait, reconciliation at start, socket, pass and poll cadence, signal
+handling, and `serve` reading the throttle seam), its client, packaging,
+commands, and cutover remain unimplemented. Until the cutover (§7), batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
 planning pull request merged. Client request and reply shapes and human
@@ -1805,8 +1809,9 @@ Its tests cover ownership/private paths, versioning and durability settings,
 atomic submissions and exact duplicates, and independent typed reads;
 `tools/job_store_evidence.py` proves reopened ownership on a Docker Desktop
 state bind mount. §5's "Store lifecycle" subsection adds the transitions,
-and §4's DEC-47 subsection the scheduler that drives them; runner execution
-and the service remain unimplemented.
+§4's DEC-47 subsection the scheduler that drives them, and §5's DEC-48
+subsection the runner execution, whose attempt logs use §2's names; the
+service remains unimplemented.
 
 These details settle the internal storage boundary.
 They do not define the socket's JSON protocol (§1), or activate the host
@@ -1975,9 +1980,10 @@ Implemented as an internal library: `downloadinux.worker_scheduler` holds
 the passes, the default VPN probe, and the test throttle helper, and
 `downloadinux.nordvpn_output` the interpretation doctor shares. Its tests
 drive the real store with injected clocks, probe, and launch callback,
-including a stdlib-only boundary run. The service's pass cadence, its real
-launch callback, and `serve` reading the throttle seam are not yet
-implemented. The scheduler is standard-library code. It uses the owned
+including a stdlib-only boundary run. Its real launch callback is §5's
+execution library (DEC-48); the service's pass cadence and `serve` reading
+the throttle seam are not yet implemented. The scheduler is
+standard-library code. It uses the owned
 `JobStore` through its public operations; it neither opens SQLite separately
 nor reads settings, cookie material, or host paths. Scheduling and client
 mutations run serially on the store's owning thread. A pass does not sleep
@@ -2081,8 +2087,9 @@ yt-dlp continue a partial `.part` file, as far as the downloader can.
 Implemented in `downloadinux.job_store`, whose tests drive every §3 row
 through real SQLite, including failed transactions and the stdlib-only
 boundary. §4's scheduler drives start, waits, and launch-failure ends
-(DEC-47); the service that runs it, ends runner exits, and makes the marks is
-not yet implemented.
+(DEC-47); §5's execution library ends runner exits and applies the
+shutdown mark (DEC-48); the service that drives them and reconciles at its
+start is not yet implemented.
 These details pin how `downloadinux.job_store` carries
 §3 to §5's lifecycle, so the scheduler and the service decide only *when* to
 call it. Each operation below is one explicit transaction whose commit is its
@@ -2164,7 +2171,12 @@ its socket.
 
 #### Runner execution, cancel signals, and the shutdown wait (DEC-48)
 
-Settled, not yet implemented. These details pin how the worker carries §4's
+Implemented as the internal standard-library library
+`downloadinux.worker_execution`. Its tests drive the real store, the real
+scheduler, and real fixture runners, including the real container runner
+for a cancelled process tree and a stdlib-only boundary run; the service
+that drives it (§1) is not yet implemented. These details pin how the
+worker carries §4's
 *Execution* and §5's cancel and shutdown as an internal standard-library
 library that the service (§1) drives. It uses the owned store's public
 operations and the scheduler's launch callback and stop flag (DEC-47); it
