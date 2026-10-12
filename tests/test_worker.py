@@ -720,6 +720,51 @@ def test_a_stalled_client_is_dropped_after_10_seconds_and_the_loop_carries_on(ri
         assert store.get(job.id).state == 'succeeded'
 
 
+# A stop during an exchange (DEC-52, issue #81).
+
+def test_a_stop_drops_a_client_that_sends_nothing(rig):
+    serve = rig.start().listening()
+    stalled = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stalled.connect(str(rig.socket))
+    time.sleep(1.5)  # the worker accepts within one tick and then waits on the request
+    started = time.monotonic()
+    serve.process.send_signal(signal.SIGTERM)
+    assert serve.process.wait(10) == 0
+    elapsed = time.monotonic() - started
+    stalled.settimeout(5)
+    assert stalled.recv(100) == b''  # closed, no reply
+    stalled.close()
+    assert elapsed < 2
+    assert serve.lines() == [LISTENING.format(rig.socket), STOPPING]
+    assert serve.stderr() == ''
+
+
+def test_a_stop_drops_a_client_that_never_reads_its_reply_and_the_submission_stays(rig):
+    serve = rig.start().listening()
+    urls = [f'wait=never,n={index},' + 'x' * 300 for index in range(10000)]
+    payload = request_bytes('submit', submission(urls))
+    stalled = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stalled.connect(str(rig.socket))
+    stalled.sendall(payload)
+    stalled.shutdown(socket.SHUT_WR)
+    # The reply has begun to arrive, far larger than the socket buffers, and
+    # is never read: peeking leaves it all in the buffer.
+    stalled.settimeout(60)
+    assert stalled.recv(1, socket.MSG_PEEK) == b'{'
+    started = time.monotonic()
+    serve.process.send_signal(signal.SIGTERM)
+    assert serve.process.wait(10) == 0
+    elapsed = time.monotonic() - started
+    stalled.close()
+    assert elapsed < 2
+    assert serve.lines() == [LISTENING.format(rig.socket), STOPPING]
+    assert serve.stderr() == ''
+    with rig.open() as store:  # the commit stays
+        jobs = store.list()
+    assert [job.url for job in jobs] == urls
+    assert {job.state for job in jobs} <= {'queued', 'interrupted'}
+
+
 # Failures in the loop (DEC-50, issue #74).
 
 class StepBack:
