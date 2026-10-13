@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-53, issue #64). Implemented: the job store (§2's
+jobs*, DEC-41 to DEC-55, issue #64). Implemented: the job store (§2's
 foundation and §5's store lifecycle operations), §4's scheduler passes, VPN
 probe, and throttle seam helper (DEC-47), §5's runner execution: launch,
 attempt logs, exit polls, cancel signals, and the shutdown wait (DEC-48,
@@ -25,7 +25,8 @@ as the module `downloadinux.worker` (DEC-50, DEC-51; PR #78). PR #84
 packages it as the image's command under `init` with the 30-second grace
 period, drops a client being served on a stop (DEC-52), and adds the
 host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). The
-remaining clients, the host commands, and the cutover remain unimplemented,
+remaining clients and the host `jobs` commands (pinned in DEC-54 and DEC-55)
+and the cutover remain unimplemented,
 so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
@@ -1697,7 +1698,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-53). Implemented: the job store, with §2's foundation (private versioned storage
+(DEC-41 to DEC-55). Implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
 waits, ends and lane deadlines, cancel, retry, and interrupted marks),
@@ -1764,7 +1765,8 @@ a mount; the entrypoint creates `/run/downloadinux` at mode 0700, owned by
 log. Every host operation reaches the worker by running a client subcommand of
 the same executable through *Host application*'s invocation, captured:
 `exec -T -u dl downloadinux downloadinux-worker <subcommand> …`. The client
-connects to the socket, sends one request, and prints the reply on standard
+connects to the socket, sends one request (`logs` sends one per chunk it
+reads, DEC-54), and prints the reply on standard
 output as one JSON object, or, when following, one JSON object per line until
 the followed work ends or the client is stopped. It is a versioned,
 container-internal boundary like the runner's. There is no published port and
@@ -1880,7 +1882,8 @@ received while stopping change nothing.
 and reachable in the container as `downloadinux-worker` (PR #84). `downloadinux.worker.main` also holds the client subcommands. This
 subsection pins `status`, `submit`, and `show`;
 the others §6's commands need (listing, cancel, retry, logs, and following)
-are pinned here before the chunk that builds them.
+are pinned in "Job clients: listing, cancel, retry, and logs" below
+(DEC-54).
 
 | Subcommand | Input | Success reply |
 | --- | --- | --- |
@@ -1911,7 +1914,7 @@ A usage error (status 2) prints `downloadinux: error: REASON` on standard
 error, nothing on standard output, and contacts no socket. With no
 subcommand, or an unknown one, `REASON` is `a subcommand is required: serve,
 status, submit, or show` or `unknown subcommand '<word>'; use serve, status,
-submit, or show`. `status` and `submit` refuse any argument, naming the
+submit, or show` (with DEC-54's clients, the lists grow; see below). `status` and `submit` refuse any argument, naming the
 first: `status: unexpected operand '<word>'`, and likewise for `submit`.
 `show` needs exactly one, `show: exactly one job ID is required`, of the
 form above, `show: job ID must be a positive integer`. `serve`'s reasons are
@@ -1957,6 +1960,123 @@ version with another shape still gets that reply. Values the
 store refuses carry the store's message, except an unknown `show` ID, which
 is `unknown job ID <id>`.
 
+#### Job clients: listing, cancel, retry, and logs (DEC-54)
+
+Pinned before the chunk that builds them; not yet implemented. These
+clients join `status`, `submit`, and `show` in `downloadinux.worker`, under
+the previous subsection's exit statuses, output form, acceptance rule, wire
+protocol, and limits, except where this one says otherwise. Each request's
+`op` is its subcommand's name.
+
+| Subcommand | Input | Success reply |
+| --- | --- | --- |
+| `list` | no arguments; one JSON object on standard input | `{"version":1,"jobs":[RECORD,…]}` |
+| `cancel ID…` | one or more job IDs | `{"version":1,"outcomes":[{"id":I,"outcome":O,"state":S},…]}` |
+| `retry` | no arguments; one JSON object on standard input | `{"version":1,"submission":S,"outcomes":[{"id":I,"outcome":O,"state":S,"holder":H},…]}` |
+| `logs ID [--attempt N] [--follow]` | one job ID and options | one line per chunk, `{"version":1,"attempt":N,"ended":E,"offset":O,"data":D}` |
+
+*Usage.* With these clients, the two subcommand reasons read `a subcommand
+is required: serve, status, submit, show, list, cancel, retry, or logs` and
+`unknown subcommand '<word>'; use serve, status, submit, show, list,
+cancel, retry, or logs`. `list` and `retry` refuse any argument as `status`
+does (`list: unexpected operand '<word>'`), and read standard input as
+`submit` does, with the reason `list: standard input must be one JSON
+object` (likewise `retry`), passing the object on as the request's `ARGS`
+without examining it. `cancel` needs at least one ID, `cancel: at least one
+job ID is required`, each of `show`'s form, `cancel: job ID must be a
+positive integer`; its `ARGS` are `{"ids":[ID,…]}` in the order given,
+repeats included. `logs` takes one ID and the options `--attempt N` and
+`--follow`, each at most once, in any order before or after the ID; every
+word beginning with `-` is an option, and `--attempt`'s value is the next
+word, whatever it is. Scanning the words in order, the first of these is
+the reason: `logs: unknown option '<word>'`, `logs: --attempt needs a
+value` (it is the last word), `logs: --attempt given more than once`,
+`logs: --follow given more than once`; then `logs: exactly one job ID is
+required`, `logs: job ID must be a positive integer`, and `logs: --attempt
+must be a positive integer`, the last two by `show`'s form.
+
+*Requests.* `ARGS` hold exactly these keys, each value of its JSON type
+(a boolean is not an integer); anything else is `invalid request`:
+
+- `list`: `ids`, `states`, and `preset`, each null or, respectively, a
+  nonempty array of integers in `ID`'s range, a nonempty array of §3's state
+  names, and `video` or `gallery`. A job is listed when it matches every
+  filter that is not null: its ID among `ids`, its state among `states`, its
+  preset `preset`. Repeats in an array change nothing.
+- `cancel`: `ids`, a nonempty array of integers in `ID`'s range.
+- `retry`: `jobs`, a nonempty array of objects with exactly `id` (an integer
+  in `ID`'s range), `source` and `revision` (strings or null), and
+  `user_agent` (a string): the selection the host pinned for that job (§3).
+  The store validates their values as for a submission, and an invalid one
+  refuses the whole request with the store's message.
+- `logs`: `id` (in `ID`'s range), `attempt` (null, or an integer from 1 to
+  `ID`'s largest value), and `offset` (an integer from 0 to that value).
+
+*Replies.*
+
+- `list`: every matching record, each as `show` gives it, in ID order. When
+  the reply would exceed the 32 MiB limit, the worker sends the error `the
+  job listing would exceed 32 MiB; narrow it` instead.
+- `cancel`: the execution library's cancel (§5, DEC-48), one outcome per
+  ID, repeats collapsed to the first, in request order: `cancelled` (a queued
+  job ended), `requested` (a running job's cancel was recorded and its runner
+  signalled), `refused` (a finished job), or `unknown`. `state` is the job's
+  state after the call, null when unknown. A signal failure is the error
+  reply with DEC-48's message; the store's outcomes have committed by then.
+- `retry`: the store's retry (§5 *Retry*). `submission` is the new shared
+  submission's ID, or null when nothing was requeued, and the outcomes, one
+  per ID, repeats collapsed to the first, in request order, are `requeued`,
+  `refused` (a queued, running, or succeeded job), `shadowed` (`holder` the
+  queued or running job holding its preset and URL, DEC-46), or `unknown`.
+  `state` is as for `cancel`, and `holder` is null unless shadowed.
+- `logs`: one chunk of the attempt's log, `logs/<id>-<attempt>.log` in the
+  store (§2). `attempt` is the request's, or the job's current attempt when
+  the request's was null. An attempt above the job's current one is refused,
+  `job <id> has no attempt <n>`, and an unknown ID is `unknown job ID <id>`,
+  as for `show`. The worker first decides `ended`: true when the attempt is
+  earlier than the job's current one, or is the current one and the job is
+  `succeeded`, `failed`, `cancelled`, or `interrupted`. It then reads at most
+  1 MiB (1,048,576 bytes) from `offset`, opening the log relative to the
+  store's `logs` directory read-only, close-on-exec, nonblocking, and not
+  following a symlink, and closing it before it replies. Anything but a
+  regular file is refused, `<log path>: not a regular file`; a log that does
+  not exist reads as empty (an attempt that has not started, or whose log
+  could not be opened at launch); any other OS error is the error reply
+  `<log path>: <OS reason>`, with the container path. `data` is the bytes
+  read, base64-encoded with padding (RFC 4648 §4), and empty at or past the
+  end; the reply's `offset` is the request's plus the number of bytes read.
+
+*`logs`' output.* The client's first request has `attempt` null and offset
+0; each later one has the attempt the first reply named and the previous
+reply's `offset`. Without `--follow` it stops after the first reply whose
+`data` is empty. With `--follow` it stops after the first reply whose `data`
+is empty and `ended` true, and after any other reply with empty `data` it
+waits half a second before the next request. It prints every reply with
+nonempty `data`, and the reply it stops after, each as one line in the output
+form, flushed at once, and then exits 0. An error reply is printed and ends
+it with status 1; a reply that is not accepted, or a request that fails as
+the previous subsection describes, ends it with status 3 and that detail on
+standard error. Lines already printed stay printed. Each request has its own
+30-second allowance. While following, the client also watches its standard
+input, during each half-second wait and before each request: at end of
+file it exits 0 at once, printing nothing more. The host holds a pipe open
+there while it follows and closes it to detach (§6), because Compose's
+`exec` neither signals the client nor closes its output when the host side
+goes away, but does close its standard input; a follower whose host has gone
+thus ends within about half a second. Run by hand, a follower needs a
+terminal or an open pipe on standard input; `/dev/null` ends it at once.
+Without `--follow`, standard input is not read. An OS error writing
+standard output ends any client with status 1, without a traceback.
+
+*Submission size* (issue #79). After the shape checks and before the store
+runs a submission, the worker bounds its reply: 128 bytes, plus, for each
+distinct URL in the request (exact string equality, as the store collapses
+repeats), 34 bytes and the length of the URL's JSON string in the output
+form, quotes included. When the bound exceeds 32 MiB, the worker refuses
+with `submission too large: its reply would exceed 32 MiB`, committing
+nothing. The reply is never larger than the bound, so a committed
+submission's reply always fits.
+
 #### Host invocation and reply handling (DEC-53)
 
 Every host worker operation goes through one host-side call, implemented
@@ -1988,6 +2108,27 @@ from the host. A success reply has no `error`; an error reply is exactly
 `version` and a string `error`. Every failure is an operation error, exit 1,
 and an OS error starting Compose is the CLI's usual operation error.
 Per-operation reply shapes are checked by the operation that calls it.
+
+*Streaming* (DEC-55; pinned, not yet implemented). A client that prints a
+line per reply (`logs`, DEC-54) runs through a second host call,
+`downloadinux.host_worker.stream`, beside `call`. It runs the same running
+check, then the same `exec -T -u dl downloadinux downloadinux-worker ARGS…`,
+with standard output a pipe it reads line by line as lines arrive and
+standard input a pipe it holds open and never writes; standard error stays
+on the terminal. Each line, less its newline, must be at most 32 MiB and
+accepted by the shared rule, and it hands each success reply to its caller
+as it arrives; a line that is not accepted, or an error reply on any line
+but the last, is `downloadinux-worker SUB printed unexpected output`. At the
+end of output it waits for the exit status. Status 0 after one or more
+lines, all success replies, ends the stream normally; status 1 whose last
+line was an error reply fails with its reason; any other pairing of 0 or 1
+with the lines, none included, is unexpected output. Any other status maps
+as `call` maps it (126 or 127, 3, and the rest) when no line was accepted,
+and once a line was accepted is `the worker went away; see dlx jobs list`:
+the container stopped under it. However the stream ends, normally or early (a detach, a failure,
+or the caller stopping), the call closes the follower's standard input,
+then, if the Compose process is still running, sends it `SIGTERM`, waits up
+to 5 seconds, and if need be kills it and waits.
 
 ### 2. Job store and records
 
@@ -2574,6 +2715,130 @@ operation error, exit 1.
 The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 (DEC-40), `watch` forwards its argument, and a new `jobs *args` runs
 `uv run downloadinux jobs "$@"`.
+
+#### Job operations, output, and exit statuses (DEC-55)
+
+Pinned before the chunk that builds them; not yet implemented. The host
+operations are the module `downloadinux.host_jobs`, which the `jobs` fronts
+call and the Stage 4 TUI will. Each loads the effective settings and
+credentials as every command does and reaches the worker only through §1's
+host call or its streaming call (DEC-53, DEC-55), so the running check and
+§1's failure texts apply.
+
+*Reply shapes.* Each operation checks its reply against DEC-54's shape for
+its client: exactly the keys shown, each of its JSON type. A record has
+exactly §2's fields: `id`, `submission`, and `attempt` positive integers;
+`preset` `video` or `gallery`; `url`, `user_agent`, `created_at`, and
+`queued_at` strings; `lane` null or the record's preset; `source` and
+`revision` both strings or both null; `state` one of §3's six; `wait` null,
+`{"reason":"vpn"}`, or `{"reason":"throttle","until":STRING}`;
+`cancel_requested` a boolean; `started_at`, `finished_at`, and `error`
+strings or null; `exit_status` an integer or null. A boolean is never an
+integer. Outcomes must name the requested IDs, repeats collapsed to the
+first, in request order, with states that fit them: `cancelled` with
+`cancelled`, `requested` with `running`, `refused` with a finished state for
+`cancel` and with `queued`, `running`, or `succeeded` for `retry`,
+`requeued` with `queued`, `shadowed` with a retryable state and an integer
+`holder`, and `unknown` with null; `retry`'s `submission` is an integer
+exactly when something was requeued. Anything else is `downloadinux-worker
+SUB printed unexpected output` (DEC-53).
+
+*Operations.*
+
+- `submit`: one `submit` request, its object built from a preset, URLs,
+  `lane`, an already pinned selection (`cookie_store.Pinned` or anonymous),
+  and the effective user-agent; returns the checked reply. It pins nothing:
+  `dl` and `batch` pin before calling it (§7's cutover). No command calls it
+  before then.
+- `list`: `list` with `ids` and `preset` null and `states` `["queued",
+  "running","failed","interrupted"]`, or null for `--all`.
+- `show`: `show`, then the log paths: one per attempt from 1 to `attempt`,
+  except the current attempt while the job is `queued`, since it has not
+  started; each is `paths.state/jobs/logs/<id>-<n>.log` as a host path. The
+  host never opens them (§1).
+- `logs`: the `logs` client through the streaming call, with `--attempt N`
+  and `--follow` passed on when given, yielding each reply's decoded bytes.
+  `data` must be strict, padded base64, every reply must name the first
+  reply's attempt, and the last must have empty `data`, and `ended` true
+  when following; else unexpected output.
+- `cancel`: one `cancel` request with the IDs as given.
+- `retry`: below.
+- `export`: `list` with `ids` null, `states` `["failed","cancelled",
+  "interrupted"]`, and the preset.
+
+*`jobs retry ID… [selection]`.* The IDs, repeats collapsed to the first, are
+read with one `list` request (`ids` those IDs, the other filters null).
+Only the jobs it shows `failed`, `cancelled`, or `interrupted` are pinned
+and sent. Each one's selection, decided before anything is retried:
+`--anonymous` makes every job anonymous; `--cookie-source NAME` pins NAME
+once (DEC-31); otherwise a job whose `source` is null stays anonymous and
+reads no cookie store, and a job with a source is pinned to that source's
+current revision, each distinct source pinned once. Its user-agent is
+`--user-agent`'s value, else the job's stored one; `downloads.user_agent` is
+not read. A pinning failure fails the command, exit 1, with its message,
+before anything is retried; nothing is pinned when no job is sent. When any
+job is sent, one `retry` request carries them in request order.
+
+*Output.* Interpolated strings in human output (URLs, user-agents, errors,
+source names, revisions, paths) print each C0 control character (U+0000 to
+U+001F), DEL, and C1 control character (U+0080 to U+009F) as `\xNN`, two
+lowercase hex digits; nothing else is escaped. `--json` output, `jobs logs`,
+and `jobs export` are not changed. `--json` prints the object with two-space
+indentation, as `doctor --json` does. The commands print:
+
+- `jobs list`: with `--json`, `{"jobs":[RECORD,…]}` as the reply holds them.
+  Otherwise, with no jobs, `No queued, running, failed, or interrupted jobs.`
+  (`No jobs.` with `--all`); else a table with the header `ID`, `STATE`,
+  `PRESET`, `QUEUE`, `ATTEMPT`, `URL` and one row per job, columns separated
+  by two spaces, each column but the last left-aligned and padded to its
+  widest cell, header included, and no trailing spaces. `STATE` is the
+  state, followed for a queued job with a wait by `: vpn` or `: throttle
+  until T` (`T` the wait's `until`), and for a running job with
+  `cancel_requested` by `: cancelling`. `QUEUE` is `lane` or `immediate`.
+- `jobs show ID`: with `--json`, `{"job":RECORD,"logs":[{"attempt":N,"path":P},…]}`.
+  Otherwise the line `Job ID: STATE`, then one line per field, each two
+  spaces, the label and its colon, and spaces so the value starts at the
+  21st character (at least one space): `URL`, `Preset`, `Queue` (`<preset>
+  lane` or `immediate`), `Submission`, `Cookies` (`SOURCE at revision
+  REVISION` or `anonymous`), `User-agent` (verbatim, `(empty)` when empty),
+  `Attempt`, `Wait` (`-`, `vpn`, or `throttle until T`), `Cancel requested`
+  (`yes` or `no`), `Created`, `Queued`, `Started`, `Finished`, `Exit status`,
+  and `Error` (`-` for null), then `Log, attempt N` with its path for each
+  log path.
+- `jobs logs ID [--attempt N] [--follow]`: the log's bytes, written to
+  standard output's byte stream as they arrive and flushed, then exit 0.
+  While following, `SIGINT`, `SIGHUP`, or `SIGTERM` ends the stream as the
+  streaming call describes, prints `detached from job ID, which carries on
+  in the worker; follow it with dlx jobs logs --follow ID or cancel it with
+  dlx jobs cancel ID` on standard error, and exits 128 plus the signal
+  number. Without `--follow`, signals keep the CLI's usual handling.
+- `jobs cancel ID…`: one line per outcome on standard output, in order:
+  `job I cancelled`; `job I: cancel requested; it ends when its downloader
+  exits`; `job I is STATE; only queued or running jobs can be cancelled`; or
+  `unknown job ID I`. Exit 0 when every outcome is `cancelled` or
+  `requested`, else 1.
+- `jobs retry ID…`: one line per ID on standard output, in request order,
+  from the reply for jobs sent and from the listing for the rest: `job I
+  queued again as attempt N` (`N` the listed attempt plus one); `job I is
+  STATE; only failed, cancelled, or interrupted jobs can be retried`; `job I
+  not retried: job H already holds its preset and URL`; or `unknown job ID
+  I`. Exit 0 when every ID was requeued, else 1.
+- `jobs export PRESET`: each URL and a newline, as UTF-8 bytes on standard
+  output, in ID order; nothing when there are none. Exit 0.
+
+A refused or failed request (an error reply, §1's texts, or unexpected
+output) is the usual operation error, exit 1, `downloadinux: error:
+REASON`, an unknown `show` or `logs` ID included.
+
+*Arguments.* The `jobs` subcommands take the global options as the other
+commands do. A job ID is ASCII digits with no leading zero, from 1 to
+9223372036854775807, as for the client; any other is a usage error, exit 2,
+`job ID must be a positive integer` in the host's error form, like
+`--user-agent`'s (DEC-40), and `--attempt`'s value likewise, `--attempt must
+be a positive integer`. `PRESET` takes the preset names and aliases. `jobs
+retry`'s selection options are `dl`'s, with their placement and usage
+errors (DEC-39, DEC-40). The `just jobs *args` recipe's menu line is
+`# Jobs in the worker: just jobs list|show|logs|cancel|retry|export …`.
 
 ### 7. Compatibility and retirement
 
