@@ -1699,7 +1699,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-55). Implemented: the job store, with §2's foundation (private versioned storage
+(DEC-41 to DEC-56). Implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
 waits, ends and lane deadlines, cancel, retry, and interrupted marks),
@@ -2743,13 +2743,126 @@ The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 (DEC-40), `watch` forwards its argument, and a new `jobs *args` runs
 `uv run downloadinux jobs "$@"`.
 
+#### Host submission and queue import (DEC-56)
+
+Settled preparation for §7's cutover; not yet implemented. The reusable host
+module is `downloadinux.host_downloads`, with `submit_download` and
+`import_batch` operations. They return data for the CLI and Stage 4 TUI;
+they print nothing and do not follow jobs. They ship additively before the
+cutover: until §7 switches the commands together, `dl`, `batch`, and `watch`
+keep their existing routes. Following and its remaining texts are pinned
+before the later implementation that needs them.
+
+*Submission.* Both operations take the existing configuration, overrides,
+host, and selection arguments; `submit_download` takes a preset and URLs,
+and `import_batch` a preset and optional queue path. Worker capture/feed
+calls are injectable as in `host_jobs.submit`. Resolve aliases to the
+canonical preset. Load settings, validate the preset and input (URLs for
+`submit_download`, the queue read below for `import_batch`), check the
+effective user-agent with `launch.effective_user_agent`, then pin once with
+`cookie_pinning.pin`, and call `host_jobs.submit` once. The lane is null for
+`submit_download`, the canonical preset for `import_batch`. Nothing opens
+the host job store or a log, allocates a snapshot, or launches a runner.
+Use the existing user-agent errors (DEC-39/40). Before pinning, reject URL
+input that §2's submission validation refuses with its existing reason
+(`submission URLs must be a nonempty ordered sequence` or `submission URLs
+must be nonempty strings without CR, LF, or NUL`); do not normalize `dl`
+URLs. Also reject a NUL in the effective user-agent before pinning with
+`user-agent must be a string without CR, LF, or NUL`, as the store does.
+An empty queue checks the effective user-agent but pins nothing and calls
+no worker, returning an empty result. Selection option syntax stays
+DEC-39/40's; no new CLI option is added by this preparation.
+
+The operation signatures begin `submit_download(preset, urls, ...)` and
+`import_batch(preset, queue=None, ...)`, with the existing operations'
+positional `config=None`, `overrides=()`, `host=Host()` after those
+arguments, and keyword-only `cookie_source=None`,
+`anonymous=False`, `user_agent=None`, `capture=None`, `feed=None`.
+
+*Reply correspondence.* In addition to DEC-55's shape check,
+`host_jobs.submit` checks that `created` and `duplicates` together account
+for every distinct input URL exactly once, with no other URL, no repeated
+ID across either array, and each array in first-occurrence input order.
+A mismatch is `downloadinux-worker submit printed unexpected output`.
+Do not consume a queue on a refusal, unreachable worker, or unexpected
+reply. The worker might have committed before a reply failed; do not retry
+the request automatically or claim that it rolled back.
+The submission operation returns the submission ID and references in the
+input's first-occurrence order, each with ID, URL, and whether it was a
+duplicate; reconstruct this order from the two checked reply arrays, never
+by job ID. A duplicate keeps its original queue and selection (§2).
+Results are frozen dataclasses: `SubmissionReference(id: int, url: str,
+duplicate: bool)`, `DownloadSubmission(submission: int, references:
+tuple[SubmissionReference, ...])`, and `BatchImport(queue: Path, preset:
+str, submission: int | None, references: tuple[SubmissionReference, ...])`.
+
+*Queue file.* A reusable `downloadinux.queue_file` module owns reading and
+consuming the import file. Expand `~` and make the supplied path absolute
+without resolving it for display; the default is the canonical preset's
+queue name under `paths.downloads`. Resolve its filesystem target once per
+import, following symlinks, and use that target for both reads and the
+replacement. Thus importing a symlink edits its target and keeps the link;
+errors and results name the displayed absolute path. No containment check
+against `paths.downloads` is made. Require a regular file on each read and
+do not block on a FIFO: inspect before opening, open nonblocking, and check
+the opened descriptor is regular. An absent or nonregular target is
+`no such queue file: PATH`; other OS failures are `PATH: <OS reason>`.
+Its `read(path)` returns frozen `QueueRead(path: Path, target: Path,
+urls: tuple[str, ...])`; `consume(read_result, accepted_urls)` returns
+nothing after successful publication. `path` accepts a string or `Path`;
+the import operation supplies its default path when no queue is given.
+
+Read bytes and decode strictly as UTF-8, without stripping a BOM. A decoding
+failure is `PATH: queue file is not UTF-8`, without echoing input. Physical
+lines end at LF, CRLF, or bare CR; the final line may lack an ending.
+Other Unicode line separators are ordinary content. Strip surrounding
+Unicode whitespace from each line for URL selection, skip empty lines and
+lines whose stripped text starts with `#`, and preserve repeated URLs in
+the submission input (the worker collapses them). Validate every selected
+URL before pinning; an invalid URL uses the submission reason above.
+
+After a checked successful submission, read the same target afresh. Remove
+every line whose stripped text is in the created-or-duplicate URL set,
+including another occurrence appended since the first read. Keep every
+other line's original UTF-8 bytes and line ending, in order, including
+comments, blanks, new URLs, and an unterminated final line. Do not validate
+newly appended URLs as a new submission. Capture the current permission
+bits from this second opened file. Write a same-directory temporary at that
+mode, flush and sync it, then atomically replace the target. Do not create
+missing parents. Even an all-duplicate submission consumes its URLs; an
+empty first read never rewrites. The import neither locks out external
+writers nor merges an append after the second read: §6's replacement race
+remains. It does not modify any other hard link to the old inode.
+
+A handled write/publication failure attempts to remove its temporary and
+close every descriptor. A failed cleanup is reported and may leave that
+temporary; do not promise its removal when the OS refuses it (DEC-27).
+Every reported consumption failure after a checked submission, including a failed reread,
+decoding, mode capture, write, sync, rename, or cleanup, names the displayed
+queue path and appends `; jobs were queued; inspect with dlx jobs list` to
+the reason, exit 1. Jobs are never cancelled to undo a failed consumption.
+An OS failure without reason text uses `operation failed`. A rerun still
+uses §2's active-duplicate rule; a job that finished meanwhile can be
+submitted again.
+
+*Results and later batch output.* `import_batch` returns the displayed
+queue path, canonical preset, nullable submission ID (null only for an
+empty queue), and the ordered references above. Queued and skipped counts
+are the numbers of distinct created and duplicate references, not physical
+lines. At the cutover, an empty result prints `No URLs in queue: PATH`;
+otherwise print `Queued N jobs; skipped M active duplicates in PRESET lane.`
+and `Follow with: dlx watch PRESET`, each on standard output, exit 0. Human
+paths use DEC-55's control-character escaping. These operations themselves
+produce no output; the batch front renders their result at the cutover.
+
 #### Job operations, output, and exit statuses (DEC-55)
 
 Implemented in PR #90: the host operations are the module
 `downloadinux.host_jobs`, which the `jobs` fronts call and the Stage 4 TUI will; their tests drive
 every text and exit status below through the CLI, and the gate's smoke test
-runs the commands against the worker in the built image. `submit` has no
-caller until the cutover (§7). Each loads the effective settings and
+runs the commands against the worker in the built image. No command submits
+until the cutover (§7); the additive host operations above prepare that route.
+Each loads the effective settings and
 credentials as every command does and reaches the worker only through §1's
 host call or its streaming call (DEC-53, DEC-55), so the running check and
 §1's failure texts apply.

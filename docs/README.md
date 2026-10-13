@@ -17,7 +17,9 @@ and doctor use named sources, and the container's download shortcuts are
 retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5), so Stage 2
 is implemented. Stage 3, a persistent worker and jobs in place of tmux, is
 settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
-(DEC-41 to DEC-55). Implemented so far: the
+(DEC-41 to DEC-56). Host submission and byte-preserving queue import are
+settled as additive preparation (DEC-56), not implemented yet.
+Implemented so far: the
 `downloadinux.job_store` library (private versioned SQLite ownership, atomic
 pinned submissions, exact active duplicates, typed record reads, and the
 store's lifecycle operations: queue heads, start, waits, ends with lane

@@ -117,7 +117,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-55 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-56 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
@@ -152,6 +152,9 @@ the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
 (DEC-55) are implemented in PR #90, with smoke evidence against the worker
 in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
 `watch` do not use the worker yet.
+Target design §6's host submission and byte-preserving queue import
+operations (DEC-56) are settled as additive preparation for that cutover;
+they are not implemented yet.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
