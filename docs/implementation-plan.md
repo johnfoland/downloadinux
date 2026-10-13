@@ -144,8 +144,9 @@ into the image (the `downloadinux-worker` command, the image's command,
 directory), drops a client being served when a stop arrives (DEC-52), and
 adds the host's worker call, `downloadinux.host_worker` (DEC-53), and
 doctor's `worker.running`; the gate's smoke test runs the worker in the
-built image. The remaining clients and host `jobs` commands (pinned in
-DEC-54 and DEC-55) and the cutover remain
+built image. PR #87 adds the worker's `list`, `cancel`, `retry`, and
+`logs` clients and the reply bounds that settle issue #79 (DEC-54). The
+host `jobs` commands (pinned in DEC-55) and the cutover remain
 unimplemented.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
@@ -262,7 +263,7 @@ the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-55);
-the worker is packaged into the image and reachable from the host, while its
-remaining clients, commands, and cutover are not yet implemented (*Stage 3*
-above); TUI styling
+the worker is packaged into the image with all its clients and is
+reachable from the host, while the host `jobs` commands and the cutover are
+not yet implemented (*Stage 3* above); TUI styling
 and keybindings follow stable operations.

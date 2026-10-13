@@ -1284,6 +1284,10 @@ import (§6).
 paragraph. Added on 2026-10-13 for issue #64; settles issue #79 and fills
 the client shapes §1 leaves to planning. It changes DEC-51's two
 subcommand reasons to name every subcommand and otherwise changes nothing.
+Clarified on 2026-10-13 in the review of PR #87: the `logs` client accepts
+a success reply only with exactly its pinned fields and types, since it
+needs them to continue, and treats a standard input it cannot watch at all
+as end of file, as `/dev/null` is.
 
 ## DEC-55: Host job commands check reply shapes, re-pin only retryable jobs, and detach by closing the follower's input (2026-10)
 

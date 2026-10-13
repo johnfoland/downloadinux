@@ -26,10 +26,11 @@ deadlines, cancel, retry, and interrupted marks) and the
 the throttle test seam helper), and the `downloadinux.worker_execution`
 library (runner launch, attempt logs, exit polls, cancel signals, and the
 shutdown wait), and the `downloadinux.worker` module (the `serve` service
-and its `status`, `submit`, and `show` clients), packaged as the image's
-command under Docker's init, with the host's worker call
-(`downloadinux.host_worker`) and doctor's `worker.running`. The other
-clients, commands, and cutover remain unimplemented; batch runs still use
+and its `status`, `submit`, `show`, `list`, `cancel`, `retry`, and `logs`
+clients), packaged as the image's command under Docker's init, with the
+host's worker call (`downloadinux.host_worker`) and doctor's
+`worker.running`. The host `jobs` commands (DEC-55) and the cutover remain
+unimplemented; batch runs still use
 tmux. Stage 4,
 the Python + Textual TUI, remains a proposal.
 

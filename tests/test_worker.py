@@ -1,4 +1,4 @@
-"""The worker service and its clients (target design, Persistent worker and jobs §1; DEC-50, DEC-51).
+"""The worker service and its clients (target design, Persistent worker and jobs §1; DEC-50, DEC-51, DEC-54).
 
 Real stores, real fixture runners, and real `serve` processes taking real
 signals. Unix socket paths are short (104 bytes on macOS), so every socket
@@ -9,10 +9,13 @@ Timeouts: the client's 30-second bound is exercised through `request`'s
 timeout); the worker's 10-second request read has no seam (DEC-50 names
 none), so the stalled-client test waits the real 10 seconds.
 """
+import base64
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 from pathlib import Path
+import random
 import shutil
 import signal
 import socket
@@ -33,13 +36,20 @@ from snapshot_support import SRC, wait_for
 from test_worker_execution import FIXTURE as EXECUTION_FIXTURE, NOW, UA
 
 # The execution tests' fixture runner, which also records, when it gets
-# SIGTERM, whether FIXTURE_SOCKET still existed (`<pid>.socket`).
+# SIGTERM, whether FIXTURE_SOCKET still existed (`<pid>.socket`), and with
+# `drip=N` writes N lines to standard output a tenth of a second apart.
 FIXTURE = EXECUTION_FIXTURE.replace(
     '    received.append(number)\n',
     "    with open(base + '.socket', 'a') as handle:\n"
     "        handle.write('%d\\n' % os.path.exists(os.environ.get('FIXTURE_SOCKET', '')))\n"
-    '    received.append(number)\n', 1)
-assert FIXTURE != EXECUTION_FIXTURE
+    '    received.append(number)\n', 1).replace(
+    "if 'wait' in words:\n",
+    "if 'drip' in words:\n"
+    "    for index in range(int(words['drip'])):\n"
+    "        os.write(1, b'line %d\\n' % index)\n"
+    "        time.sleep(0.1)\n"
+    "if 'wait' in words:\n", 1)
+assert FIXTURE.count("'drip'") == 2 and FIXTURE.count("'.socket'") == 1
 
 # Runs `worker.run` with the test arguments `main` never passes: the socket
 # path for every subcommand, and the download root for `serve`.
@@ -109,6 +119,7 @@ class Rig:
         monkeypatch.setenv('FIXTURE_LOG', str(self.log))
         monkeypatch.setenv('FIXTURE_SOCKET', str(self.socket))
         self.serves = []
+        self.clients = []
         self.count = 0
 
     def env(self, **extra):
@@ -139,6 +150,27 @@ class Rig:
             [sys.executable, '-I', '-c', LAUNCHER, str(SRC), str(socket_path), str(self.downloads), *args],
             input=stdin, capture_output=True, env=self.env(), timeout=timeout)
 
+    def spawn(self, *args, stdin=subprocess.PIPE, stdout=None):
+        """A client process whose standard input stays open (a pipe) unless given otherwise.
+
+        Standard output (unless given) and error go to files, read by `finish`.
+        """
+        self.count += 1
+        out, err = self.tmp / f'client-{self.count}.out', self.tmp / f'client-{self.count}.err'
+        with open(out, 'wb') as out_file, open(err, 'wb') as err_file:
+            process = subprocess.Popen(
+                [sys.executable, '-I', '-c', LAUNCHER, str(SRC), str(self.socket), str(self.downloads), *args],
+                stdin=stdin, stdout=out_file if stdout is None else stdout, stderr=err_file, env=self.env())
+        process.out, process.err = out, err
+        self.clients.append(process)
+        return process
+
+    @staticmethod
+    def finish(process, timeout=30):
+        """Wait for a spawned client, leaving its standard input as it is; (status, stdout, stderr)."""
+        status_code = process.wait(timeout)
+        return status_code, process.out.read_bytes(), process.err.read_bytes()
+
     def open(self, **kwargs):
         kwargs.setdefault('clock', lambda: NOW)
         store = js.open_store(self.state, **kwargs)
@@ -157,15 +189,24 @@ class Rig:
         """The SIGTERMs a fixture got, each with whether the socket still existed then."""
         signals = self.log / f'{record["pid"]}.signals'
         sockets = self.log / f'{record["pid"]}.socket'
-        if not signals.exists():
+        if not signals.exists() or not sockets.exists():
+            return []  # the fixture writes `.signals`, then `.socket`: wait for both
+        signals, sockets = signals.read_text().split(), sockets.read_text().split()
+        if len(signals) != len(sockets):
             return []
-        return list(zip(map(int, signals.read_text().split()), map(int, sockets.read_text().split())))
+        return list(zip(map(int, signals), map(int, sockets)))
 
     def release(self, name='all'):
         (self.log / f'release-{name}').touch()
 
     def close(self):
         self.release()
+        for process in self.clients:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdin is not None:
+                process.stdin.close()
         for serve in self.serves:
             if serve.process.poll() is None:
                 serve.process.kill()
@@ -263,9 +304,9 @@ def inprocess(rig, monkeypatch, quiet_signals):
 # Usage (DEC-51 *Exit status and output*).
 
 USAGE = [
-    ([], 'a subcommand is required: serve, status, submit, or show'),
-    (['nope'], "unknown subcommand 'nope'; use serve, status, submit, or show"),
-    (['--state'], "unknown subcommand '--state'; use serve, status, submit, or show"),
+    ([], 'a subcommand is required: serve, status, submit, show, list, cancel, retry, or logs'),
+    (['nope'], "unknown subcommand 'nope'; use serve, status, submit, show, list, cancel, retry, or logs"),
+    (['--state'], "unknown subcommand '--state'; use serve, status, submit, show, list, cancel, retry, or logs"),
     (['status', 'extra'], "status: unexpected operand 'extra'"),
     (['status', '--json'], "status: unexpected operand '--json'"),
     (['serve'], 'serve: --cookies is required'),
@@ -1279,6 +1320,846 @@ def test_show_of_an_unknown_id_is_an_error_reply(rig, serving, job_id):
                                   {'id': 1.0}, {'id': None}, {'id': 1, 'x': 1}, {'ID': 1}])
 def test_show_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
     assert ask(rig.socket, request_bytes('show', args)) == INVALID
+
+
+# Usage for the clients that read standard input (DEC-54 *Usage*).
+
+@pytest.mark.parametrize('command', ['list', 'retry'])
+@pytest.mark.parametrize('argv, stdin, reason', [
+    (['extra'], b'{}', "{}: unexpected operand 'extra'"),
+    (['-'], b'{}', "{}: unexpected operand '-'"),
+    ([], b'', '{}: standard input must be one JSON object'),
+    ([], b'[]', '{}: standard input must be one JSON object'),
+    ([], b'{"a":1,"a":2}', '{}: standard input must be one JSON object'),
+    ([], b'{"a":NaN}', '{}: standard input must be one JSON object'),
+    ([], b'\xff{}', '{}: standard input must be one JSON object'),
+    ([], b'{} {}', '{}: standard input must be one JSON object'),
+    ([], b' ' * worker.LIMIT + b'{}', '{}: standard input must be one JSON object'),
+], ids=range(9))
+def test_list_and_retry_usage_errors_contact_no_socket(rig, command, argv, stdin, reason):
+    result = rig.client(command, *argv, stdin=stdin)  # no listener: contacting the socket would exit 3
+    assert (result.returncode, result.stdout) == (2, b'')
+    assert result.stderr == f'downloadinux: error: {reason.format(command)}\n'.encode()
+
+
+@pytest.mark.parametrize('command', ['list', 'retry'])
+def test_list_and_retry_pass_their_object_on_unexamined(rig, monkeypatch, command):
+    sent = []
+    monkeypatch.setattr(worker, 'request', lambda path, op, args, timeout: sent.append((op, args)) or 0)
+
+    class Stdin:
+        buffer = __import__('io').BytesIO(b'{"anything":[1,{"x":null}]}')
+    monkeypatch.setattr(sys, 'stdin', Stdin)
+    assert worker.run([command], socket_path=rig.socket) == 0
+    assert sent == [(command, {'anything': [1, {'x': None}]})]
+
+
+# list (DEC-54).
+
+def listing(rig, ids=None, states=None, preset=None):
+    return rig.client('list', stdin=json.dumps({'ids': ids, 'states': states, 'preset': preset}).encode())
+
+
+def listed(rig, **filters):
+    result = listing(rig, **filters)
+    assert (result.returncode, result.stderr) == (0, b'')
+    reply = json.loads(result.stdout)
+    assert list(reply) == ['version', 'jobs']
+    return [job['id'] for job in reply['jobs']]
+
+
+def prepare_states(rig):
+    """Jobs 1-7 in every state a stopped store can hold once the worker reconciles it.
+
+    1 video queued (lane), 2 video succeeded, 3 gallery failed, 4 gallery
+    cancelled, 5 video interrupted at start (running now), 6 gallery
+    queued, 7 video queued (immediate).
+    """
+    with rig.open() as store:
+        store.submit('video', ['q1'], lane='video', user_agent=UA)
+        for url, preset, status in (('s2', 'video', 0), ('f3', 'gallery', 3)):
+            [job] = store.submit(preset, [url], user_agent=UA).created
+            store.start(job.id)
+            store.end(job.id, exit_status=status)
+        [job] = store.submit('gallery', ['c4'], user_agent=UA).created
+        store.cancel([job.id])
+        [job] = store.submit('video', ['i5'], user_agent=UA).created
+        store.start(job.id)
+        store.submit('gallery', ['q6'], lane='gallery', user_agent=UA)
+        store.submit('video', ['q7'], user_agent=UA)
+
+
+@pytest.fixture
+def stable(rig):
+    """A worker over `prepare_states`'s jobs that starts nothing: the VPN gate never opens."""
+    prepare_states(rig)
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    # The first pass sets each queue head's VPN wait; after it, nothing changes.
+    wait_for(lambda: all(shown(rig, job_id)['wait'] == {'reason': 'vpn'} for job_id in (1, 6, 7)))
+    yield serve
+    assert serve.stop() == 0
+    assert serve.stderr() == ''
+
+
+def test_list_with_no_filter_gives_every_record_as_show_does_in_id_order(rig, stable):
+    result = listing(rig)
+    assert (result.returncode, result.stderr) == (0, b'')
+    jobs = [shown(rig, job_id) for job_id in range(1, 8)]
+    assert result.stdout == worker.encode({'version': 1, 'jobs': jobs})
+    assert [job['state'] for job in jobs] == ['queued', 'succeeded', 'failed', 'cancelled', 'interrupted',
+                                               'queued', 'queued']
+
+
+@pytest.mark.parametrize('filters, ids', [
+    ({'ids': [6, 2, 6, 99, 2]}, [2, 6]),
+    ({'ids': [9223372036854775807]}, []),
+    ({'states': ['queued']}, [1, 6, 7]),
+    ({'states': ['failed', 'interrupted', 'failed', 'cancelled']}, [3, 4, 5]),
+    ({'states': ['running']}, []),
+    ({'preset': 'gallery'}, [3, 4, 6]),
+    ({'preset': 'video'}, [1, 2, 5, 7]),
+    ({'ids': [7, 1, 2, 3, 6], 'states': ['queued', 'succeeded'], 'preset': 'video'}, [1, 2, 7]),
+    ({'ids': [1], 'states': ['failed']}, []),
+])
+def test_list_filters_are_anded_and_repeats_change_nothing(rig, stable, filters, ids):
+    assert listed(rig, **filters) == ids
+
+
+LIST_SHAPES = [
+    {'ids': None, 'states': None},
+    {'ids': None, 'states': None, 'preset': None, 'extra': None},
+    {'ids': [], 'states': None, 'preset': None},
+    {'ids': None, 'states': [], 'preset': None},
+    {'ids': [True], 'states': None, 'preset': None},
+    {'ids': [0], 'states': None, 'preset': None},
+    {'ids': [-1], 'states': None, 'preset': None},
+    {'ids': [2 ** 63], 'states': None, 'preset': None},
+    {'ids': [1.0], 'states': None, 'preset': None},
+    {'ids': ['1'], 'states': None, 'preset': None},
+    {'ids': 1, 'states': None, 'preset': None},
+    {'ids': [1, None], 'states': None, 'preset': None},
+    {'ids': None, 'states': ['Queued'], 'preset': None},
+    {'ids': None, 'states': ['queued', 'paused'], 'preset': None},
+    {'ids': None, 'states': 'queued', 'preset': None},
+    {'ids': None, 'states': [None], 'preset': None},
+    {'ids': None, 'states': None, 'preset': 'audio'},
+    {'ids': None, 'states': None, 'preset': 'Video'},
+    {'ids': None, 'states': None, 'preset': ''},
+    {'ids': None, 'states': None, 'preset': ['video']},
+    {'ids': None, 'states': None, 'preset': True},
+]
+
+
+@pytest.mark.parametrize('args', LIST_SHAPES, ids=range(len(LIST_SHAPES)))
+def test_list_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
+    assert ask(rig.socket, request_bytes('list', args)) == INVALID
+
+
+def test_a_listing_over_the_limit_is_refused_and_one_at_it_is_sent(rig, inprocess, monkeypatch):
+    with rig.open() as store:
+        store.submit('video', [f'https://example.invalid/{index}/' + 'x' * 1000 for index in range(12)],
+                     user_agent=UA)
+    every = request_bytes('list', {'ids': None, 'states': None, 'preset': None})
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        wait_for(lambda: b'"wait":{"reason":"vpn"}' in ask(rig.socket, every))  # the head's wait is set: stable now
+        reply = ask(rig.socket, every)
+        assert reply.startswith(b'{"version":1,"jobs":[{"id":1,')
+        monkeypatch.setattr(worker, 'LIMIT', len(reply))  # exactly at the limit: sent
+        assert ask(rig.socket, every) == reply
+        monkeypatch.setattr(worker, 'LIMIT', len(reply) - 1)  # one byte over: refused
+        assert ask(rig.socket, every) == b'{"version":1,"error":"the job listing would exceed 32 MiB; narrow it"}\n'
+        narrow = json.loads(ask(rig.socket, request_bytes('list', {'ids': [12], 'states': None, 'preset': None})))
+        assert [job['id'] for job in narrow['jobs']] == [12]
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+# Submission size (DEC-54 *Submission size*, issue #79).
+
+TOO_LARGE = b'{"version":1,"error":"submission too large: its reply would exceed 32 MiB"}\n'
+
+
+def test_the_submit_bound_counts_distinct_urls_by_their_escaped_length():
+    assert worker._submit_bound(['a']) == 128 + 34 + 3
+    assert worker._submit_bound(['a', 'a', 'b', 'a']) == 128 + 2 * (34 + 3)
+    assert worker._submit_bound(['é']) == 128 + 34 + len('"\\u00e9"')
+    assert worker._submit_bound(['\U0001f600']) == 128 + 34 + len('"\\ud83d\\ude00"')
+    assert worker._submit_bound(['"\\\x01']) == 128 + 34 + len('"\\"\\\\\\u0001"')
+    assert worker._submit_bound(['é', 'e\u0301']) == 128 + 2 * 34 + 8 + 9  # no normalization
+
+
+def sized(target):
+    """URLs, with repeats and non-ASCII, whose submit bound is exactly `target`."""
+    urls = ['https://example.invalid/é', 'https://example.invalid/\U0001f600', 'https://example.invalid/é',
+            'https://example.invalid/a"\\b', 'https://example.invalid/é']
+    filler = target - worker._submit_bound(urls) - 34 - 2
+    urls.append('https://example.invalid/' + 'f' * (filler - len('https://example.invalid/')))
+    assert worker._submit_bound(urls) == target
+    return urls
+
+
+def test_a_submission_whose_reply_could_exceed_the_limit_is_refused_and_commits_nothing(rig, inprocess, monkeypatch):
+    monkeypatch.setattr(worker, 'LIMIT', 20000)
+    over = request_bytes('submit', submission(sized(20001), user_agent='UA'))
+    assert len(over) < 20000
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        assert ask(rig.socket, over) == TOO_LARGE
+        assert status(rig.socket) == {'version': 1, 'running': 0, 'queued': 0}
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+    with rig.open() as store:
+        assert store.list() == []
+        assert store.submit('video', ['x'], user_agent=UA).submission == 1  # no submission was allocated
+
+
+def test_a_submission_at_the_bound_is_accepted_and_its_reply_fits(rig, inprocess, monkeypatch):
+    monkeypatch.setattr(worker, 'LIMIT', 20000)
+    urls = sized(20000)
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        reply = ask(rig.socket, request_bytes('submit', submission(urls, user_agent='UA')))
+        assert len(reply) <= worker._submit_bound(urls)
+        created = json.loads(reply)['created']
+        assert [job['url'] for job in created] == list(dict.fromkeys(urls))
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+URL_CHARACTERS = SWEEP + ['"', '\\', '/', 'a', 'Z', '0', '\u2028', '\U0010ffff', '\ufffd']
+
+
+def random_urls(chooser):
+    pool = [''.join(chooser.choice(URL_CHARACTERS) for _ in range(chooser.randint(1, 40)))
+            for _ in range(chooser.randint(1, 30))]
+    return [chooser.choice(pool) for _ in range(chooser.randint(1, 60))]
+
+
+def test_no_submit_reply_exceeds_its_bound_even_with_the_largest_ids():
+    """Holds the formula to the encoder: the widest IDs and every URL a created or duplicate entry."""
+    chooser = random.Random(79)
+    for _ in range(500):
+        urls = random_urls(chooser)
+        distinct = list(dict.fromkeys(urls))
+        split = chooser.randint(0, len(distinct))
+        reply = {'version': 1, 'submission': worker.MAX_ID,
+                 'created': [{'id': worker.MAX_ID, 'url': url} for url in distinct[:split]],
+                 'duplicates': [{'id': worker.MAX_ID, 'url': url} for url in distinct[split:]]}
+        assert len(worker.encode(reply)) <= worker._submit_bound(urls)
+
+
+def test_real_submit_replies_stay_within_their_bound(rig):
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()  # nothing runs: later rounds see duplicates
+    chooser = random.Random(64)
+    for _ in range(20):
+        urls = random_urls(chooser)
+        result = submit(rig, submission(urls))
+        assert result.returncode == 0, result
+        assert len(result.stdout) <= worker._submit_bound(urls)
+    assert serve.stop() == 0
+
+
+# cancel (DEC-54; §5 *Cancel*, DEC-48).
+
+def cancelled(rig, *ids):
+    result = rig.client('cancel', *map(str, ids))
+    assert (result.returncode, result.stderr) == (0, b''), result
+    reply = json.loads(result.stdout)
+    assert result.stdout == worker.encode(reply) and list(reply) == ['version', 'outcomes']
+    return [tuple(outcome.values()) for outcome in reply['outcomes']]
+
+
+@pytest.mark.parametrize('argv, reason', [
+    (['cancel'], 'cancel: at least one job ID is required'),
+    (['cancel', '0'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', '01'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', '-2'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '--', '1'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', ''], 'cancel: job ID must be a positive integer'),
+    (['cancel', '9223372036854775808'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '١'], 'cancel: job ID must be a positive integer'),
+])
+def test_cancel_usage_errors(rig, capsys, argv, reason):
+    assert worker.run(argv, socket_path=rig.socket) == 2  # no listener: contacting it would exit 3
+    assert capsys.readouterr() == ('', f'downloadinux: error: {reason}\n')
+
+
+def test_cancel_sends_its_ids_in_order_with_repeats(rig, monkeypatch):
+    sent = []
+    monkeypatch.setattr(worker, 'request', lambda path, op, args, timeout: sent.append((op, args)) or 0)
+    assert worker.run(['cancel', '3', '1', '3', '9223372036854775807'], socket_path=rig.socket) == 0
+    assert sent == [('cancel', {'ids': [3, 1, 3, 9223372036854775807]})]
+
+
+def test_cancel_ends_queued_jobs_refuses_finished_ones_and_keeps_request_order(rig, stable):
+    assert cancelled(rig, 2, 99, 7, 2, 1, 7, 3) == [
+        (2, 'refused', 'succeeded'), (99, 'unknown', None), (7, 'cancelled', 'cancelled'),
+        (1, 'cancelled', 'cancelled'), (3, 'refused', 'failed')]
+    assert (shown(rig, 1)['state'], shown(rig, 1)['cancel_requested']) == ('cancelled', True)
+    assert shown(rig, 7)['state'] == 'cancelled'
+    assert cancelled(rig, 4, 5) == [(4, 'refused', 'cancelled'), (5, 'refused', 'interrupted')]
+
+
+def test_cancel_signals_a_running_jobs_runner_and_the_job_ends_cancelled(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['wait=a']))
+    record = rig.record('wait=a')
+    assert cancelled(rig, 1) == [(1, 'requested', 'running')]
+    wait_for(lambda: rig.received(record))
+    assert rig.received(record) == [(signal.SIGTERM, 1)]  # signalled by the worker, socket still up
+    ended = settled(rig, 1)
+    assert (ended['state'], ended['cancel_requested'], ended['exit_status']) == (
+        'cancelled', True, 128 + signal.SIGTERM)
+    assert serve.stop() == 0
+
+
+def test_a_cancel_signal_failure_is_the_error_reply_after_the_store_commits(rig, inprocess, monkeypatch):
+    with rig.open() as store:
+        store.submit('video', ['wait=a', 'q2'], lane='video', user_agent=UA)  # q2 waits behind wait=a
+    real = we.Executor._signal
+
+    def failing(self, job_ids):
+        job_ids = list(job_ids)
+        real(self, job_ids)  # the runner still gets its SIGTERM
+        return (job_ids[0], PermissionError(errno.EPERM, os.strerror(errno.EPERM))) if job_ids else None
+    monkeypatch.setattr(we.Executor, '_signal', failing)
+
+    def drive():
+        rig.record('wait=a')
+        reply = ask(rig.socket, request_bytes('cancel', {'ids': [1, 2]}))
+        assert reply == worker.encode({'version': 1, 'error': (
+            f'cannot signal the runner of job 1: {os.strerror(errno.EPERM)}')})
+        ended = json.loads(ask(rig.socket, request_bytes('show', {'id': 2})))['job']
+        assert ended['state'] == 'cancelled'  # committed before the signals
+        wait_for(lambda: json.loads(ask(rig.socket, request_bytes('show', {'id': 1})))['job']['state'] == 'cancelled')
+
+    assert inprocess.run(drive) == 0
+
+
+def test_a_cancel_whose_reply_could_exceed_the_limit_changes_nothing(rig, inprocess, monkeypatch):
+    prepare_states(rig)
+    monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3)
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        over = ask(rig.socket, request_bytes('cancel', {'ids': [1, 6, 7, 2]}))
+        assert over == worker.encode({'version': 1, 'error': 'too many job IDs: the reply would exceed 32 MiB'})
+        assert status(rig.socket)['queued'] == 3
+        three = request_bytes('cancel', {'ids': [1, 6, 1, 7, 6]})
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3 - 1)  # 72 bytes per distinct ID, exactly
+        assert b'too many job IDs' in ask(rig.socket, three)
+        assert status(rig.socket)['queued'] == 3
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3)
+        at = json.loads(ask(rig.socket, three))
+        assert [outcome['outcome'] for outcome in at['outcomes']] == ['cancelled'] * 3
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+def test_no_cancel_reply_exceeds_its_bound():
+    outcomes = [{'id': worker.MAX_ID, 'outcome': name, 'state': state}
+                for name in worker.CANCEL_OUTCOMES.values() for state in (*js.STATES, None)]
+    for count in (1, 2, 50):
+        reply = {'version': 1, 'outcomes': [max(outcomes, key=lambda o: len(json.dumps(o)))] * count}
+        assert len(worker.encode(reply)) <= worker._ids_bound(list(range(count)), 72)
+
+
+@pytest.mark.parametrize('args', [{}, {'ids': []}, {'ids': [0]}, {'ids': [True]}, {'ids': [2 ** 63]},
+                                  {'ids': ['1']}, {'ids': 1}, {'ids': None}, {'ids': [1], 'x': 1}])
+def test_cancel_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
+    assert ask(rig.socket, request_bytes('cancel', args)) == INVALID
+
+
+# retry (DEC-54; §3 and §5 *Retry*, DEC-46).
+
+def entry(job_id, source=None, revision=None, user_agent=UA, **extra):
+    return dict(id=job_id, source=source, revision=revision, user_agent=user_agent, **extra)
+
+
+def retried(rig, *entries):
+    result = rig.client('retry', stdin=json.dumps({'jobs': list(entries)}).encode())
+    assert (result.returncode, result.stderr) == (0, b''), result
+    reply = json.loads(result.stdout)
+    assert result.stdout == worker.encode(reply) and list(reply) == ['version', 'submission', 'outcomes']
+    return reply['submission'], [tuple(outcome.values()) for outcome in reply['outcomes']]
+
+
+def test_retry_requeues_finished_jobs_as_one_submission_with_the_supplied_selection(rig, stable):
+    before = shown(rig, 3)
+    submission_id, outcomes = retried(rig, entry(3, 'alpha', ALPHA, 'New UA'), entry(5), entry(3))
+    assert outcomes == [(3, 'requeued', 'queued', None), (5, 'requeued', 'queued', None)]
+    assert submission_id is not None and submission_id > max(shown(rig, job_id)['submission'] for job_id in (1, 6, 7))
+    third, fifth = shown(rig, 3), shown(rig, 5)
+    assert (third['state'], third['attempt'], third['submission']) == ('queued', 2, submission_id)
+    assert (third['source'], third['revision'], third['user_agent']) == ('alpha', ALPHA, 'New UA')
+    assert (third['created_at'], third['finished_at'], third['exit_status']) == (before['created_at'], None, None)
+    assert (fifth['state'], fifth['attempt'], fifth['submission'], fifth['error']) == ('queued', 2, submission_id, None)
+    assert retried(rig, entry(4))[1] == [(4, 'requeued', 'queued', None)]
+
+
+def test_retry_refuses_unretryable_and_unknown_ids_with_a_null_submission(rig, stable):
+    assert retried(rig, entry(2), entry(99), entry(1), entry(2)) == (None, [
+        (2, 'refused', 'succeeded', None), (99, 'unknown', None, None), (1, 'refused', 'queued', None)])
+    assert shown(rig, 2)['attempt'] == 1
+
+
+def test_retry_of_a_job_whose_url_is_held_names_its_holder(rig):
+    with rig.open() as store:
+        [failed] = store.submit('video', ['dup'], user_agent=UA).created
+        store.start(failed.id)
+        store.end(failed.id, exit_status=1)
+        [holder] = store.submit('video', ['dup'], lane='video', user_agent=UA).created
+        [other] = store.submit('gallery', ['dup2'], user_agent=UA).created
+        store.cancel([other.id])
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    # The second retried job's preset and URL become held by the first once it is requeued.
+    assert retried(rig, entry(failed.id), entry(other.id)) == (4, [
+        (failed.id, 'shadowed', 'failed', holder.id), (other.id, 'requeued', 'queued', None)])
+    assert serve.stop() == 0
+
+
+@pytest.mark.parametrize('bad, reason', [
+    (entry(3, 'alpha', 'not-a-revision'), 'cookie selection requires both valid source and revision identifiers'),
+    (entry(3, 'alpha', None), 'cookie selection requires both valid source and revision identifiers'),
+    (entry(3, user_agent='a\rb'), 'user-agent must be a string without CR, LF, or NUL'),
+])
+def test_an_invalid_selection_refuses_the_whole_retry_with_the_stores_message(rig, stable, bad, reason):
+    result = rig.client('retry', stdin=json.dumps({'jobs': [entry(5), bad]}).encode())
+    assert (result.returncode, result.stderr) == (1, b'')
+    assert result.stdout == worker.encode({'version': 1, 'error': reason})
+    assert (shown(rig, 3)['state'], shown(rig, 5)['state']) == ('failed', 'interrupted')
+
+
+RETRY_SHAPES = [
+    {},
+    {'jobs': []},
+    {'jobs': None},
+    {'jobs': entry(3)},
+    {'jobs': [entry(3)], 'x': 1},
+    {'jobs': [{key: value for key, value in entry(3).items() if key != 'user_agent'}]},
+    {'jobs': [entry(3, extra=1)]},
+    {'jobs': [entry(True)]},
+    {'jobs': [entry(0)]},
+    {'jobs': [entry(2 ** 63)]},
+    {'jobs': [entry('3')]},
+    {'jobs': [entry(3, source=1)]},
+    {'jobs': [entry(3, revision=False)]},
+    {'jobs': [entry(3, user_agent=None)]},
+    {'jobs': [entry(3), [3, None, None, 'UA']]},
+]
+
+
+@pytest.mark.parametrize('args', RETRY_SHAPES, ids=range(len(RETRY_SHAPES)))
+def test_retry_args_of_the_wrong_shape_are_invalid_requests(rig, stable, args):
+    assert ask(rig.socket, request_bytes('retry', args)) == INVALID
+    assert shown(rig, 3)['state'] == 'failed'
+
+
+def test_a_retry_whose_reply_could_exceed_the_limit_changes_nothing(rig, inprocess, monkeypatch):
+    prepare_states(rig)
+    monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2)
+    over = request_bytes('retry', {'jobs': [entry(3), entry(4), entry(5)]})
+    assert len(over) < worker.LIMIT
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        assert ask(rig.socket, over) == worker.encode(
+            {'version': 1, 'error': 'too many job IDs: the reply would exceed 32 MiB'})
+        assert status(rig.socket)['queued'] == 3
+        two = request_bytes('retry', {'jobs': [entry(3), entry(4), entry(3)]})
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2 - 1)  # 100 bytes per distinct ID, exactly
+        assert b'too many job IDs' in ask(rig.socket, two)
+        assert status(rig.socket)['queued'] == 3
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2)
+        at = json.loads(ask(rig.socket, two))
+        assert [outcome['outcome'] for outcome in at['outcomes']] == ['requeued', 'requeued']
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+def test_no_retry_reply_exceeds_its_bound():
+    widest = {'id': worker.MAX_ID, 'outcome': 'requeued', 'state': 'interrupted', 'holder': worker.MAX_ID}
+    for count in (1, 2, 50):
+        reply = {'version': 1, 'submission': worker.MAX_ID, 'outcomes': [widest] * count}
+        assert len(worker.encode(reply)) <= worker._ids_bound(list(range(count)), 100)
+
+
+# logs (DEC-54).
+
+LOGS_USAGE = [
+    (['logs'], 'logs: exactly one job ID is required'),
+    (['logs', '1', '2'], 'logs: exactly one job ID is required'),
+    (['logs', '--follow'], 'logs: exactly one job ID is required'),
+    (['logs', '0'], 'logs: job ID must be a positive integer'),
+    (['logs', '01', '--attempt', 'x'], 'logs: job ID must be a positive integer'),
+    (['logs', ''], 'logs: job ID must be a positive integer'),
+    (['logs', '1', '--attempt', '0'], 'logs: --attempt must be a positive integer'),
+    (['logs', '1', '--attempt', '9223372036854775808'], 'logs: --attempt must be a positive integer'),
+    (['logs', '1', '--attempt', '--follow'], 'logs: --attempt must be a positive integer'),  # the next word, whatever it is
+    (['logs', '1', '--attempt', '-1'], 'logs: --attempt must be a positive integer'),
+    (['logs', '--attempt'], 'logs: --attempt needs a value'),
+    (['logs', '1', '--attempt'], 'logs: --attempt needs a value'),
+    (['logs', '1', '--attempt', '1', '--attempt'], 'logs: --attempt needs a value'),
+    (['logs', '1', '--attempt', '1', '--attempt', '2'], 'logs: --attempt given more than once'),
+    (['logs', '--follow', '1', '--follow'], 'logs: --follow given more than once'),
+    (['logs', '1', '-f'], "logs: unknown option '-f'"),
+    (['logs', '1', '-'], "logs: unknown option '-'"),
+    (['logs', '-1'], "logs: unknown option '-1'"),
+    (['logs', '--attempt=1', '1'], "logs: unknown option '--attempt=1'"),
+    # The first problem met scanning the words in order wins.
+    (['logs', '1', '2', '--bogus'], "logs: unknown option '--bogus'"),
+    (['logs', 'x', '--follow', '--follow', '--bogus'], 'logs: --follow given more than once'),
+    (['logs', '--bogus', '--follow', '--follow'], "logs: unknown option '--bogus'"),
+    (['logs', '--attempt', '1', '--attempt', '2', '--bogus'], 'logs: --attempt given more than once'),
+    (['logs', 'x', '--attempt', 'y'], 'logs: job ID must be a positive integer'),
+]
+
+
+@pytest.mark.parametrize('argv, reason', LOGS_USAGE, ids=range(len(LOGS_USAGE)))
+def test_logs_usage_errors_in_scan_order(rig, capsys, argv, reason):
+    assert worker.run(argv, socket_path=rig.socket) == 2  # no listener: contacting it would exit 3
+    assert capsys.readouterr() == ('', f'downloadinux: error: {reason}\n')
+
+
+@pytest.mark.parametrize('argv, parsed', [
+    (['1'], (1, None, False)),
+    (['--follow', '9223372036854775807'], (9223372036854775807, None, True)),
+    (['--attempt', '2', '7', '--follow'], (7, 2, True)),
+    (['7', '--follow', '--attempt', '3'], (7, 3, True)),
+])
+def test_logs_options_come_in_any_order(argv, parsed):
+    assert worker.parse_logs(argv) == parsed
+
+
+def log_file(rig, job_id, attempt):
+    return rig.state / 'jobs' / 'logs' / f'{job_id}-{attempt}.log'
+
+
+def plant_log(rig, job_id, attempt, data):
+    path = log_file(rig, job_id, attempt)
+    path.write_bytes(data)
+    path.chmod(0o600)
+    return path
+
+
+def prepare_attempts(rig, *, attempts=2, last=0):
+    """Job 1, ended `attempts` times (the last with status `last`): every earlier attempt failed."""
+    with rig.open() as store:
+        [job] = store.submit('video', ['logged'], user_agent=UA).created
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                store.retry([(job.id, None, None, UA)])
+            store.start(job.id)
+            store.end(job.id, exit_status=last if attempt == attempts else 1)
+    return job.id
+
+
+def chunks(stdout):
+    """Each printed line as a reply, checked to be in the output form."""
+    replies = []
+    for line in stdout.splitlines(keepends=True):
+        reply = json.loads(line)
+        assert line == worker.encode(reply)
+        assert list(reply) == ['version', 'attempt', 'ended', 'offset', 'data']
+        replies.append(reply)
+    return replies
+
+
+def joined(replies):
+    return b''.join(base64.b64decode(reply['data'], validate=True) for reply in replies)
+
+
+def test_a_log_over_1_mib_comes_in_chunks_and_ends_with_one_empty_reply(rig):
+    prepare_attempts(rig, attempts=1)
+    data = random.Random(54).randbytes(5 * worker.CHUNK // 2)
+    plant_log(rig, 1, 1, data)
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    result = rig.client('logs', '1', stdin=b'')
+    assert (result.returncode, result.stderr) == (0, b'')
+    replies = chunks(result.stdout)
+    assert [(r['attempt'], r['ended'], r['offset'], len(base64.b64decode(r['data']))) for r in replies] == [
+        (1, True, worker.CHUNK, worker.CHUNK), (1, True, 2 * worker.CHUNK, worker.CHUNK),
+        (1, True, len(data), worker.CHUNK // 2), (1, True, len(data), 0)]
+    assert replies[-1]['data'] == ''
+    assert joined(replies) == data
+    assert serve.stop() == 0
+
+
+def test_every_byte_value_round_trips_through_a_log(rig):
+    prepare_attempts(rig, attempts=1)
+    data = bytes(range(256)) + b'\0\0 \xff\xfe \xc3( \xed\xa0\x80 \xf4\x90\x80\x80 \r\n' + bytes(range(255, -1, -1))
+    plant_log(rig, 1, 1, data)
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    result = rig.client('logs', '1')
+    assert (result.returncode, result.stderr) == (0, b'')
+    replies = chunks(result.stdout)
+    assert len(replies) == 2 and joined(replies) == data
+    assert replies[0]['data'] == base64.b64encode(data).decode('ascii')
+    assert serve.stop() == 0
+
+
+def test_attempt_selects_an_earlier_attempts_log(rig):
+    prepare_attempts(rig)
+    plant_log(rig, 1, 1, b'first\n')
+    plant_log(rig, 1, 2, b'second\n')
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    earlier = rig.client('logs', '--attempt', '1', '1')
+    assert (earlier.returncode, earlier.stderr) == (0, b'')
+    assert earlier.stdout == (b'{"version":1,"attempt":1,"ended":true,"offset":6,"data":"Zmlyc3QK"}\n'
+                              b'{"version":1,"attempt":1,"ended":true,"offset":6,"data":""}\n')
+    current = rig.client('logs', '1')
+    assert [(r['attempt'], r['ended']) for r in chunks(current.stdout)] == [(2, True), (2, True)]
+    assert joined(chunks(current.stdout)) == b'second\n'
+    assert serve.stop() == 0
+
+
+@pytest.mark.parametrize('argv, reply', [
+    (['logs', '1', '--attempt', '3'], b'{"version":1,"error":"job 1 has no attempt 3"}\n'),
+    (['logs', '9'], b'{"version":1,"error":"unknown job ID 9"}\n'),
+    (['logs', '9223372036854775807', '--follow'], b'{"version":1,"error":"unknown job ID 9223372036854775807"}\n'),
+])
+def test_an_error_reply_is_printed_and_exits_1(rig, argv, reply):
+    prepare_attempts(rig)
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    process = rig.spawn(*argv)
+    assert rig.finish(process) == (1, reply, b'')
+    assert serve.stop() == 0
+
+
+def test_a_queued_retry_with_no_log_gives_one_empty_reply_that_has_not_ended(rig):
+    prepare_attempts(rig, last=1)
+    with rig.open() as store:
+        assert store.retry([(1, None, None, UA)]).outcomes[0].outcome == 'requeued'
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()  # the retry stays queued
+    result = rig.client('logs', '1')
+    assert (result.returncode, result.stderr) == (0, b'')
+    assert result.stdout == b'{"version":1,"attempt":3,"ended":false,"offset":0,"data":""}\n'
+    assert not log_file(rig, 1, 3).exists()
+    assert serve.stop() == 0
+
+
+def test_without_follow_standard_input_is_never_read(rig):
+    prepare_attempts(rig, attempts=1)
+    plant_log(rig, 1, 1, b'text\n')
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    read, write = os.pipe()
+    try:
+        os.write(write, b'keep')
+        code, out, err = rig.finish(rig.spawn('logs', '1', stdin=read))
+        assert (code, err) == (0, b'')
+        assert joined(chunks(out)) == b'text\n'
+        assert os.read(read, 100) == b'keep'  # still there: the client left it alone
+    finally:
+        os.close(read)
+        os.close(write)
+    assert serve.stop() == 0
+
+
+def test_following_a_running_job_prints_every_byte_and_ends_once_it_has_ended(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['drip=10']))
+    code, out, err = rig.finish(rig.spawn('logs', '1', '--follow'), 60)  # input stays open: only the end stops it
+    assert (code, err) == (0, b'')
+    replies = chunks(out)
+    assert joined(replies) == b''.join(b'line %d\n' % index for index in range(10))
+    assert joined(replies) == log_file(rig, 1, 1).read_bytes()
+    assert (replies[-1]['data'], replies[-1]['ended']) == ('', True)
+    assert all(reply['data'] for reply in replies[:-1])  # waits in between print nothing
+    assert len(replies) > 2  # it followed: more than one chunk arrived
+    assert serve.stop() == 0
+
+
+def test_closing_standard_input_detaches_a_follower_within_a_second(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['output,wait=a']))
+    rig.record('output,wait=a')
+    process = rig.spawn('logs', '1', '--follow')
+    time.sleep(1.5)  # following: several requests and waits
+    started = time.monotonic()
+    process.stdin.close()
+    code, out, err = rig.finish(process, 10)
+    assert time.monotonic() - started < 1
+    assert (code, err) == (0, b'')
+    assert joined(chunks(out)) == b'out-1\nerr-1 \xff\xfe\nout-2 \x80err-2\n'
+    assert all(reply['data'] for reply in chunks(out))  # nothing more after the close
+    assert shown(rig, 1)['state'] == 'running'
+    assert serve.stop() == 0
+
+
+@pytest.fixture
+def stdin_pipe():
+    """A real pipe on this process's descriptor 0 for the test; yields its write end."""
+    read, write = os.pipe()
+    saved = os.dup(0)
+    os.dup2(read, 0)
+    os.close(read)
+    try:
+        yield write
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+        try:
+            os.close(write)
+        except OSError:
+            pass
+
+
+def test_the_input_watch_ends_at_end_of_file_during_the_wait_and_discards_data(stdin_pipe):
+    started = time.monotonic()
+    assert worker._input_ended(0.3) is False  # open and quiet: the whole wait
+    assert 0.25 < time.monotonic() - started < 2
+    os.write(stdin_pipe, b'ignored\n')
+    started = time.monotonic()
+    assert worker._input_ended(0.3) is False  # data is read and discarded, not end of file
+    assert 0.25 < time.monotonic() - started < 2
+    assert worker._input_ended(0) is False  # nothing left over
+    timer = threading.Timer(0.2, os.close, (stdin_pipe,))
+    timer.start()
+    started = time.monotonic()
+    try:
+        assert worker._input_ended(5) is True  # the close ends the wait at once
+    finally:
+        timer.join()
+    assert time.monotonic() - started < 1
+    assert worker._input_ended(0) is True
+
+
+def test_a_follower_with_dev_null_input_exits_at_once_without_a_request(rig):
+    """No worker listens: any request would exit 3."""
+    with open(os.devnull, 'rb') as null:
+        started = time.monotonic()
+        result = rig.finish(rig.spawn('logs', '1', '--follow', stdin=null))
+    assert result == (0, b'', b'')
+    assert time.monotonic() - started < 5
+
+
+def test_a_worker_stopped_mid_follow_exits_3_keeping_the_lines_printed(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['output,wait=a']))
+    rig.record('output,wait=a')
+    process = rig.spawn('logs', '1', '--follow')
+    wait_for(lambda: log_file(rig, 1, 1).stat().st_size > 0)
+    time.sleep(1)  # the follower has printed the output and is waiting for more
+    assert serve.stop() == 0
+    code, out, err = rig.finish(process)
+    assert code == 3
+    assert joined(chunks(out)) == b'out-1\nerr-1 \xff\xfe\nout-2 \x80err-2\n'
+    assert err.startswith(b'downloadinux: error: the worker is not answering: ')
+    assert err.count(b'\n') == 1
+
+
+def plant_symlink_to_log(path):
+    (path.parent / 'target').write_bytes(b'secret')
+    path.symlink_to(path.parent / 'target')
+
+
+def plant_dangling_symlink(path):
+    path.symlink_to(path.parent / 'absent')
+
+
+def plant_fifo(path):
+    os.mkfifo(path)
+
+
+@pytest.mark.parametrize('plant', [plant_symlink_to_log, plant_dangling_symlink, plant_fifo, plant_directory])
+def test_anything_but_a_regular_file_at_the_log_name_is_refused(rig, plant):
+    prepare_attempts(rig, attempts=1)
+    plant(log_file(rig, 1, 1))
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    started = time.monotonic()
+    result = rig.client('logs', '1')
+    assert time.monotonic() - started < 10
+    assert (result.returncode, result.stderr) == (1, b'')
+    assert result.stdout == worker.encode({'version': 1, 'error': f'{log_file(rig, 1, 1)}: not a regular file'})
+    assert rig.client('status').stdout == b'{"version":1,"running":0,"queued":0}\n'  # never blocked
+    assert serve.stop() == 0
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='root ignores file permissions')
+def test_an_unreadable_log_is_its_os_reason(rig):
+    prepare_attempts(rig, attempts=1)
+    plant_log(rig, 1, 1, b'text').chmod(0)
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    result = rig.client('logs', '1')
+    assert (result.returncode, result.stderr) == (1, b'')
+    assert result.stdout == worker.encode({'version': 1, 'error': f'{log_file(rig, 1, 1)}: Permission denied'})
+    assert serve.stop() == 0
+
+
+def test_the_logs_op_reads_from_the_offset_and_never_past_the_largest_id(rig):
+    prepare_attempts(rig, attempts=1)
+    plant_log(rig, 1, 1, b'0123456789')
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+
+    def chunk(offset, attempt=None):
+        return json.loads(ask(rig.socket, request_bytes('logs', {'id': 1, 'attempt': attempt, 'offset': offset})))
+    assert chunk(4) == {'version': 1, 'attempt': 1, 'ended': True, 'offset': 10, 'data': 'NDU2Nzg5'}
+    assert chunk(10, 1) == {'version': 1, 'attempt': 1, 'ended': True, 'offset': 10, 'data': ''}
+    assert chunk(11) == {'version': 1, 'attempt': 1, 'ended': True, 'offset': 11, 'data': ''}
+    assert chunk(worker.MAX_ID) == {'version': 1, 'attempt': 1, 'ended': True, 'offset': worker.MAX_ID, 'data': ''}
+    assert serve.stop() == 0
+
+
+LOGS_SHAPES = [
+    {'id': 1, 'attempt': None},
+    {'id': 1, 'attempt': None, 'offset': 0, 'x': 0},
+    {'id': 0, 'attempt': None, 'offset': 0},
+    {'id': True, 'attempt': None, 'offset': 0},
+    {'id': 2 ** 63, 'attempt': None, 'offset': 0},
+    {'id': 1, 'attempt': 0, 'offset': 0},
+    {'id': 1, 'attempt': True, 'offset': 0},
+    {'id': 1, 'attempt': 2 ** 63, 'offset': 0},
+    {'id': 1, 'attempt': '1', 'offset': 0},
+    {'id': 1, 'attempt': None, 'offset': -1},
+    {'id': 1, 'attempt': None, 'offset': 2 ** 63},
+    {'id': 1, 'attempt': None, 'offset': False},
+    {'id': 1, 'attempt': None, 'offset': None},
+    {'id': 1, 'attempt': None, 'offset': 0.0},
+]
+
+
+@pytest.mark.parametrize('args', LOGS_SHAPES, ids=range(len(LOGS_SHAPES)))
+def test_logs_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
+    assert ask(rig.socket, request_bytes('logs', args)) == INVALID
+
+
+@pytest.mark.parametrize('reply', [
+    b'{"version":1,"attempt":1,"ended":true,"offset":0}\n',
+    b'{"version":1,"attempt":1,"ended":1,"offset":0,"data":""}\n',
+    b'{"version":1,"attempt":0,"ended":true,"offset":0,"data":""}\n',
+    b'{"version":1,"attempt":1,"ended":true,"offset":-1,"data":""}\n',
+    b'{"version":1,"attempt":1,"ended":true,"offset":0,"data":null}\n',
+    b'{"version":1,"attempt":1,"ended":true,"offset":0,"data":"","x":0}\n',
+    b'{"version":1,"running":0,"queued":0}\n',
+])
+def test_a_logs_reply_of_another_shape_is_unexpected(rig, capsys, reply):
+    fake = FakeWorker(rig.socket, reply)
+    try:
+        code = worker.logs(rig.socket, 1, None, False, timeout=5)
+    finally:
+        fake.close()
+    assert code == 3
+    assert capsys.readouterr() == ('', 'downloadinux: error: the worker is not answering: unexpected reply\n')
+
+
+@pytest.mark.parametrize('argv', [['status'], ['logs', '1']])
+def test_a_closed_standard_output_exits_1_without_a_traceback(rig, argv):
+    prepare_attempts(rig, attempts=1)
+    plant_log(rig, 1, 1, b'x' * 300000)  # more than a pipe holds
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    read, write = os.pipe()
+    os.close(read)  # the reader has gone
+    try:
+        process = rig.spawn(*argv, stdin=subprocess.DEVNULL, stdout=write)
+    finally:
+        os.close(write)
+    code, _, err = rig.finish(process)
+    assert (code, err) == (1, b'')
+    assert serve.stop() == 0
 
 
 # Standard-library boundary (§1, DEC-41, DEC-50, DEC-51).
