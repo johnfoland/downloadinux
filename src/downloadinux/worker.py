@@ -1,7 +1,8 @@
-"""The worker service and its client subcommands (DEC-50, DEC-51).
+"""The worker service and its client subcommands (DEC-50, DEC-51, DEC-54).
 
 Target design, *Persistent worker and jobs* §1, "Service lifecycle and
-failure handling" and "Client subcommands and replies". Standard library
+failure handling", "Client subcommands and replies", and "Job clients:
+listing, cancel, retry, and logs". Standard library
 only (§1, DEC-41): the service drives the owned job store, the scheduler
 (DEC-47), and the execution library (DEC-48) through their public
 operations, serially on one thread, and the clients speak to it over one
@@ -29,7 +30,7 @@ from .errors import ConfigError, DownloadinuxError
 
 PROG = 'downloadinux'
 LOG_PREFIX = 'downloadinux-worker: '
-SUBCOMMANDS = ('serve', 'status', 'submit', 'show')
+SUBCOMMANDS = ('serve', 'status', 'submit', 'show', 'list', 'cancel', 'retry', 'logs')
 SOCKET = Path('/run/downloadinux/worker.sock')
 DOWNLOADS = Path('/downloads')
 VERSION = 1
@@ -41,7 +42,7 @@ SERVER_TIMEOUT = 10  # seconds to read a request, and again to send its reply
 CLIENT_TIMEOUT = 30  # seconds a client allows in all (DEC-51 *Wire protocol*)
 MAX_ID = 9223372036854775807  # SQLite's largest integer key
 SUBMIT_KEYS = ('preset', 'lane', 'source', 'revision', 'user_agent', 'urls')  # §2's submission inputs
-SUBMIT_USAGE = 'submit: standard input must be one JSON object'
+STDIN_SUBCOMMANDS = ('submit', 'list', 'retry')  # each reads one JSON object as its ARGS
 INVALID = 'invalid request'
 UNSUPPORTED = 'unsupported request version'
 
@@ -71,8 +72,8 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
             args = {'id': parse_show(rest)}
         elif rest:
             raise ConfigError(f'{command}: unexpected operand {rest[0]!r}')
-        elif command == 'submit':
-            args = read_submission(sys.stdin)
+        elif command in STDIN_SUBCOMMANDS:
+            args = read_object(sys.stdin, command)
         else:
             args = {}
     except ConfigError as error:
@@ -85,9 +86,9 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
 
 def _subcommand(argv: list[str]) -> tuple[str, list[str]]:
     if not argv:
-        raise ConfigError('a subcommand is required: serve, status, submit, or show')
+        raise ConfigError('a subcommand is required: serve, status, submit, show, list, cancel, retry, or logs')
     if argv[0] not in SUBCOMMANDS:
-        raise ConfigError(f'unknown subcommand {argv[0]!r}; use serve, status, submit, or show')
+        raise ConfigError(f'unknown subcommand {argv[0]!r}; use serve, status, submit, show, list, cancel, retry, or logs')
     return argv[0], argv[1:]
 
 
@@ -130,21 +131,23 @@ def parse_show(rest: list[str]) -> int:
     return int(word)
 
 
-def read_submission(stdin) -> dict:
-    """`submit`'s standard input: at most LIMIT bytes of one strict UTF-8 JSON object.
+def read_object(stdin, command: str) -> dict:
+    """`submit`'s, `list`'s, or `retry`'s standard input: at most LIMIT bytes of one strict UTF-8 JSON object.
 
-    Its members are not examined: the worker validates them (DEC-51).
-    Anything else, a read failure included, is a usage error.
+    Its members are not examined: the worker validates them (DEC-51,
+    DEC-54). Anything else, a read failure included, is the usage error
+    `<command>: standard input must be one JSON object`.
     """
+    usage = f'{command}: standard input must be one JSON object'
     try:
         data = stdin.buffer.read(LIMIT + 1)
         if len(data) > LIMIT:
             raise ValueError('over the limit')
         value = decode(data)
     except Exception:
-        raise ConfigError(SUBMIT_USAGE) from None
+        raise ConfigError(usage) from None
     if type(value) is not dict:
-        raise ConfigError(SUBMIT_USAGE)
+        raise ConfigError(usage)
     return value
 
 
@@ -352,6 +355,37 @@ def accept(data: bytes) -> dict | None:
     except Exception:
         return None  # e.g. nesting too deep to reprint
     return reply
+
+
+def _is_id(value: object) -> bool:
+    """An integer in `ID`'s range, 1 to 9223372036854775807 (DEC-51)."""
+    return _is_int(value) and 1 <= value <= MAX_ID
+
+
+def _is_id_list(value: object) -> bool:
+    return type(value) is list and bool(value) and all(_is_id(item) for item in value)
+
+
+def _is_name(value: object, names: tuple[str, ...]) -> bool:
+    return type(value) is str and value in names
+
+
+def _is_name_list(value: object, names: tuple[str, ...]) -> bool:
+    return type(value) is list and bool(value) and all(_is_name(item, names) for item in value)
+
+
+def _record(record: job_store.JobRecord) -> dict:
+    """A record as `show` gives it: every §2 field in §2's order (DEC-51)."""
+    return {field: getattr(record, field) for field in job_store.RECORD_FIELDS}
+
+
+# Reply bounds (DEC-54 *Submission size*, issue #79). The worker refuses an
+# operation whose bound exceeds LIMIT before the store runs it; no reply is
+# larger than its bound, so a committed operation's reply always fits.
+
+def _submit_bound(urls: list[str]) -> int:
+    """128 bytes, plus 34 and the URL's JSON string in the output form per distinct URL."""
+    return 128 + sum(34 + len(json.dumps(url, ensure_ascii=True)) for url in dict.fromkeys(urls))
 
 
 # The service (DEC-50).
@@ -620,7 +654,7 @@ class _Service:
             return {'version': VERSION, 'error': str(refusal)}
 
     def _operations(self) -> dict[str, Callable[[dict], dict]]:
-        return {'status': self._status, 'submit': self._submit, 'show': self._show}
+        return {'status': self._status, 'submit': self._submit, 'show': self._show, 'list': self._list}
 
     def _status(self, args: dict) -> dict:
         if args:
@@ -635,6 +669,8 @@ class _Service:
                        for key in ('lane', 'source', 'revision'))
                 or type(args['urls']) is not list or any(type(url) is not str for url in args['urls'])):
             raise _Refused(INVALID)
+        if _submit_bound(args['urls']) > LIMIT:
+            raise _Refused('submission too large: its reply would exceed 32 MiB')  # issue #79, before any commit
         result = self.store.submit(args['preset'], args['urls'], lane=args['lane'], source=args['source'],
                                    revision=args['revision'], user_agent=args['user_agent'])
         return {'submission': result.submission,
@@ -642,18 +678,34 @@ class _Service:
                 'duplicates': [{'id': job.id, 'url': job.url} for job in result.duplicates]}
 
     def _show(self, args: dict) -> dict:
-        """One record with every §2 field in §2's order."""
-        if set(args) != {'id'} or not _is_int(args['id']) or not 1 <= args['id'] <= MAX_ID:
+        if set(args) != {'id'} or not _is_id(args['id']):
             raise _Refused(INVALID)
-        job_id = args['id']
+        return {'job': _record(self._known(args['id']))}
+
+    def _known(self, job_id: int) -> job_store.JobRecord:
+        """The job's record; an unknown ID is refused as `unknown job ID <id>` (DEC-51, DEC-54)."""
         try:
-            record = self.store.get(job_id)
+            return self.store.get(job_id)
         except DownloadinuxError as error:
-            # The store names its database; the reply names only the ID (DEC-51).
+            # The store names its database; the reply names only the ID.
             if str(error) == f'{self.store.path}: unknown job ID {job_id}':
                 raise _Refused(f'unknown job ID {job_id}') from None
             raise
-        return {'job': {field: getattr(record, field) for field in job_store.RECORD_FIELDS}}
+
+    def _list(self, args: dict) -> dict:
+        """Every record matching each non-null filter, in ID order (DEC-54 *Requests*, *Replies*)."""
+        if (set(args) != {'ids', 'states', 'preset'}
+                or args['ids'] is not None and not _is_id_list(args['ids'])
+                or args['states'] is not None and not _is_name_list(args['states'], job_store.STATES)
+                or args['preset'] is not None and not _is_name(args['preset'], job_store.PRESETS)):
+            raise _Refused(INVALID)
+        ids = None if args['ids'] is None else set(args['ids'])
+        states = None if args['states'] is None else set(args['states'])
+        jobs = [_record(record) for record in self.store.list(preset=args['preset'])
+                if (ids is None or record.id in ids) and (states is None or record.state in states)]
+        if len(encode({'version': VERSION, 'jobs': jobs})) > LIMIT:
+            raise _Refused('the job listing would exceed 32 MiB; narrow it')
+        return {'jobs': jobs}
 
     # Stop (DEC-50 *Stop*, §5 *Shutdown*).
 
