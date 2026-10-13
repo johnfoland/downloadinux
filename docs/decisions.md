@@ -1330,3 +1330,39 @@ with 130); a further signal during that ending is ignored. It also pins
 interpolated reply string and path is escaped in human output, including
 the user-agent and timestamps, with `-` for each null field in `jobs
 show`.
+
+## DEC-56: Host submissions check URL correspondence; queue imports preserve retained bytes and report committed work on consumption failure (2026-10)
+
+The additive host operations in `downloadinux.host_downloads` validate input
+and user-agent before pinning once and submitting once through `host_jobs`.
+Their result reconstructs first-occurrence input order across created and
+duplicate references; a submit reply must account for each distinct URL
+exactly once, with distinct IDs and each array in input order, before an
+import consumes anything. Empty queues check the user-agent but touch no
+cookie store or worker. No front switches before the coordinated cutover.
+
+Queue imports follow a symlink to its target once while retaining the
+supplied absolute spelling in reports. They read strict UTF-8 physical
+LF/CRLF/CR lines, strip whitespace for URL selection, and after submission
+reread the target and remove every line matching a created or duplicate
+URL. Every retained byte and line ending stays, including newly appended
+URLs. A synced same-directory temporary keeps the reread file's mode and
+atomically replaces it; the known append-during-replacement race remains.
+Every consumption failure reports that jobs were queued and points at
+`dlx jobs list`; cleanup failure may leave a temporary and is reported.
+Counts describe distinct jobs, not repeated physical lines. The target
+design pins the data results and later batch-front messages.
+
+Rewriting the first read was rejected because it loses intervening appends.
+Normalizing retained text was rejected because comments and line endings
+belong to the user's import file. Replacing the symlink itself was rejected
+because it disconnects the path from the file the user meant to edit.
+Trusting only the submit reply's types was rejected because an incomplete
+or unrelated reply must not consume URLs. Cancelling jobs after a rewrite
+failure was rejected because the submission already committed and may be
+running; automatic resubmission after a lost reply would have the same
+uncertainty. The existing active-duplicate rule remains the rerun boundary.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §6,
+"Host submission and queue import". Added on 2026-10-13 for issue #64;
+fills host import details without changing DEC-31, DEC-44, or DEC-55.
