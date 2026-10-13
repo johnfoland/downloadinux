@@ -18,8 +18,9 @@ PRs #45–#55 implement private execution and the remaining fronts, and PR #62
 the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
 Stage 2 is implemented. Stage 3 is settled
 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); its
-worker runs in the image and answers the host and `doctor`, but nothing
-submits jobs to it yet. Stage 4 remains a proposal.
+worker runs in the image and answers the host, `doctor`, and the `jobs`
+commands, but nothing on the host submits jobs to it yet. Stage 4 remains a
+proposal.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -146,8 +147,11 @@ adds the host's worker call, `downloadinux.host_worker` (DEC-53), and
 doctor's `worker.running`; the gate's smoke test runs the worker in the
 built image. PR #87 adds the worker's `list`, `cancel`, `retry`, and
 `logs` clients and the reply bounds that settle issue #79 (DEC-54). The
-host `jobs` commands (pinned in DEC-55) and the cutover remain
-unimplemented.
+host's streaming call, its job operations (`downloadinux.host_jobs`), and
+the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
+(DEC-55) are implemented in PR #90, with smoke evidence against the worker
+in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
+`watch` do not use the worker yet.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -263,7 +267,7 @@ the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-55);
-the worker is packaged into the image with all its clients and is
-reachable from the host, while the host `jobs` commands and the cutover are
-not yet implemented (*Stage 3* above); TUI styling
+the worker is packaged into the image with all its clients, and the host
+`jobs` commands reach it, while the cutover is not yet implemented
+(*Stage 3* above); TUI styling
 and keybindings follow stable operations.

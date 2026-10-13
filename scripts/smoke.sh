@@ -10,7 +10,10 @@ sets=(--set "container.project=downloadinux-check" --set vpn.enabled=false
   --set "paths.state=$smoke_dir/state" --set "paths.cookies=$smoke_dir/cookies")
 cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}")
 export DOWNLOADINUX_IMAGE=downloadinux:check
+# A background `jobs logs --follow` (the jobs smoke) until it is reaped.
+follower_pid=
 cleanup() {
+  if [[ -n $follower_pid ]]; then kill "$follower_pid" 2>/dev/null || true; fi
   "${cli[@]}" compose -- down -v >/dev/null 2>&1 || true
   rm -rf "$smoke_dir"
 }
@@ -526,6 +529,111 @@ called_with https://example.com/worker-after || worker_fail "job 3's downloader 
 test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock || worker_fail "a job left a snapshot"
 rm -f "$route_log"/call-*
 printf 'Worker smoke passed (status, init and socket, named job and log, second worker waits, stop and start).\n'
+
+# Persistent worker and jobs §6 (DEC-55): the host's `jobs` commands against
+# the running worker, submitting with the worker's client as above. Jobs 1
+# to 3 exist, so new IDs start at 4. Job logs hold only the stub's line.
+jobs_fail() { echo "Jobs smoke: $*" >&2; exit 1; }
+jobs_out="$smoke_dir/jobs"
+mkdir "$jobs_out"
+# no_follower: no process in the container runs the worker's `logs` client.
+# The words are built so that this scan's own -c text cannot match.
+no_follower() {
+  "${cli[@]}" compose -- exec -T -u root downloadinux /usr/bin/python3 -I -c '
+import os, sys
+program, client = "downloadinux-" + "worker", "lo" + "gs"
+for pid in (pid for pid in os.listdir("/proc") if pid.isdigit()):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            argv = handle.read().decode(errors="replace").split("\0")
+    except OSError:
+        continue
+    if any(arg.endswith(program) and following == client for arg, following in zip(argv, argv[1:])):
+        sys.exit(1)
+'
+}
+
+# 1. An anonymous job whose downloader exits 7.
+reply=$(submission '' '' https://example.com/jobs/exit7 | "${worker[@]}" submit)
+test "$reply" = '{"version":1,"submission":3,"created":[{"id":4,"url":"https://example.com/jobs/exit7"}],"duplicates":[]}' \
+  || jobs_fail "unexpected submit reply"
+wait_for "job 4 to fail" job_is 4 failed
+
+# 2. list, list --all --json, show, and logs.
+test "$("${cli[@]}" jobs list)" = "$(printf '%s\n' \
+  'ID  STATE        PRESET  QUEUE      ATTEMPT  URL' \
+  '2   interrupted  video   immediate  1        https://example.com/worker/hold' \
+  '4   failed       video   immediate  1        https://example.com/jobs/exit7')" \
+  || jobs_fail "jobs list"
+"${cli[@]}" jobs list --all --json | python3 -c '
+import json, sys
+jobs = json.load(sys.stdin)["jobs"]
+states = [(job["id"], job["state"]) for job in jobs]
+assert states == [(1, "succeeded"), (2, "interrupted"), (3, "succeeded"), (4, "failed")], states
+' || jobs_fail "jobs list --all --json"
+"${cli[@]}" jobs show 4 >"$jobs_out/show-4"
+for line in 'Job 4: failed' '  Exit status:      7' \
+    "  Log, attempt 1:   $smoke_dir/state/jobs/logs/4-1.log"; do
+  grep -Fqx "$line" "$jobs_out/show-4" || jobs_fail "jobs show 4 lacks: $line"
+done
+"${cli[@]}" jobs logs 4 >"$jobs_out/logs-4-1"
+cmp -s "$jobs_out/logs-4-1" "$smoke_dir/state/jobs/logs/4-1.log" || jobs_fail "jobs logs 4"
+
+# 3. retry, then follow the new attempt to its end.
+test "$("${cli[@]}" jobs retry 4)" = 'job 4 queued again as attempt 2' || jobs_fail "jobs retry 4"
+"${cli[@]}" jobs logs --follow 4 >"$jobs_out/logs-4-2" || jobs_fail "jobs logs --follow 4"
+cmp -s "$jobs_out/logs-4-2" "$smoke_dir/state/jobs/logs/4-2.log" || jobs_fail "the followed log differs"
+job_is 4 failed || jobs_fail "job 4's second attempt did not fail"
+
+# 4. Following a held job, then SIGINT: the CLI detaches with 130, the job
+# carries on, and the follower in the container goes away. uv forwards the
+# signal to the CLI and returns its status.
+reply=$(submission '' '' https://example.com/jobs/hold | "${worker[@]}" submit)
+test "$reply" = '{"version":1,"submission":5,"created":[{"id":5,"url":"https://example.com/jobs/hold"}],"duplicates":[]}' \
+  || jobs_fail "unexpected submit reply for the held job"
+"${cli[@]}" jobs logs --follow 5 >"$jobs_out/follow-5.out" 2>"$jobs_out/follow-5.err" &
+follower_pid=$!
+wait_for "the followed job's output" grep -Fqx 'route-smoke stub ran' "$jobs_out/follow-5.out"
+kill -INT "$follower_pid"
+status=0
+wait "$follower_pid" || status=$?
+follower_pid=
+[[ $status -eq 130 ]] || jobs_fail "the detached follower exited $status, not 130"
+# Standard error is the terminal's: Compose, ended with SIGTERM, writes one
+# empty line there (Compose v5.1.3). The detach line is the only other.
+test "$(grep -v '^$' "$jobs_out/follow-5.err")" = 'detached from job 5, which carries on in the worker; follow it with dlx jobs logs --follow 5 or cancel it with dlx jobs cancel 5' \
+  || { cat "$jobs_out/follow-5.err" >&2; jobs_fail "unexpected detach output"; }
+job_is 5 running || jobs_fail "job 5 is not running after the detach"
+wait_for "the container's follower to end" no_follower
+
+# 5. cancel, and the refusals' lines and statuses.
+test "$("${cli[@]}" jobs cancel 5)" = 'job 5: cancel requested; it ends when its downloader exits' \
+  || jobs_fail "jobs cancel 5"
+wait_for "job 5 to be cancelled" job_is 5 cancelled
+status=0
+"${cli[@]}" jobs cancel 5 99 >"$jobs_out/cancel" || status=$?
+[[ $status -eq 1 ]] && test "$(cat "$jobs_out/cancel")" = "$(printf '%s\n' \
+  'job 5 is cancelled; only queued or running jobs can be cancelled' 'unknown job ID 99')" \
+  || jobs_fail "jobs cancel 5 99 (exit $status)"
+status=0
+"${cli[@]}" jobs retry 1 99 >"$jobs_out/retry" || status=$?
+[[ $status -eq 1 ]] && test "$(cat "$jobs_out/retry")" = "$(printf '%s\n' \
+  'job 1 is succeeded; only failed, cancelled, or interrupted jobs can be retried' 'unknown job ID 99')" \
+  || jobs_fail "jobs retry 1 99 (exit $status)"
+
+# 6. export, and an unknown ID.
+"${cli[@]}" jobs export video >"$jobs_out/export-video"
+printf '%s\n' https://example.com/worker/hold https://example.com/jobs/exit7 https://example.com/jobs/hold \
+  | cmp -s - "$jobs_out/export-video" || jobs_fail "jobs export video"
+"${cli[@]}" jobs export gallery >"$jobs_out/export-gallery"
+test ! -s "$jobs_out/export-gallery" || jobs_fail "jobs export gallery printed something"
+status=0
+"${cli[@]}" jobs show 99 >"$jobs_out/show-99.out" 2>"$jobs_out/show-99.err" || status=$?
+[[ $status -eq 1 && ! -s "$jobs_out/show-99.out" ]] \
+  && test "$(cat "$jobs_out/show-99.err")" = 'downloadinux: error: unknown job ID 99' \
+  || jobs_fail "jobs show 99 (exit $status)"
+rm -f "$route_log"/call-*
+printf 'Jobs smoke passed (list, show, logs, follow and detach, cancel, retry, export).\n'
 
 # Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
 # against the running `up` container. A one-off container allocates a

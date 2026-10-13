@@ -13,12 +13,13 @@ container's `downloadinux-runner` on its own private copy of the pinned
 source revision (or anonymously), and `--user-agent` overrides the setting
 for one run. Stage 2 is implemented, with its completion evidence in
 [PR #63](https://github.com/johnfoland/downloadinux/pull/63). Stage 3's
-persistent worker now runs as the container's main process
+persistent worker now runs as the container's main process, with `dlx jobs`
+to list, inspect, follow, cancel, retry, and export its jobs
 ([The worker](#the-worker)), but nothing hands it downloads yet: `dl` still
 runs in the foreground and batches still use tmux. The
-[planning documents](docs/README.md) describe the rest of the worker, its
-`jobs` commands, and the Python + Textual TUI (Stages 3–4). This README
-covers what is implemented.
+[planning documents](docs/README.md) describe the rest of the worker (the
+cutover of `dl`, `batch`, and `watch`) and the Python + Textual TUI
+(Stages 3–4). This README covers what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, run from the host with `just dl` and `just batch`. The one thing that had to
@@ -703,14 +704,52 @@ socket inside the container, never on a mount or a port. Only one worker
 uses a state directory at a time: a second one, say from another
 configuration sharing `paths.state`, waits for it and says so in its log.
 
-Nothing submits jobs to it yet: `dl` and `batch` work as described under
-[Daily use](#daily-use), and the `jobs` commands are still to come. What it
-already changes is stopping. `docker stop` and `dlx down` stop it
+Nothing submits jobs to it yet apart from its own clients inside the
+container: `dl` and `batch` work as described under
+[Daily use](#daily-use) until they switch to the worker. The `jobs`
+commands below act on whatever jobs it holds. What it already changes is
+stopping. `docker stop` and `dlx down` stop it
 gracefully: it stops starting jobs, signals running downloads, waits up to
 20 seconds for them, and records any still running as interrupted, all
 within Compose's 30-second grace period. A job queued at the time runs
 after the next start. Recreating the container (`dlx restart`) interrupts
 running jobs the same way.
+
+### Jobs
+
+`dlx jobs` (or `just jobs …`) acts on the worker's jobs. Every subcommand
+needs the container running (`dlx up`) and reaches the worker through
+`docker compose exec`; none opens the job store itself.
+
+```sh
+dlx jobs list                  # queued, running, failed, and interrupted jobs
+dlx jobs list --all --json     # every job, as JSON
+dlx jobs show 4                # one job's record and its log paths (--json too)
+dlx jobs logs 4                # the latest attempt's log; --attempt N for another
+dlx jobs logs --follow 4       # stream it until the attempt ends
+dlx jobs cancel 4 5            # cancel queued or running jobs
+dlx jobs retry 4               # run failed, cancelled, or interrupted jobs again
+dlx jobs export video >retry   # their URLs, one per line: a queue file
+```
+
+`jobs list` prints a table of ID, state (with `vpn` or `throttle until …`
+for a waiting job, `cancelling` for a running one whose cancel was asked),
+preset, queue (`lane` for a batch job, `immediate` for a `dl` one), attempt,
+and URL. `jobs show` prints every field of the record and the host path of
+each attempt's log under `paths.state/jobs/logs/`. Control characters in
+URLs, user-agents, and other values print as `\xNN`, so a URL cannot drive
+the terminal; `--json`, `jobs logs`, and `jobs export` print values raw.
+
+`jobs logs` writes the log's bytes as they are. With `--follow`, Ctrl-C
+(or `SIGHUP` or `SIGTERM`) detaches: the job carries on in the worker, the
+command says how to follow or cancel it, and exits with 128 plus the
+signal's number. `jobs cancel` ends a queued job at once and asks a running
+one's downloader to stop. `jobs retry` keeps each job's cookie source,
+re-pinned to that source's current revision (so a `cookies refresh` takes
+effect), or keeps it anonymous, and keeps its user-agent;
+`--cookie-source NAME`, `--anonymous`, and `--user-agent VALUE` replace
+them, as on `dl`. `jobs cancel` and `jobs retry` print one line per ID and
+exit 1 if any was refused or unknown.
 
 ## Mounted config and installed shell files
 
@@ -884,6 +923,17 @@ dlx batch <preset> [queue]   Run a queue file under paths.downloads in a detache
                                dlgal_queue); exit 1 if it is missing or outside; dl's options
 dlx watch [preset|session]   Attach to a batch session (default video); exits with
                                tmux's status
+dlx jobs list [--all] [--json]
+                             The worker's queued, running, failed, and interrupted jobs
+                               (--all: every job)
+dlx jobs show ID [--json]    One job's record and its log paths
+dlx jobs logs ID [--attempt N] [--follow]
+                             Print an attempt's log (the latest by default); --follow
+                               streams it, and Ctrl-C detaches (exit 128 + signal)
+dlx jobs cancel ID...        Cancel jobs; exit 1 if any was refused or unknown
+dlx jobs retry ID...         Retry failed, cancelled, or interrupted jobs; dl's options;
+                               exit 1 if any was not requeued
+dlx jobs export PRESET       The preset's failed, cancelled, and interrupted URLs
 dlx shell                    zsh inside the container as dl; exits with its status
 dlx vpn [args...]            The container's vpn helper (on [server], off, status, ip, or
                                any nordvpn subcommand; status when none). Refuses,
@@ -902,7 +952,7 @@ success, 1 when an operation fails, and 2 for a usage error or invalid
 settings, with errors on standard error as `downloadinux: error: …`.
 
 Every recipe reaches the configured container through the CLI. The
-lifecycle, `token`, `cookies`, `useragent`, `dl`, `batch`, `watch`, `shell`,
+lifecycle, `token`, `cookies`, `useragent`, `dl`, `batch`, `watch`, `jobs`, `shell`,
 `vpn`, `servers`, `status`, and `doctor` recipes are wrappers (`status` runs
 `dlx compose -- ps`, then `dlx vpn status`, ignoring its failure); `logs` and
 `nuke` pass through `dlx compose --`, and `setup` runs the CLI in between its
@@ -937,6 +987,8 @@ just batch video [file]     Run a queue in detached tmux
 just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
                               (dl's options too)
 just watch video|gallery    Attach to a running batch session
+just jobs <subcommand> ...  The worker's jobs: list, show, logs, cancel,
+                              retry, export (dlx jobs)
 just shell           zsh inside the container
 just vpn <args>      on / off / status / ip, or any nordvpn subcommand
 just servers [city] [id]    Rank a city's NordVPN servers by load
@@ -987,7 +1039,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
 │   ├── cookie_writer.py          # atomic publication and locked legacy migration
-│   ├── host_worker.py            # the host's one call to the worker's clients
+│   ├── host_jobs.py              # the host's job operations behind `dlx jobs`
+│   ├── host_worker.py            # the host's calls to the worker's clients
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
 │   ├── servers.py                # ranks NordVPN servers by city for `dlx servers`
 │   └── worker.py                 # container worker: job service and its clients

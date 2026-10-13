@@ -89,6 +89,10 @@ batch +args:
 watch kind="video":
     @uv run downloadinux watch "$1"
 
+# Jobs in the worker: just jobs list|show|logs|cancel|retry|export …
+jobs *args:
+    @uv run downloadinux jobs "$@"
+
 # ---------------------------------------------------------------------------
 # VPN
 # ---------------------------------------------------------------------------

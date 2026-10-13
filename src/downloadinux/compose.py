@@ -21,6 +21,8 @@ Runner = Callable[[Sequence[str], Mapping[str, str]], int]
 Capture = Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]]
 # Capture with standard-input text, or None for empty standard input.
 Feed = Callable[[Sequence[str], Mapping[str, str], str | None], tuple[int, str]]
+# Starts a process to stream from: pipes on its standard input and output.
+Spawn = Callable[[Sequence[str], Mapping[str, str]], subprocess.Popen]
 
 SERVICE = "downloadinux"
 # Target design, Host application, C03 list: "the container is running".
@@ -70,6 +72,17 @@ def capture_with_input(
     return completed.returncode, completed.stdout.decode("utf-8", "surrogateescape")
 
 
+def spawn_process(argv: Sequence[str], environ: Mapping[str, str]) -> subprocess.Popen:
+    """Start with standard input and output pipes, in its own process group,
+    so a terminal's Ctrl-C reaches only the CLI. Standard error stays on the
+    terminal (DEC-17). The caller reads the output and ends the process
+    (Persistent worker and jobs §1, *Streaming*; DEC-55)."""
+    return subprocess.Popen(
+        list(argv), env=dict(environ), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        process_group=0,
+    )
+
+
 def exec_args(
     program: Sequence[str], *, captured: bool = False, variables: Sequence[str] = ()
 ) -> list[str]:
@@ -105,6 +118,10 @@ class Invocation:
     ) -> tuple[int, str]:
         """`capture` with standard-input text (`capture_with_input`)."""
         return (feed or capture_with_input)([*self.argv, *args], self.environ, text)
+
+    def spawn(self, args: Sequence[str], spawn: Spawn | None = None) -> subprocess.Popen:
+        """Start a process to stream from (`spawn_process`)."""
+        return (spawn or spawn_process)([*self.argv, *args], self.environ)
 
     def running(self, capture: Capture | None = None) -> bool:
         """`ps --status running --quiet downloadinux` exits 0 with output; a
