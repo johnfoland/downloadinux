@@ -16,15 +16,18 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-53, issue #64). Only internal libraries are
-implemented: the job store (§2's foundation and §5's store lifecycle
-operations), §4's scheduler passes, VPN probe, and throttle seam helper
-(DEC-47), §5's runner execution: launch, attempt logs, exit polls, cancel
-signals, and the shutdown wait (DEC-48, DEC-49), and §1's service with its
-`status`, `submit`, and `show` clients as the module
-`downloadinux.worker` (DEC-50, DEC-51; PR #78), not yet packaged into the
-image or reachable from the host. Packaging, the remaining clients,
-commands, and cutover remain unimplemented. Stage 4 remains proposed.
+jobs*, DEC-41 to DEC-53, issue #64). Implemented: the job store (§2's
+foundation and §5's store lifecycle operations), §4's scheduler passes, VPN
+probe, and throttle seam helper (DEC-47), §5's runner execution: launch,
+attempt logs, exit polls, cancel signals, and the shutdown wait (DEC-48,
+DEC-49), and §1's service with its `status`, `submit`, and `show` clients
+as the module `downloadinux.worker` (DEC-50, DEC-51; PR #78). PR #84
+packages it as the image's command under `init` with the 30-second grace
+period, drops a client being served on a stop (DEC-52), and adds the
+host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). The
+remaining clients, the host commands, and the cutover remain unimplemented,
+so `dl` and batches still run as Stage 2 left them. Stage 4 remains
+proposed.
 
 ## Agreed decisions
 
@@ -486,10 +489,11 @@ mount. The worker never needs the host username or home directory (DEC-2).
 Compose sets no `container_name`; `container.project` names the project, so
 two configs with different project names run side by side.
 
-Stage 3 (settled, not yet implemented) makes the worker the image's command,
-adds `init: true` and `stop_grace_period: 30s` to the base file, and has the
-entrypoint create `/run/downloadinux` for the worker's socket; job history
-lives under `/state/jobs/` (*Persistent worker and jobs* §1, §2; DEC-41).
+Stage 3 makes the worker the image's command, adds `init: true` and
+`stop_grace_period: 30s` to the base file, and has the entrypoint create
+`/run/downloadinux` for the worker's socket; job history lives under
+`/state/jobs/` (*Persistent worker and jobs* §1, §2; DEC-41). Implemented in
+PR #84.
 
 Compose files and the entrypoint, pinned for P0001-C02:
 
@@ -696,7 +700,7 @@ The entrypoint starts `nordvpnd` only when `DL_VPN` is `on`.
 
 Settled for Stage 1 (DEC-12); implemented in P0001-C05 (D4). Stage 3 adds
 `worker.running` after `container.running` (*Persistent worker and jobs* §8,
-DEC-44; not yet implemented).
+DEC-44; implemented in PR #84).
 
 `doctor` returns an ordered list of checks:
 
@@ -938,6 +942,9 @@ Pinned for P0001-C05, D4's wrapper:
   asserts exit 0, `ok` true, every `mount.*` and `tools.*` check `ok`,
   `docker.daemon` and `container.running` `ok`, and every `vpn.*` check
   `skip`. Its existing cleanup (`compose -- down -v`) removes the container.
+  Since Stage 3 it also waits for the worker to answer and expects
+  `worker.running` `ok`, immediately after `container.running`
+  (*Persistent worker and jobs* §8; PR #84).
 
 Pinned for P0001-C06, D5's setup (DEC-23):
 
@@ -1690,8 +1697,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-53). Only internal standard-library libraries are
-implemented: the job store, with §2's foundation (private versioned storage
+(DEC-41 to DEC-53). Implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
 waits, ends and lane deadlines, cancel, retry, and interrupted marks),
@@ -1701,11 +1707,13 @@ signals, and the shutdown wait (DEC-48, DEC-49), and §1's service (its
 lock wait, reconciliation at start, socket, pass and poll cadence, signal
 handling, and `serve` reading the throttle seam) with its `status`,
 `submit`, and `show` clients, in the module `downloadinux.worker`
-(DEC-50, DEC-51). The worker is not yet packaged into the image (§1
-*Packaging*: the `downloadinux-worker` command, the image's command,
-`init`, the entrypoint's `/run/downloadinux`), nor reachable from the host;
-the other clients, host commands, and cutover remain unimplemented. Until
-the cutover (§7), batches run
+(DEC-50, DEC-51). §1 *Packaging* (the `downloadinux-worker` command, the
+image's command, `init`, the grace period, the entrypoint's
+`/run/downloadinux`), a stop dropping the client being served (DEC-52),
+the host's worker call (DEC-53), and §8's `worker.running` are implemented
+in PR #84; the gate's smoke test runs the worker in the built image. The
+other clients, host commands, and cutover remain unimplemented. Until the
+cutover (§7), batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
 planning pull request merged. Client request and reply shapes and human
@@ -1734,7 +1742,8 @@ is PID 1, reaps orphans, and passes `docker stop`'s `SIGTERM` to the worker,
 and `stop_grace_period: 30s` (§5). The worker reads `DL_VPN`, as the
 entrypoint does, for §4's readiness gate.
 
-Pinned before the packaging chunk: `scripts/downloadinux-worker` is the
+Pinned before the packaging chunk, and implemented as pinned (PR #84):
+`scripts/downloadinux-worker` is the
 runner's wrapper with the worker's module (`#!/usr/bin/python3 -I`,
 `/opt/downloadinux` inserted first on `sys.path`, `from downloadinux.worker
 import main`, `sys.exit(main())`), copied beside the runner to
@@ -1780,9 +1789,8 @@ socket, so host operations report it as not answering.
 
 #### Service lifecycle and failure handling (DEC-50)
 
-Implemented as the internal standard-library module `downloadinux.worker`,
-not yet packaged into the image or reachable from the host (§1
-*Packaging*). Its tests run real `serve` processes over the real store with
+Implemented as the standard-library module `downloadinux.worker`, packaged
+as the image's command (§1 *Packaging*; PR #84). Its tests run real `serve` processes over the real store with
 fixture runners and real signals, including a stdlib-only boundary run.
 The module holds `main` and the service. The service drives the
 owned store (§2, §5's "Store lifecycle"), the scheduler (§4, DEC-47), and the
@@ -1869,8 +1877,7 @@ received while stopping change nothing.
 #### Client subcommands and replies (DEC-51)
 
 `status`, `submit`, and `show` are implemented in `downloadinux.worker`,
-reachable only inside a checkout until the worker is packaged (DEC-50
-above). `downloadinux.worker.main` also holds the client subcommands. This
+and reachable in the container as `downloadinux-worker` (PR #84). `downloadinux.worker.main` also holds the client subcommands. This
 subsection pins `status`, `submit`, and `show`;
 the others §6's commands need (listing, cancel, retry, logs, and following)
 are pinned here before the chunk that builds them.
@@ -1952,8 +1959,9 @@ is `unknown job ID <id>`.
 
 #### Host invocation and reply handling (DEC-53)
 
-Every host worker operation goes through one host-side call (not yet
-implemented). Given the effective settings, the client's argument list,
+Every host worker operation goes through one host-side call, implemented
+as `downloadinux.host_worker.call` (PR #84), which no command uses until
+§6's commands land. Given the effective settings, the client's argument list,
 and optional standard-input text, it:
 
 1. Runs *Host application*'s running check. When the service is not
@@ -2615,7 +2623,7 @@ anything else is `fail`, `worker not answering`, fix `dlx restart`,
 including status 0 with any other output and an OS error running Compose.
 It is `skip` under the existing container rules
 (*Health checks*): `Docker daemon not reachable`, then `container not running`.
-The gate's smoke test expects it `ok`.
+The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 ## Python + Textual TUI
 

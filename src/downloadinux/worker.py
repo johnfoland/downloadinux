@@ -240,7 +240,7 @@ def request(socket_path: Path, op: str, args: dict, *, timeout: float = CLIENT_T
         return _not_answering('no reply within 30 seconds')
     except OSError as error:
         return _not_answering(f'{socket_path}: {error.strerror}' if error.strerror else 'connection failed')
-    reply = _accept(data)
+    reply = accept(data)
     if reply is None:
         return _not_answering('unexpected reply')
     sys.stdout.buffer.write(encode(reply))
@@ -280,19 +280,45 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _send(sock: socket.socket, payload: bytes, deadline: float) -> None:
+class _Stopping(Exception):
+    """A stop request arrived while the worker read a request or sent a reply (DEC-52)."""
+
+
+def _never() -> bool:
+    return False
+
+
+def _wait(sock: socket.socket, deadline: float, stop: Callable[[], bool]) -> None:
+    """Before each socket call: raise on a stop request, else wait at most TICK, never past the deadline.
+
+    A signal handler only sets the stop flag and the interrupted call
+    resumes (PEP 475), so the TICK bound is what lets a stop end a stalled
+    exchange within half a second (DEC-52).
+    """
+    if stop():
+        raise _Stopping
+    sock.settimeout(min(TICK, _remaining(deadline)))
+
+
+def _send(sock: socket.socket, payload: bytes, deadline: float, stop: Callable[[], bool] = _never) -> None:
     view = memoryview(payload)
     while view:
-        sock.settimeout(_remaining(deadline))
-        view = view[sock.send(view):]
+        _wait(sock, deadline, stop)
+        try:
+            view = view[sock.send(view):]
+        except TimeoutError:
+            pass  # the next _wait checks the stop flag and the deadline
 
 
-def _receive(sock: socket.socket, deadline: float) -> bytes:
+def _receive(sock: socket.socket, deadline: float, stop: Callable[[], bool] = _never) -> bytes:
     """Read to EOF, stopping once more than LIMIT bytes have arrived."""
     chunks, size = [], 0
     while size <= LIMIT:
-        sock.settimeout(_remaining(deadline))
-        chunk = sock.recv(min(1 << 20, LIMIT + 1 - size))
+        _wait(sock, deadline, stop)
+        try:
+            chunk = sock.recv(min(1 << 20, LIMIT + 1 - size))
+        except TimeoutError:
+            continue  # the next _wait checks the stop flag and the deadline
         if not chunk:
             break
         chunks.append(chunk)
@@ -300,12 +326,15 @@ def _receive(sock: socket.socket, deadline: float) -> bytes:
     return b''.join(chunks)
 
 
-def _accept(data: bytes) -> dict | None:
+def accept(data: bytes) -> dict | None:
     """The reply in the output form with `version` first, or None when it is unexpected.
 
     Expected: at most LIMIT bytes of one strict UTF-8 JSON object whose
     `version` is the integer 1 and which either has exactly `version` and
-    a string `error`, or has no `error` (DEC-51 *Output form*).
+    a string `error`, or has no `error` (DEC-51 *Output form*). The one
+    implementation of this rule: the client applies it to the worker's
+    reply, and the host to the client's output (§1, "Host invocation and
+    reply handling"; DEC-53).
     """
     if len(data) > LIMIT:
         return None
@@ -542,23 +571,27 @@ class _Service:
         """Accept one connection, read its request, answer it, and close it.
 
         A client that times out or goes away is dropped without a reply or
-        a log line. Exceptions from the operations other than the store's
+        a log line, and so is one being served when a stop is requested
+        (DEC-52): the loop then stops. An operation that already ran keeps
+        its effect. Exceptions from the operations other than the store's
         refusals propagate: they are internal errors.
         """
         try:
             connection, _ = self.listener.accept()
         except OSError:
             return  # gone before it was accepted
+        stopping = lambda: self.stop.requested
         with connection:
             try:
-                data = _read_request(connection)
-            except OSError:
+                data = _receive(connection, time.monotonic() + SERVER_TIMEOUT, stopping)
+            except (OSError, _Stopping):
                 return
+            if stopping():
+                return  # the request was read, but the operation has not run
             reply = self._answer(data)
             try:
-                deadline = time.monotonic() + SERVER_TIMEOUT
-                _send(connection, encode(reply), deadline)
-            except OSError:
+                _send(connection, encode(reply), time.monotonic() + SERVER_TIMEOUT, stopping)
+            except (OSError, _Stopping):
                 return
 
     def _answer(self, data: bytes) -> dict:
@@ -682,8 +715,3 @@ def _internal_error() -> None:
     _error('internal error')
     traceback.print_exc(file=sys.stderr)
     sys.stderr.flush()
-
-
-def _read_request(connection: socket.socket) -> bytes:
-    """Read to EOF within SERVER_TIMEOUT, stopping once more than LIMIT bytes arrived."""
-    return _receive(connection, time.monotonic() + SERVER_TIMEOUT)

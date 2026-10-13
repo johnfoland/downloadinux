@@ -17,8 +17,9 @@ migration and host-only list/inspect/default commands, finishing D1's build.
 PRs #45–#55 implement private execution and the remaining fronts, and PR #62
 the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
 Stage 2 is implemented. Stage 3 is settled
-([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); only its
-internal libraries are implemented. Stage 4 remains a proposal.
+([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); its
+worker runs in the image and answers the host and `doctor`, but nothing
+submits jobs to it yet. Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -116,7 +117,7 @@ Acceptance criteria:
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
 DEC-53 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
-Only internal modules are implemented. The `downloadinux.job_store` library
+The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
 §2, DEC-45), and the store's lifecycle operations: queue heads, guarded start,
@@ -137,12 +138,14 @@ service: the ownership wait, reconciliation at start, the socket, the
 half-second request, poll, and pass loop with issue #74's failure rules,
 signal handling, the stop ordering, and `serve` reading the throttle seam
 (DEC-50), and the `status`, `submit`, and `show` clients over the
-one-request wire protocol (DEC-51; PR #78). Packaging into the image (the
-`downloadinux-worker` command, the image's command, `init`, the
-entrypoint's socket directory), the host invocation layer, doctor's
-`worker.running`, the remaining clients, host commands, and cutover remain
-unimplemented; their packaging, stop, host-call, and doctor details are
-pinned (DEC-52, DEC-53).
+one-request wire protocol (DEC-51; PR #78). PR #84 packages the worker
+into the image (the `downloadinux-worker` command, the image's command,
+`init`, the 30-second grace period, and the entrypoint's socket
+directory), drops a client being served when a stop arrives (DEC-52), and
+adds the host's worker call, `downloadinux.host_worker` (DEC-53), and
+doctor's `worker.running`; the gate's smoke test runs the worker in the
+built image. The remaining clients, host commands, and cutover remain
+unimplemented.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -258,6 +261,7 @@ the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-53);
-only their internal modules are implemented, not yet packaged or reachable
-from the host (*Stage 3* above); TUI styling
+the worker is packaged into the image and reachable from the host, while its
+remaining clients, commands, and cutover are not yet implemented (*Stage 3*
+above); TUI styling
 and keybindings follow stable operations.

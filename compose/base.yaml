@@ -31,6 +31,11 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    # Docker's init is PID 1 and passes docker stop's SIGTERM to the worker,
+    # which waits up to 20 seconds for its runners (Persistent worker and
+    # jobs §1, "Packaging"; §5 "Shutdown").
+    init: true
+    stop_grace_period: 30s
 
 volumes:
   nordvpn-data:

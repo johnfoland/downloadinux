@@ -17,6 +17,24 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$smoke_dir/downloads with space" "$smoke_dir/state" "$smoke_dir/cookies" \
   "$smoke_dir/fresh-cookies"
+# wait_for WHAT COMMAND...: poll COMMAND for up to a minute.
+wait_for() {
+  local what=$1 tries=0
+  shift
+  until "$@"; do
+    tries=$((tries + 1))
+    if [[ $tries -gt 600 ]]; then
+      echo "Smoke test: timed out waiting for $what" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+# The worker's client in the `up` container (Persistent worker and jobs §1).
+# After every up, restart, or start it answers only once the entrypoint is
+# done (issue #83), so the checks wait for it.
+worker=("${cli[@]}" compose -- exec -T -u dl downloadinux downloadinux-worker)
+worker_answers() { "${worker[@]}" status >/dev/null 2>&1; }
 
 # Pipe resolved config straight to a checker: never print it.
 "${cli[@]}" compose -- config --format json | python3 -c '
@@ -177,11 +195,17 @@ printf 'Runtime home failure diagnostics passed (mkdir and chown).\n'
 # check, while VPN probes are skipped without credentials. Its cookie rows
 # are the migrated Stage 1 install's (Named cookie sources §5's table).
 "${cli[@]}" up
+wait_for "the worker to answer" worker_answers
 "${cli[@]}" doctor --json | python3 -c '
 import json, sys
 report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True
+ids = [check["id"] for check in report["checks"]]
+assert ids[ids.index("container.running") + 1] == "worker.running", ids
+assert checks["worker.running"] == {
+    "id": "worker.running", "status": "ok", "summary": "worker running (0 running, 0 queued)",
+}, checks["worker.running"]
 container_ids = [name for name in checks if name.startswith(("mount.", "tools."))]
 assert container_ids == [
     "mount.downloads.mounted", "mount.downloads.writable",
@@ -221,6 +245,7 @@ fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")
 "${fresh[@]}" "${sets[@]}" --set "paths.cookies=$smoke_dir/fresh-cookies" init >/dev/null
 cp "$smoke_dir/config.toml" "$smoke_dir/config.toml.copy"
 "${fresh[@]}" restart
+wait_for "the restarted worker to answer" worker_answers
 if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then
   echo "doctor failed with a fresh init settings file:" >&2
   cat "$smoke_dir/doctor-init.json" >&2
@@ -232,6 +257,11 @@ report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True, report
 assert checks["config.file"]["status"] == "ok", checks["config.file"]
+ids = [check["id"] for check in report["checks"]]
+assert ids[ids.index("container.running") + 1] == "worker.running", ids
+assert checks["worker.running"] == {
+    "id": "worker.running", "status": "ok", "summary": "worker running (0 running, 0 queued)",
+}, checks["worker.running"]
 for name in ("cookies.jar", "cookies.instagram", "cookies.youtube"):
     assert (checks[name]["status"], checks[name]["summary"]) == ("skip", "anonymous cookie default"), name
 assert (checks["downloads.user_agent"]["status"], checks["downloads.user_agent"]["summary"]) == (
@@ -312,19 +342,6 @@ route_check() {
 invocations() {
   find "$smoke_dir/state/cookie-invocations" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' '
 }
-# wait_for WHAT COMMAND...: poll COMMAND for up to a minute.
-wait_for() {
-  local what=$1 tries=0
-  shift
-  until "$@"; do
-    tries=$((tries + 1))
-    if [[ $tries -gt 600 ]]; then
-      echo "Host-route smoke: timed out waiting for $what" >&2
-      exit 1
-    fi
-    sleep 0.1
-  done
-}
 calls_logged() {
   [[ $(find "$route_log" -name 'call-*.json' | wc -l) -eq $1 ]]
 }
@@ -382,6 +399,133 @@ wait_for "the batch's pause" batch_paused
 test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock
 "${cli[@]}" compose -- exec -T -u dl downloadinux tmux kill-session -t batch-gallery
 printf 'Host-route smoke passed (dl named and anonymous, detached batch).\n'
+rm -f "$route_log"/call-*
+
+# Persistent worker and jobs §1 (DEC-41, DEC-50 to DEC-52): the worker is the
+# `up` container's main process, under Docker's init, reached through its
+# client subcommands with compose exec. Jobs run the shipped runner around
+# the stub downloader. The checks print step names only, never cookie
+# material.
+worker_fail() { echo "Worker smoke: $*" >&2; exit 1; }
+# job_field ID FIELD: the field of `show ID`'s record, as JSON.
+job_field() {
+  "${worker[@]}" show "$1" | python3 -c '
+import json, sys
+print(json.dumps(json.load(sys.stdin)["job"][sys.argv[1]]))
+' "$2"
+}
+job_is() { [[ $(job_field "$1" state) == "\"$2\"" ]]; }
+called_with() {
+  find "$route_log" -name 'call-*.argv' -exec grep -qaF "$1" {} \; -print | grep -q .
+}
+# submission SOURCE REVISION URL...: a `submit` object for the video preset,
+# immediate, with the route agent; an empty SOURCE is anonymous.
+submission() {
+  python3 -c '
+import json, sys
+source, revision, agent, *urls = sys.argv[1:]
+print(json.dumps({"preset": "video", "lane": None, "source": source or None,
+                  "revision": revision or None, "user_agent": agent, "urls": urls}))
+' "$1" "$2" "$route_agent" "${@:3}"
+}
+container_log_has() {
+  docker logs "$1" 2>&1 | tr -d '\r' | grep -Fqx "$2"
+}
+
+# 1. The worker answers status once the entrypoint is done (issue #83).
+wait_for "the worker to answer" worker_answers
+test "$("${worker[@]}" status)" = '{"version":1,"running":0,"queued":0}' \
+  || worker_fail "status is not empty"
+
+# 2. Docker's init is PID 1 and the worker its child, as dl; the socket
+# directory and socket are private to that UID; Compose set init and the
+# grace period.
+container=$("${cli[@]}" compose -- ps -q downloadinux)
+"${cli[@]}" compose -- exec -T -u root downloadinux /usr/bin/python3 -I -c '
+import os, stat, sys
+uid = int(sys.argv[1])
+def check(condition, message):
+    if not condition:
+        print(f"Worker smoke: {message}", file=sys.stderr)
+        sys.exit(1)
+with open("/proc/1/comm") as handle:
+    check(handle.read().strip() == "docker-init", "PID 1 is not docker-init")
+phrase = " ".join(["downloadinux-worker", "serve", "--cookies", "/cookies", "--state", "/state"])
+found = []
+# Docker'"'"'s init, PID 1, carries the same words in its own arguments.
+for pid in (pid for pid in os.listdir("/proc") if pid.isdigit() and pid != "1"):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            argv = handle.read().split(b"\0")[:-1]
+        with open(f"/proc/{pid}/status") as handle:
+            fields = dict(line.split(":", 1) for line in handle.read().splitlines() if ":" in line)
+    except OSError:
+        continue
+    if phrase in " ".join(arg.decode(errors="replace") for arg in argv):
+        found.append((int(fields["PPid"]), int(fields["Uid"].split()[0])))
+check(found == [(1, uid)], f"worker process (parent, uid) is {found}, not [(1, {uid})]")
+directory, sock = os.lstat("/run/downloadinux"), os.lstat("/run/downloadinux/worker.sock")
+check(stat.S_ISDIR(directory.st_mode) and stat.S_IMODE(directory.st_mode) == 0o700
+      and directory.st_uid == uid, "/run/downloadinux is not a 0700 directory owned by dl")
+check(stat.S_ISSOCK(sock.st_mode) and stat.S_IMODE(sock.st_mode) == 0o600
+      and sock.st_uid == uid, "the worker socket is not 0600 and owned by dl")
+' "$(id -u)"
+test "$(docker inspect -f '{{.HostConfig.Init}} {{.Config.StopTimeout}}' "$container")" = 'true 30' \
+  || worker_fail "the container lacks init: true or the 30-second grace period"
+
+# 3. A named job at its pinned revision runs the real route; its log holds
+# the stub's line, and its private jar is gone afterwards.
+alpha_now=$(revision_of alpha)
+reply=$(submission alpha "$alpha_now" https://example.com/worker-one | "${worker[@]}" submit)
+test "$reply" = '{"version":1,"submission":1,"created":[{"id":1,"url":"https://example.com/worker-one"}],"duplicates":[]}' \
+  || worker_fail "unexpected submit reply"
+wait_for "job 1 to succeed" job_is 1 succeeded
+test "$(job_field 1 exit_status)" = 0 || worker_fail "job 1 exit status"
+route_check named-download alpha "$alpha_now" "$route_agent" https://example.com/worker-one
+python3 -c '
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600, "job log mode"
+' "$smoke_dir/state/jobs/logs/1-1.log" || worker_fail "job 1 log is not mode 600"
+grep -Fqx 'route-smoke stub ran' "$smoke_dir/state/jobs/logs/1-1.log" || worker_fail "job 1 log lacks the stub's line"
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock || worker_fail "job 1 left a snapshot"
+rm -f "$route_log"/call-*
+
+# 4. A second worker on the same state root waits for the lock without a
+# socket, stops cleanly, and the first still answers.
+second=downloadinux-check-second-worker
+"${cli[@]}" compose -- run -d --name "$second" downloadinux >/dev/null
+wait_for "the second worker's waiting line" container_log_has "$second" \
+  'downloadinux-worker: another worker holds /state/jobs/.worker.lock; waiting'
+docker exec "$second" test ! -e /run/downloadinux/worker.sock || worker_fail "the second worker opened a socket"
+docker stop "$second" >/dev/null
+test "$(docker inspect -f '{{.State.ExitCode}}' "$second")" = 0 || worker_fail "the second worker's exit status"
+docker rm "$second" >/dev/null
+worker_answers || worker_fail "the first worker stopped answering"
+
+# 5. docker stop within the grace period interrupts the running job; after
+# a start, the queued one runs.
+reply=$(submission '' '' https://example.com/worker/hold https://example.com/worker-after | "${worker[@]}" submit)
+test "$reply" = '{"version":1,"submission":2,"created":[{"id":2,"url":"https://example.com/worker/hold"},{"id":3,"url":"https://example.com/worker-after"}],"duplicates":[]}' \
+  || worker_fail "unexpected submit reply for the held jobs"
+wait_for "the held job's downloader" called_with https://example.com/worker/hold
+job_is 2 running || worker_fail "job 2 is not running"
+job_is 3 queued || worker_fail "job 3 is not queued"
+started=$(date +%s)
+"${cli[@]}" compose -- stop downloadinux
+elapsed=$(($(date +%s) - started))
+[[ $elapsed -lt 30 ]] || worker_fail "the stop took ${elapsed}s"
+test "$(docker inspect -f '{{.State.ExitCode}}' "$container")" = 0 || worker_fail "the worker's exit status"
+container_log_has "$container" 'downloadinux-worker: stopping' || worker_fail "no stopping line"
+"${cli[@]}" compose -- start downloadinux
+wait_for "the restarted worker to answer" worker_answers
+job_is 2 interrupted || worker_fail "job 2 is not interrupted"
+test "$(job_field 2 error)" = '"worker stopped"' || worker_fail "job 2's error"
+test "$(job_field 2 exit_status)" = 143 || worker_fail "job 2's exit status is $(job_field 2 exit_status), not 143"
+wait_for "job 3 to succeed" job_is 3 succeeded
+called_with https://example.com/worker-after || worker_fail "job 3's downloader never ran"
+test "$(ls -A "$smoke_dir/state/cookie-invocations")" = .lock || worker_fail "a job left a snapshot"
+rm -f "$route_log"/call-*
+printf 'Worker smoke passed (status, init and socket, named job and log, second worker waits, stop and start).\n'
 
 # Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
 # against the running `up` container. A one-off container allocates a

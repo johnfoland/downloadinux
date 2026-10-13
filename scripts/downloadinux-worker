@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+"""downloadinux-worker: the container's job worker and its clients.
+
+Target design, Persistent worker and jobs §1, "Packaging" (DEC-41): the
+runner's wrapper with the worker's module, the system interpreter in
+isolated mode, the image's read-only package first on sys.path, never
+/opt/venv.
+"""
+import sys
+
+sys.path.insert(0, '/opt/downloadinux')
+
+from downloadinux.worker import main  # noqa: E402
+
+sys.exit(main())
