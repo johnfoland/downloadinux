@@ -10,6 +10,7 @@ timeout); the worker's 10-second request read has no seam (DEC-50 names
 none), so the stalled-client test waits the real 10 seconds.
 """
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 from pathlib import Path
@@ -1524,6 +1525,231 @@ def test_real_submit_replies_stay_within_their_bound(rig):
         assert result.returncode == 0, result
         assert len(result.stdout) <= worker._submit_bound(urls)
     assert serve.stop() == 0
+
+
+# cancel (DEC-54; §5 *Cancel*, DEC-48).
+
+def cancelled(rig, *ids):
+    result = rig.client('cancel', *map(str, ids))
+    assert (result.returncode, result.stderr) == (0, b''), result
+    reply = json.loads(result.stdout)
+    assert result.stdout == worker.encode(reply) and list(reply) == ['version', 'outcomes']
+    return [tuple(outcome.values()) for outcome in reply['outcomes']]
+
+
+@pytest.mark.parametrize('argv, reason', [
+    (['cancel'], 'cancel: at least one job ID is required'),
+    (['cancel', '0'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', '01'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', '-2'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '--', '1'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '1', ''], 'cancel: job ID must be a positive integer'),
+    (['cancel', '9223372036854775808'], 'cancel: job ID must be a positive integer'),
+    (['cancel', '١'], 'cancel: job ID must be a positive integer'),
+])
+def test_cancel_usage_errors(rig, capsys, argv, reason):
+    assert worker.run(argv, socket_path=rig.socket) == 2  # no listener: contacting it would exit 3
+    assert capsys.readouterr() == ('', f'downloadinux: error: {reason}\n')
+
+
+def test_cancel_sends_its_ids_in_order_with_repeats(rig, monkeypatch):
+    sent = []
+    monkeypatch.setattr(worker, 'request', lambda path, op, args, timeout: sent.append((op, args)) or 0)
+    assert worker.run(['cancel', '3', '1', '3', '9223372036854775807'], socket_path=rig.socket) == 0
+    assert sent == [('cancel', {'ids': [3, 1, 3, 9223372036854775807]})]
+
+
+def test_cancel_ends_queued_jobs_refuses_finished_ones_and_keeps_request_order(rig, stable):
+    assert cancelled(rig, 2, 99, 7, 2, 1, 7, 3) == [
+        (2, 'refused', 'succeeded'), (99, 'unknown', None), (7, 'cancelled', 'cancelled'),
+        (1, 'cancelled', 'cancelled'), (3, 'refused', 'failed')]
+    assert (shown(rig, 1)['state'], shown(rig, 1)['cancel_requested']) == ('cancelled', True)
+    assert shown(rig, 7)['state'] == 'cancelled'
+    assert cancelled(rig, 4, 5) == [(4, 'refused', 'cancelled'), (5, 'refused', 'interrupted')]
+
+
+def test_cancel_signals_a_running_jobs_runner_and_the_job_ends_cancelled(rig):
+    serve = rig.start().listening()
+    submit(rig, submission(['wait=a']))
+    record = rig.record('wait=a')
+    assert cancelled(rig, 1) == [(1, 'requested', 'running')]
+    wait_for(lambda: rig.received(record))
+    assert rig.received(record) == [(signal.SIGTERM, 1)]  # signalled by the worker, socket still up
+    ended = settled(rig, 1)
+    assert (ended['state'], ended['cancel_requested'], ended['exit_status']) == (
+        'cancelled', True, 128 + signal.SIGTERM)
+    assert serve.stop() == 0
+
+
+def test_a_cancel_signal_failure_is_the_error_reply_after_the_store_commits(rig, inprocess, monkeypatch):
+    with rig.open() as store:
+        store.submit('video', ['wait=a', 'q2'], lane='video', user_agent=UA)  # q2 waits behind wait=a
+    real = we.Executor._signal
+
+    def failing(self, job_ids):
+        job_ids = list(job_ids)
+        real(self, job_ids)  # the runner still gets its SIGTERM
+        return (job_ids[0], PermissionError(errno.EPERM, os.strerror(errno.EPERM))) if job_ids else None
+    monkeypatch.setattr(we.Executor, '_signal', failing)
+
+    def drive():
+        rig.record('wait=a')
+        reply = ask(rig.socket, request_bytes('cancel', {'ids': [1, 2]}))
+        assert reply == worker.encode({'version': 1, 'error': (
+            f'cannot signal the runner of job 1: {os.strerror(errno.EPERM)}')})
+        ended = json.loads(ask(rig.socket, request_bytes('show', {'id': 2})))['job']
+        assert ended['state'] == 'cancelled'  # committed before the signals
+        wait_for(lambda: json.loads(ask(rig.socket, request_bytes('show', {'id': 1})))['job']['state'] == 'cancelled')
+
+    assert inprocess.run(drive) == 0
+
+
+def test_a_cancel_whose_reply_could_exceed_the_limit_changes_nothing(rig, inprocess, monkeypatch):
+    prepare_states(rig)
+    monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3)
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        over = ask(rig.socket, request_bytes('cancel', {'ids': [1, 6, 7, 2]}))
+        assert over == worker.encode({'version': 1, 'error': 'too many job IDs: the reply would exceed 32 MiB'})
+        assert status(rig.socket)['queued'] == 3
+        three = request_bytes('cancel', {'ids': [1, 6, 1, 7, 6]})
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3 - 1)  # 72 bytes per distinct ID, exactly
+        assert b'too many job IDs' in ask(rig.socket, three)
+        assert status(rig.socket)['queued'] == 3
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 72 * 3)
+        at = json.loads(ask(rig.socket, three))
+        assert [outcome['outcome'] for outcome in at['outcomes']] == ['cancelled'] * 3
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+def test_no_cancel_reply_exceeds_its_bound():
+    outcomes = [{'id': worker.MAX_ID, 'outcome': name, 'state': state}
+                for name in worker.CANCEL_OUTCOMES.values() for state in (*js.STATES, None)]
+    for count in (1, 2, 50):
+        reply = {'version': 1, 'outcomes': [max(outcomes, key=lambda o: len(json.dumps(o)))] * count}
+        assert len(worker.encode(reply)) <= worker._ids_bound(list(range(count)), 72)
+
+
+@pytest.mark.parametrize('args', [{}, {'ids': []}, {'ids': [0]}, {'ids': [True]}, {'ids': [2 ** 63]},
+                                  {'ids': ['1']}, {'ids': 1}, {'ids': None}, {'ids': [1], 'x': 1}])
+def test_cancel_args_of_the_wrong_shape_are_invalid_requests(rig, serving, args):
+    assert ask(rig.socket, request_bytes('cancel', args)) == INVALID
+
+
+# retry (DEC-54; §3 and §5 *Retry*, DEC-46).
+
+def entry(job_id, source=None, revision=None, user_agent=UA, **extra):
+    return dict(id=job_id, source=source, revision=revision, user_agent=user_agent, **extra)
+
+
+def retried(rig, *entries):
+    result = rig.client('retry', stdin=json.dumps({'jobs': list(entries)}).encode())
+    assert (result.returncode, result.stderr) == (0, b''), result
+    reply = json.loads(result.stdout)
+    assert result.stdout == worker.encode(reply) and list(reply) == ['version', 'submission', 'outcomes']
+    return reply['submission'], [tuple(outcome.values()) for outcome in reply['outcomes']]
+
+
+def test_retry_requeues_finished_jobs_as_one_submission_with_the_supplied_selection(rig, stable):
+    before = shown(rig, 3)
+    submission_id, outcomes = retried(rig, entry(3, 'alpha', ALPHA, 'New UA'), entry(5), entry(3))
+    assert outcomes == [(3, 'requeued', 'queued', None), (5, 'requeued', 'queued', None)]
+    assert submission_id is not None and submission_id > max(shown(rig, job_id)['submission'] for job_id in (1, 6, 7))
+    third, fifth = shown(rig, 3), shown(rig, 5)
+    assert (third['state'], third['attempt'], third['submission']) == ('queued', 2, submission_id)
+    assert (third['source'], third['revision'], third['user_agent']) == ('alpha', ALPHA, 'New UA')
+    assert (third['created_at'], third['finished_at'], third['exit_status']) == (before['created_at'], None, None)
+    assert (fifth['state'], fifth['attempt'], fifth['submission'], fifth['error']) == ('queued', 2, submission_id, None)
+    assert retried(rig, entry(4))[1] == [(4, 'requeued', 'queued', None)]
+
+
+def test_retry_refuses_unretryable_and_unknown_ids_with_a_null_submission(rig, stable):
+    assert retried(rig, entry(2), entry(99), entry(1), entry(2)) == (None, [
+        (2, 'refused', 'succeeded', None), (99, 'unknown', None, None), (1, 'refused', 'queued', None)])
+    assert shown(rig, 2)['attempt'] == 1
+
+
+def test_retry_of_a_job_whose_url_is_held_names_its_holder(rig):
+    with rig.open() as store:
+        [failed] = store.submit('video', ['dup'], user_agent=UA).created
+        store.start(failed.id)
+        store.end(failed.id, exit_status=1)
+        [holder] = store.submit('video', ['dup'], lane='video', user_agent=UA).created
+        [other] = store.submit('gallery', ['dup2'], user_agent=UA).created
+        store.cancel([other.id])
+    serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+    # The second retried job's preset and URL become held by the first once it is requeued.
+    assert retried(rig, entry(failed.id), entry(other.id)) == (4, [
+        (failed.id, 'shadowed', 'failed', holder.id), (other.id, 'requeued', 'queued', None)])
+    assert serve.stop() == 0
+
+
+@pytest.mark.parametrize('bad, reason', [
+    (entry(3, 'alpha', 'not-a-revision'), 'cookie selection requires both valid source and revision identifiers'),
+    (entry(3, 'alpha', None), 'cookie selection requires both valid source and revision identifiers'),
+    (entry(3, user_agent='a\rb'), 'user-agent must be a string without CR, LF, or NUL'),
+])
+def test_an_invalid_selection_refuses_the_whole_retry_with_the_stores_message(rig, stable, bad, reason):
+    result = rig.client('retry', stdin=json.dumps({'jobs': [entry(5), bad]}).encode())
+    assert (result.returncode, result.stderr) == (1, b'')
+    assert result.stdout == worker.encode({'version': 1, 'error': reason})
+    assert (shown(rig, 3)['state'], shown(rig, 5)['state']) == ('failed', 'interrupted')
+
+
+RETRY_SHAPES = [
+    {},
+    {'jobs': []},
+    {'jobs': None},
+    {'jobs': entry(3)},
+    {'jobs': [entry(3)], 'x': 1},
+    {'jobs': [{key: value for key, value in entry(3).items() if key != 'user_agent'}]},
+    {'jobs': [entry(3, extra=1)]},
+    {'jobs': [entry(True)]},
+    {'jobs': [entry(0)]},
+    {'jobs': [entry(2 ** 63)]},
+    {'jobs': [entry('3')]},
+    {'jobs': [entry(3, source=1)]},
+    {'jobs': [entry(3, revision=False)]},
+    {'jobs': [entry(3, user_agent=None)]},
+    {'jobs': [entry(3), [3, None, None, 'UA']]},
+]
+
+
+@pytest.mark.parametrize('args', RETRY_SHAPES, ids=range(len(RETRY_SHAPES)))
+def test_retry_args_of_the_wrong_shape_are_invalid_requests(rig, stable, args):
+    assert ask(rig.socket, request_bytes('retry', args)) == INVALID
+    assert shown(rig, 3)['state'] == 'failed'
+
+
+def test_a_retry_whose_reply_could_exceed_the_limit_changes_nothing(rig, inprocess, monkeypatch):
+    prepare_states(rig)
+    monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2)
+    over = request_bytes('retry', {'jobs': [entry(3), entry(4), entry(5)]})
+    assert len(over) < worker.LIMIT
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        assert ask(rig.socket, over) == worker.encode(
+            {'version': 1, 'error': 'too many job IDs: the reply would exceed 32 MiB'})
+        assert status(rig.socket)['queued'] == 3
+        two = request_bytes('retry', {'jobs': [entry(3), entry(4), entry(3)]})
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2 - 1)  # 100 bytes per distinct ID, exactly
+        assert b'too many job IDs' in ask(rig.socket, two)
+        assert status(rig.socket)['queued'] == 3
+        monkeypatch.setattr(worker, 'LIMIT', 128 + 100 * 2)
+        at = json.loads(ask(rig.socket, two))
+        assert [outcome['outcome'] for outcome in at['outcomes']] == ['requeued', 'requeued']
+
+    assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
+
+
+def test_no_retry_reply_exceeds_its_bound():
+    widest = {'id': worker.MAX_ID, 'outcome': 'requeued', 'state': 'interrupted', 'holder': worker.MAX_ID}
+    for count in (1, 2, 50):
+        reply = {'version': 1, 'submission': worker.MAX_ID, 'outcomes': [widest] * count}
+        assert len(worker.encode(reply)) <= worker._ids_bound(list(range(count)), 100)
 
 
 # Standard-library boundary (§1, DEC-41, DEC-50, DEC-51).

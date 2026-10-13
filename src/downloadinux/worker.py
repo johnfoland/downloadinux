@@ -44,6 +44,11 @@ MAX_ID = 9223372036854775807  # SQLite's largest integer key
 SUBMIT_KEYS = ('preset', 'lane', 'source', 'revision', 'user_agent', 'urls')  # §2's submission inputs
 STDIN_SUBCOMMANDS = ('submit', 'list', 'retry')  # each reads one JSON object as its ARGS
 INVALID = 'invalid request'
+TOO_MANY_IDS = 'too many job IDs: the reply would exceed 32 MiB'
+RETRY_KEYS = ('id', 'source', 'revision', 'user_agent')  # one `retry` entry (DEC-54 *Requests*)
+# The store's cancel outcomes as `cancel` replies name them (DEC-54 *Replies*).
+CANCEL_OUTCOMES = {job_store.CANCELLED: 'cancelled', job_store.SIGNAL: 'requested',
+                   job_store.REFUSED: 'refused', job_store.UNKNOWN: 'unknown'}
 UNSUPPORTED = 'unsupported request version'
 
 
@@ -70,6 +75,8 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
             cookies, state = parse_serve(rest)
         elif command == 'show':
             args = {'id': parse_show(rest)}
+        elif command == 'cancel':
+            args = {'ids': parse_cancel(rest)}
         elif rest:
             raise ConfigError(f'{command}: unexpected operand {rest[0]!r}')
         elif command in STDIN_SUBCOMMANDS:
@@ -121,13 +128,24 @@ def parse_serve(rest: list[str]) -> tuple[str, str]:
 
 
 def parse_show(rest: list[str]) -> int:
-    """One job ID: ASCII digits, no leading zero, from 1 to 9223372036854775807 (DEC-51)."""
+    """One job ID (DEC-51)."""
     if len(rest) != 1:
         raise ConfigError('show: exactly one job ID is required')
-    word = rest[0]
+    return parse_id(rest[0], 'show: job ID must be a positive integer')
+
+
+def parse_cancel(rest: list[str]) -> list[int]:
+    """One or more job IDs, in the order given, repeats included (DEC-54 *Usage*)."""
+    if not rest:
+        raise ConfigError('cancel: at least one job ID is required')
+    return [parse_id(word, 'cancel: job ID must be a positive integer') for word in rest]
+
+
+def parse_id(word: str, reason: str) -> int:
+    """`show`'s form: ASCII digits, no leading zero, from 1 to 9223372036854775807 (DEC-51)."""
     if (not word or word[0] not in '123456789' or any(char not in '0123456789' for char in word)
             or len(word) > len(str(MAX_ID)) or int(word) > MAX_ID):
-        raise ConfigError('show: job ID must be a positive integer')
+        raise ConfigError(reason)
     return int(word)
 
 
@@ -386,6 +404,11 @@ def _record(record: job_store.JobRecord) -> dict:
 def _submit_bound(urls: list[str]) -> int:
     """128 bytes, plus 34 and the URL's JSON string in the output form per distinct URL."""
     return 128 + sum(34 + len(json.dumps(url, ensure_ascii=True)) for url in dict.fromkeys(urls))
+
+
+def _ids_bound(ids: list[int], per_id: int) -> int:
+    """128 bytes plus `per_id` per distinct ID: 72 for `cancel`, 100 for `retry`."""
+    return 128 + per_id * len(set(ids))
 
 
 # The service (DEC-50).
@@ -654,7 +677,8 @@ class _Service:
             return {'version': VERSION, 'error': str(refusal)}
 
     def _operations(self) -> dict[str, Callable[[dict], dict]]:
-        return {'status': self._status, 'submit': self._submit, 'show': self._show, 'list': self._list}
+        return {'status': self._status, 'submit': self._submit, 'show': self._show, 'list': self._list,
+                'cancel': self._cancel, 'retry': self._retry}
 
     def _status(self, args: dict) -> dict:
         if args:
@@ -706,6 +730,37 @@ class _Service:
         if len(encode({'version': VERSION, 'jobs': jobs})) > LIMIT:
             raise _Refused('the job listing would exceed 32 MiB; narrow it')
         return {'jobs': jobs}
+
+    def _cancel(self, args: dict) -> dict:
+        """The execution library's cancel, so running jobs' runners are signalled (§5, DEC-48, DEC-54).
+
+        A signal failure raises DEC-48's message after the store's outcomes
+        have committed, and becomes the error reply.
+        """
+        if set(args) != {'ids'} or not _is_id_list(args['ids']):
+            raise _Refused(INVALID)
+        if _ids_bound(args['ids'], 72) > LIMIT:
+            raise _Refused(TOO_MANY_IDS)
+        return {'outcomes': [{'id': outcome.id, 'outcome': CANCEL_OUTCOMES[outcome.outcome], 'state': outcome.state}
+                             for outcome in self.executor.cancel(args['ids'])]}
+
+    def _retry(self, args: dict) -> dict:
+        """The store's retry with the selections the host pinned (§5 *Retry*, DEC-46, DEC-54).
+
+        The store validates the values; an invalid one refuses the whole
+        request with the store's message.
+        """
+        if set(args) != {'jobs'} or type(args['jobs']) is not list or not args['jobs'] or not all(
+                type(entry) is dict and set(entry) == set(RETRY_KEYS) and _is_id(entry['id'])
+                and all(entry[key] is None or type(entry[key]) is str for key in ('source', 'revision'))
+                and type(entry['user_agent']) is str for entry in args['jobs']):
+            raise _Refused(INVALID)
+        if _ids_bound([entry['id'] for entry in args['jobs']], 100) > LIMIT:
+            raise _Refused(TOO_MANY_IDS)
+        result = self.store.retry([tuple(entry[key] for key in RETRY_KEYS) for entry in args['jobs']])
+        return {'submission': result.submission,
+                'outcomes': [{'id': outcome.id, 'outcome': outcome.outcome, 'state': outcome.state,
+                              'holder': outcome.holder} for outcome in result.outcomes]}
 
     # Stop (DEC-50 *Stop*, §5 *Shutdown*).
 
