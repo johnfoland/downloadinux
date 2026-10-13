@@ -2060,10 +2060,15 @@ nonempty `data`, and the reply it stops after, each as one line in the output
 form, flushed at once, and then exits 0. An error reply is printed and ends
 it with status 1; a reply that is not accepted, or a request that fails as
 the previous subsection describes, ends it with status 3 and that detail on
-standard error. Lines already printed stay printed. Each request has its own
+standard error. A success reply is accepted only with exactly the keys
+above: `attempt` in `ID`'s range, `ended` a boolean, `offset` from 0 to
+`ID`'s largest value, and `data` a string. Lines already printed stay
+printed. Each request has its own
 30-second allowance. While following, the client also watches its standard
 input, during each half-second wait and before each request: at end of
-file it exits 0 at once, printing nothing more. The host holds a pipe open
+file it exits 0 at once, printing nothing more, and a standard input that
+cannot be watched at all (a closed descriptor) counts as end of file. Data
+read there is discarded. The host holds a pipe open
 there while it follows and closes it to detach (§6), because Compose's
 `exec` neither signals the client nor closes its output when the host side
 goes away, but does close its standard input; a follower whose host has gone
