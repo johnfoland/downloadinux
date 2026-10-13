@@ -13,10 +13,11 @@ are the calling operation's to check (`downloadinux.host_jobs`, §6).
 from __future__ import annotations
 
 import subprocess
+import time
 from collections.abc import Iterator, Sequence
 
 from downloadinux import compose, credentials, worker
-from downloadinux.errors import DownloadinuxError
+from downloadinux.errors import DownloadinuxError, _Detached
 from downloadinux.settings import Host, Settings
 
 PROGRAM = "downloadinux-worker"
@@ -154,6 +155,18 @@ def stream(
 
 def _end(process: subprocess.Popen) -> None:
     """Close Compose's standard input, then stop it if it still runs (DEC-55)."""
+    deadline = time.monotonic() + STOP_WAIT
+    try:
+        _close_and_stop(process, deadline)
+    except _Detached:
+        # A first signal can arrive after a failure already began the ending.
+        # Its handler ignores further signals; finish the idempotent ending
+        # within the same bound before reporting that signal (§1 *Streaming*).
+        _close_and_stop(process, deadline)
+        raise
+
+
+def _close_and_stop(process: subprocess.Popen, deadline: float) -> None:
     try:
         process.stdin.close()
     except BrokenPipeError:
@@ -161,7 +174,7 @@ def _end(process: subprocess.Popen) -> None:
     if process.poll() is None:
         process.terminate()
         try:
-            process.wait(timeout=STOP_WAIT)
+            process.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()

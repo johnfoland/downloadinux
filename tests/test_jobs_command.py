@@ -474,6 +474,65 @@ def test_a_second_signal_while_the_stream_ends_is_ignored(rig, capsys, monkeypat
     reaped(rig.spawner.process)
 
 
+@pytest.mark.parametrize("number", cli.DETACH_SIGNALS)
+@pytest.mark.parametrize("failure", ["malformed-output", "write-failure"])
+def test_a_first_detach_signal_during_failure_cleanup_finishes_the_ending(
+    rig, capsys, monkeypatch, tmp_path, number, failure,
+):
+    saw_eof = tmp_path / "saw-eof"
+    line = "not JSON" if failure == "malformed-output" else chunk(b"hello", offset=5)
+    rig.spawner = Spawner(["ignore-term", None], ["line", line],
+                          ["eof", str(saw_eof)], ["hold", None])
+    stdout = Stdout()
+    if failure == "write-failure":
+        def broken(data):
+            raise BrokenPipeError(32, "Broken pipe")
+        stdout.buffer.write = broken
+    monkeypatch.setattr(sys, "stdout", stdout)
+    before = {detach: signal.getsignal(detach) for detach in cli.DETACH_SIGNALS}
+    stop = threading.Event()
+    sent = threading.Event()
+
+    def send():
+        # EOF is recorded by the real child only once the ending has begun.
+        while not stop.wait(0.01):
+            if saw_eof.exists():
+                # One late signal also proves the retry keeps the original
+                # five-second deadline rather than starting another wait.
+                if failure == "write-failure" and number == signal.SIGTERM:
+                    if stop.wait(2):
+                        return
+                os.kill(os.getpid(), number)
+                sent.set()
+                return
+    sender = threading.Thread(target=send)
+    sender.start()
+    started = time.monotonic()
+    try:
+        status = cli.main(["jobs", "logs", "--follow", "4"])
+        assert sent.wait(1) and saw_eof.exists()
+        assert (status, stdout.buffer.getvalue(), capsys.readouterr().err) == (
+            128 + number, b"", DETACHED,
+        )
+        process = rig.spawner.process
+        assert process.returncode == -signal.SIGKILL
+        assert process.stdin.closed and process.stdout.closed
+        reaped(process)
+        bound = 6.5 if failure == "write-failure" and number == signal.SIGTERM else 8
+        assert 4.5 <= time.monotonic() - started < bound
+        assert {detach: signal.getsignal(detach) for detach in cli.DETACH_SIGNALS} == before
+    finally:
+        stop.set()
+        sender.join()
+        # A regression must fail without leaving the fixture child alive.
+        for process in rig.spawner.processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            process.stdin.close()
+            process.stdout.close()
+
+
 def test_a_compose_start_failure_is_an_operation_error(rig, capsys, monkeypatch):
     # The real spawn, with `docker` absent from an empty PATH.
     monkeypatch.setattr(compose, "spawn_process", spawn_process)

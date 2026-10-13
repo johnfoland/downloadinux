@@ -22,7 +22,7 @@ from pathlib import Path
 from downloadinux import (
     cookie_selectors, cookie_store, health, host_jobs, launch, migrate, operations, presets, servers, worker,
 )
-from downloadinux.errors import DownloadinuxError
+from downloadinux.errors import DownloadinuxError, _Detached
 
 PROG = "downloadinux"
 # Parser nesting depth: the top level, a command, a command's subcommand.
@@ -652,14 +652,6 @@ def _jobs_show(args: argparse.Namespace, options: GlobalOptions) -> int:
     else:
         print(render_job(view))
     return 0
-
-
-class _Detached(Exception):
-    """A detach signal while following; it carries the signal's number."""
-
-    def __init__(self, number: int):
-        super().__init__(number)
-        self.number = number
 
 
 def _ignore(number, frame) -> None:

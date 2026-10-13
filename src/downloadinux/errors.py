@@ -1,4 +1,4 @@
-"""Errors raised by operations, each carrying the CLI exit status.
+"""Operation errors and the private follow-detach signal.
 
 Target design, *Host application*: 1 when an operation fails, 2 for a usage
 error or invalid configuration.
@@ -20,3 +20,11 @@ class ConfigError(DownloadinuxError):
 
 class MissingAssetError(DownloadinuxError):
     """An install asset the command needs is absent from the checkout."""
+
+
+class _Detached(Exception):
+    """A follow signal, deferred until stream cleanup finishes (DEC-55)."""
+
+    def __init__(self, number: int):
+        super().__init__(number)
+        self.number = number
