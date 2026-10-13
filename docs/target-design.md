@@ -2127,7 +2127,11 @@ line per reply (`logs`, DEC-54) runs through a second host call,
 check, then the same `exec -T -u dl downloadinux downloadinux-worker ARGS…`,
 with standard output a pipe it reads line by line as lines arrive and
 standard input a pipe it holds open and never writes; standard error stays
-on the terminal. Each line, less its newline, must be at most 32 MiB and
+on the terminal. Compose runs in its own process group, so a terminal's
+Ctrl-C reaches only the CLI, which decides whether to detach (§6), and
+the end of the stream below is the only way Compose is stopped. Each line,
+less its newline (a last line without one is judged as it stands, as `call`
+judges its output), must be at most 32 MiB and
 accepted by the shared rule, and it hands each success reply to its caller
 as it arrives; a line that is not accepted, or an error reply on any line
 but the last, is `downloadinux-worker SUB printed unexpected output`. At the
@@ -2752,7 +2756,10 @@ first, in request order, with states that fit them: `cancelled` with
 `cancel` and with `queued`, `running`, or `succeeded` for `retry`,
 `requeued` with `queued`, `shadowed` with a retryable state and an integer
 `holder`, and `unknown` with null; `retry`'s `submission` is an integer
-exactly when something was requeued. Anything else is `downloadinux-worker
+exactly when something was requeued. `submit`'s reply (DEC-51) has exactly
+`version`, `submission` (a positive integer), and `created` and
+`duplicates`, each an array of objects with exactly `id` (a positive
+integer) and `url` (a string). Anything else is `downloadinux-worker
 SUB printed unexpected output` (DEC-53).
 
 *Operations.*
@@ -2770,7 +2777,9 @@ SUB printed unexpected output` (DEC-53).
   host never opens them (§1).
 - `logs`: the `logs` client through the streaming call, with `--attempt N`
   and `--follow` passed on when given, yielding each reply's decoded bytes.
-  `data` must be strict, padded base64, every reply must name the first
+  `data` must be strict, padded base64 (decoding it, refusing any
+  character outside the alphabet, and encoding the bytes again gives the
+  same string), every reply must name the first
   reply's attempt, and the last must have empty `data`, and `ended` true
   when following; else unexpected output.
 - `cancel`: one `cancel` request with the IDs as given.
@@ -2791,9 +2800,10 @@ not read. A pinning failure fails the command, exit 1, with its message,
 before anything is retried; nothing is pinned when no job is sent. When any
 job is sent, one `retry` request carries them in request order.
 
-*Output.* Interpolated strings in human output (URLs, user-agents, errors,
-source names, revisions, paths) print each C0 control character (U+0000 to
-U+001F), DEL, and C1 control character (U+0080 to U+009F) as `\xNN`, two
+*Output.* Interpolated strings in human output (every string taken from
+a reply or naming a path: URLs, user-agents, errors, source names,
+revisions, timestamps, a wait's `until`, paths) print each C0 control
+character (U+0000 to U+001F), DEL, and C1 control character (U+0080 to U+009F) as `\xNN`, two
 lowercase hex digits; nothing else is escaped. `--json` output, `jobs logs`,
 and `jobs export` are not changed. `--json` prints the object with two-space
 indentation, as `doctor --json` does. The commands print:
@@ -2812,10 +2822,12 @@ indentation, as `doctor --json` does. The commands print:
   spaces, the label and its colon, and spaces so the value starts at the
   21st character (at least one space): `URL`, `Preset`, `Queue` (`<preset>
   lane` or `immediate`), `Submission`, `Cookies` (`SOURCE at revision
-  REVISION` or `anonymous`), `User-agent` (verbatim, `(empty)` when empty),
+  REVISION` or `anonymous`), `User-agent` (unquoted, escaped as above,
+  `(empty)` when empty),
   `Attempt`, `Wait` (`-`, `vpn`, or `throttle until T`), `Cancel requested`
   (`yes` or `no`), `Created`, `Queued`, `Started`, `Finished`, `Exit status`,
-  and `Error` (`-` for null), then `Log, attempt N` with its path for each
+  and `Error` (`Started`, `Finished`, `Exit status`, and `Error` each `-`
+  when null), then `Log, attempt N` with its path for each
   log path.
 - `jobs logs ID [--attempt N] [--follow]`: the log's bytes, written to
   standard output's byte stream as they arrive and flushed, then exit 0.
@@ -2823,7 +2835,9 @@ indentation, as `doctor --json` does. The commands print:
   streaming call describes, prints `detached from job ID, which carries on
   in the worker; follow it with dlx jobs logs --follow ID or cancel it with
   dlx jobs cancel ID` on standard error, and exits 128 plus the signal
-  number. Without `--follow`, signals keep the CLI's usual handling.
+  number. A further one of these signals while the stream ends is
+  ignored, so the ending completes and the first signal sets the status.
+  Without `--follow`, signals keep the CLI's usual handling.
 - `jobs cancel ID…`: one line per outcome on standard output, in order:
   `job I cancelled`; `job I: cancel requested; it ends when its downloader
   exits`; `job I is STATE; only queued or running jobs can be cancelled`; or
