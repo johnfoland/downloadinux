@@ -1249,3 +1249,70 @@ in a pipeline could hand the client data it never reads.
 "Host invocation and reply handling", and §8. Added on 2026-10-13 for issue
 #64; fills details §1 and §8 leave open without changing DEC-41, DEC-44, or
 DEC-51.
+
+## DEC-54: Job clients filter in the worker, and `logs` reads chunks over short requests, ending when its standard input closes (2026-10)
+
+The worker gains the `list`, `cancel`, `retry`, and `logs` clients. `list`
+and `retry` read one JSON object on standard input, as `submit` does; `list`
+filters by IDs, states, and preset in the worker, and refuses a listing
+over 32 MiB rather than truncating it. `cancel` and `retry` reply with one
+outcome per ID, so the host decides the exit status. `logs` sends one short
+request per chunk of at most 1 MiB, base64-encoded, and, when following,
+polls every half second until the attempt has ended and nothing is left;
+it ends at once when its standard input closes. A submission, cancel, or
+retry whose reply could exceed 32 MiB is refused before it commits (issue
+#79).
+
+Letting the client open the log file itself was rejected: the worker is the
+only process that opens anything under the job store, which keeps the
+symlink and FIFO care of DEC-48 in one place and gives clients no state-root
+option. A long-lived streaming connection was rejected because the worker
+serves one request per tick on one thread (DEC-50): a held connection would
+stall scheduling. Decoding logs as text was rejected because §2 keeps raw
+bytes. Filtering on the host was rejected because the default listing would
+carry every finished job across the socket and `jobs retry` would need one
+request per ID. Signalling a follower to detach was rejected: checked
+against Compose v5.1.3, an interrupted `docker compose exec -T` leaves the
+process in the container running with its output still drained, while its
+standard input reaches end of file. Capping URLs per submission or
+splitting batches on the host was rejected for issue #79: a cap would be a
+second limit to explain, and a split would break `batch`'s all-or-nothing
+import (§6).
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Job clients: listing, cancel, retry, and logs", and the *Interface*
+paragraph. Added on 2026-10-13 for issue #64; settles issue #79 and fills
+the client shapes §1 leaves to planning. It changes DEC-51's two
+subcommand reasons to name every subcommand and otherwise changes nothing.
+
+## DEC-55: Host job commands check reply shapes, re-pin only retryable jobs, and detach by closing the follower's input (2026-10)
+
+The host operations live in `downloadinux.host_jobs` for the `jobs` fronts
+and the Stage 4 TUI. Each checks its reply's exact shape, record fields
+included, and treats a mismatch as unexpected output. `jobs retry` reads the
+jobs with one listing, pins only the failed, cancelled, and interrupted
+ones (each distinct source once, to its current revision, unless a
+selection option replaces it; anonymous jobs touch no store), and fails as
+a whole on a pinning failure before anything is retried. `jobs cancel` and
+`jobs retry` print one line per ID on standard output and exit 1 if any was
+refused or unknown. Human output escapes control characters in every
+interpolated string; JSON, logs, and export are untouched. `jobs logs`
+follows through a streaming host call that holds the client's standard input
+open and closes it to detach, then ends Compose; a stream that ends with
+another status after its first line means the worker went away.
+
+Re-pinning every listed job was rejected: a removed source would then block
+reporting a job that is refused anyway. Retrying the jobs that could be
+pinned and reporting the rest was rejected: a source that cannot be pinned
+is a configuration problem, and `dl` already fails as a whole on one.
+Printing refusals on standard error was rejected so that a caller capturing
+the output sees every ID's line in order. Printing URLs raw in human output
+was rejected because a queue file from anywhere can carry terminal escapes.
+Leaving the Compose process to exit on its own at detach was rejected: the
+container side would keep following until the job ended.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+"Host invocation and reply handling" (*Streaming*), and §6, "Job
+operations, output, and exit statuses". Added on 2026-10-13 for issue #64;
+fills the host shapes and texts §6 leaves to planning without changing
+DEC-44 or DEC-53.
