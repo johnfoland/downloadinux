@@ -149,8 +149,8 @@ built image. PR #87 adds the worker's `list`, `cancel`, `retry`, and
 `logs` clients and the reply bounds that settle issue #79 (DEC-54). The
 host's streaming call, its job operations (`downloadinux.host_jobs`), and
 the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
-(DEC-55) are implemented, with smoke evidence against the worker in the
-built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
+(DEC-55) are implemented in PR #90, with smoke evidence against the worker
+in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
 `watch` do not use the worker yet.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through

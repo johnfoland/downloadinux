@@ -27,7 +27,7 @@ period, drops a client being served on a stop (DEC-52), and adds the
 host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
 adds the worker's remaining clients, `list`, `cancel`, `retry`, and `logs`,
 with their reply bounds (DEC-54). The host's streaming call, job
-operations, and `jobs` commands (DEC-55) are implemented. The cutover
+operations, and `jobs` commands (DEC-55) are implemented in PR #90. The cutover
 remains unimplemented, so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
@@ -1717,8 +1717,8 @@ in PR #84; the gate's smoke test runs the worker in the built image. The
 `list`, `cancel`, `retry`, and `logs` clients and the reply bounds (DEC-54)
 are implemented in PR #87. The host's streaming call (§1 *Streaming*), its
 job operations in `downloadinux.host_jobs`, and the `jobs` commands with
-`just jobs` (§6, DEC-55) are implemented, and the gate's smoke test drives
-them against the worker in the built image. The cutover (§7) remains
+`just jobs` (§6, DEC-55) are implemented in PR #90, and the gate's smoke
+test drives them against the worker in the built image. The cutover (§7) remains
 unimplemented: nothing on the host submits jobs yet. Until the
 cutover, batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
@@ -2124,7 +2124,7 @@ from the host. A success reply has no `error`; an error reply is exactly
 and an OS error starting Compose is the CLI's usual operation error.
 Per-operation reply shapes are checked by the operation that calls it.
 
-*Streaming* (DEC-55; implemented as `downloadinux.host_worker.stream`,
+*Streaming* (DEC-55; implemented in PR #90 as `downloadinux.host_worker.stream`,
 whose tests run a real child in Compose's place). A client that prints a
 line per reply (`logs`, DEC-54) runs through a second host call,
 `downloadinux.host_worker.stream`, beside `call`. It runs the same running
@@ -2745,8 +2745,8 @@ The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 
 #### Job operations, output, and exit statuses (DEC-55)
 
-Implemented: the host operations are the module `downloadinux.host_jobs`,
-which the `jobs` fronts call and the Stage 4 TUI will; their tests drive
+Implemented in PR #90: the host operations are the module
+`downloadinux.host_jobs`, which the `jobs` fronts call and the Stage 4 TUI will; their tests drive
 every text and exit status below through the CLI, and the gate's smoke test
 runs the commands against the worker in the built image. `submit` has no
 caller until the cutover (§7). Each loads the effective settings and
