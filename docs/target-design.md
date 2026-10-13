@@ -942,6 +942,9 @@ Pinned for P0001-C05, D4's wrapper:
   asserts exit 0, `ok` true, every `mount.*` and `tools.*` check `ok`,
   `docker.daemon` and `container.running` `ok`, and every `vpn.*` check
   `skip`. Its existing cleanup (`compose -- down -v`) removes the container.
+  Since Stage 3 it also waits for the worker to answer and expects
+  `worker.running` `ok`, immediately after `container.running`
+  (*Persistent worker and jobs* §8; PR #84).
 
 Pinned for P0001-C06, D5's setup (DEC-23):
 
