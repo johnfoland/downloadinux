@@ -197,6 +197,31 @@ def test_smoke_drives_the_host_route_and_checks_the_retirements():
     assert '"--user-agent=-smoke agent" gallery' in block
 
 
+def test_smoke_drives_the_jobs_commands_after_the_worker_smoke():
+    # Persistent worker and jobs §6 (DEC-55): the real CLI against the
+    # running worker, before the cookie cleanup stops the container.
+    body = smoke()
+    worker_done = body.index("printf 'Worker smoke passed")
+    jobs = body.index("# Persistent worker and jobs §6 (DEC-55)")
+    jobs_done = body.index("printf 'Jobs smoke passed (list, show, logs, follow and detach, cancel, retry, export).\\n'")
+    cleanup = body.index("# Named cookie sources §3, the host front (DEC-37)")
+    assert worker_done < jobs < jobs_done < cleanup
+    block = body[jobs:jobs_done]
+    for step in ('"${cli[@]}" jobs list)', '"${cli[@]}" jobs list --all --json', '"${cli[@]}" jobs show 4',
+                 '"${cli[@]}" jobs logs 4 >', '"${cli[@]}" jobs retry 4)', '"${cli[@]}" jobs logs --follow 4',
+                 '"${cli[@]}" jobs logs --follow 5', 'kill -INT "$follower_pid"', "[[ $status -eq 130 ]]",
+                 "wait_for \"the container's follower to end\" no_follower", '"${cli[@]}" jobs cancel 5)',
+                 '"${cli[@]}" jobs cancel 5 99', '"${cli[@]}" jobs retry 1 99', '"${cli[@]}" jobs export video',
+                 '"${cli[@]}" jobs export gallery', '"${cli[@]}" jobs show 99'):
+        assert step in block, step
+    # The background follower is the cleanup trap's before any check can fail.
+    lines = [line.strip() for line in block.splitlines()]
+    start = next(i for i, line in enumerate(lines) if line.startswith('"${cli[@]}" jobs logs --follow 5 '))
+    assert lines[start].endswith("&") and lines[start + 1] == "follower_pid=$!"
+    trap = body[body.index("cleanup() {"):body.index("trap cleanup EXIT")]
+    assert 'kill "$follower_pid"' in trap
+
+
 def test_watch_wraps_the_cli():
     # Target design, Migration, "Pinned for P0001-C04".
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'

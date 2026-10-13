@@ -28,10 +28,10 @@ library (runner launch, attempt logs, exit polls, cancel signals, and the
 shutdown wait), and the `downloadinux.worker` module (the `serve` service
 and its `status`, `submit`, `show`, `list`, `cancel`, `retry`, and `logs`
 clients), packaged as the image's command under Docker's init, with the
-host's worker call (`downloadinux.host_worker`) and doctor's
-`worker.running`. The host `jobs` commands (DEC-55) and the cutover remain
-unimplemented; batch runs still use
-tmux. Stage 4,
+host's worker calls (`downloadinux.host_worker`), doctor's
+`worker.running`, and the host's job operations (`downloadinux.host_jobs`)
+behind the `jobs` commands (DEC-55). The cutover remains unimplemented:
+`dl` still runs in the foreground and batch runs still use tmux. Stage 4,
 the Python + Textual TUI, remains a proposal.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,

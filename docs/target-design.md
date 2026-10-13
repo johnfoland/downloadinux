@@ -26,9 +26,9 @@ packages it as the image's command under `init` with the 30-second grace
 period, drops a client being served on a stop (DEC-52), and adds the
 host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
 adds the worker's remaining clients, `list`, `cancel`, `retry`, and `logs`,
-with their reply bounds (DEC-54). The host `jobs` commands (pinned in
-DEC-55) and the cutover remain unimplemented,
-so `dl` and batches still run as Stage 2 left them. Stage 4 remains
+with their reply bounds (DEC-54). The host's streaming call, job
+operations, and `jobs` commands (DEC-55) are implemented. The cutover
+remains unimplemented, so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
 ## Agreed decisions
@@ -1715,9 +1715,12 @@ image's command, `init`, the grace period, the entrypoint's
 the host's worker call (DEC-53), and §8's `worker.running` are implemented
 in PR #84; the gate's smoke test runs the worker in the built image. The
 `list`, `cancel`, `retry`, and `logs` clients and the reply bounds (DEC-54)
-are implemented in PR #87. The host's job operations and commands (§6,
-DEC-55) and the cutover remain unimplemented. Until the
-cutover (§7), batches run
+are implemented in PR #87. The host's streaming call (§1 *Streaming*), its
+job operations in `downloadinux.host_jobs`, and the `jobs` commands with
+`just jobs` (§6, DEC-55) are implemented, and the gate's smoke test drives
+them against the worker in the built image. The cutover (§7) remains
+unimplemented: nothing on the host submits jobs yet. Until the
+cutover, batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
 planning pull request merged. Client request and reply shapes and human
@@ -2092,8 +2095,8 @@ fits.
 #### Host invocation and reply handling (DEC-53)
 
 Every host worker operation goes through one host-side call, implemented
-as `downloadinux.host_worker.call` (PR #84), which no command uses until
-§6's commands land. Given the effective settings, the client's argument list,
+as `downloadinux.host_worker.call` (PR #84), which §6's `jobs` commands
+use. Given the effective settings, the client's argument list,
 and optional standard-input text, it:
 
 1. Runs *Host application*'s running check. When the service is not
@@ -2121,7 +2124,8 @@ from the host. A success reply has no `error`; an error reply is exactly
 and an OS error starting Compose is the CLI's usual operation error.
 Per-operation reply shapes are checked by the operation that calls it.
 
-*Streaming* (DEC-55; pinned, not yet implemented). A client that prints a
+*Streaming* (DEC-55; implemented as `downloadinux.host_worker.stream`,
+whose tests run a real child in Compose's place). A client that prints a
 line per reply (`logs`, DEC-54) runs through a second host call,
 `downloadinux.host_worker.stream`, beside `call`. It runs the same running
 check, then the same `exec -T -u dl downloadinux downloadinux-worker ARGS…`,
@@ -2734,9 +2738,11 @@ The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 
 #### Job operations, output, and exit statuses (DEC-55)
 
-Pinned before the chunk that builds them; not yet implemented. The host
-operations are the module `downloadinux.host_jobs`, which the `jobs` fronts
-call and the Stage 4 TUI will. Each loads the effective settings and
+Implemented: the host operations are the module `downloadinux.host_jobs`,
+which the `jobs` fronts call and the Stage 4 TUI will; their tests drive
+every text and exit status below through the CLI, and the gate's smoke test
+runs the commands against the worker in the built image. `submit` has no
+caller until the cutover (§7). Each loads the effective settings and
 credentials as every command does and reaches the worker only through §1's
 host call or its streaming call (DEC-53, DEC-55), so the running check and
 §1's failure texts apply.
