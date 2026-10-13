@@ -202,6 +202,39 @@ def test_watch_wraps_the_cli():
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'
 
 
+def test_jobs_forwards_every_word():
+    # Persistent worker and jobs §6, *Arguments* (DEC-55).
+    assert recipe("jobs") == [
+        "# Jobs in the worker: just jobs list|show|logs|cancel|retry|export …",
+        "jobs *args:",
+        '    @uv run downloadinux jobs "$@"',
+    ]
+
+
+@pytest.mark.parametrize("args", [
+    [],
+    ["retry", "--user-agent=-an agent", "3", "", "4"],
+    ["logs", "--follow", "7"],
+])
+def test_jobs_forwards_each_word_unchanged(tmp_path, args):
+    just = shutil.which("just")
+    assert just is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "uv"
+    stub.write_text(ARGV_STUB)
+    stub.chmod(0o755)
+    log = tmp_path / "argv"
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+           "ARGV_LOG": str(log)}
+    subprocess.run(
+        [just, "--justfile", str(checkout.asset_path("justfile")), "jobs", *args],
+        cwd=checkout.checkout_root(), env=env, check=True, timeout=60,
+    )
+    argv = log.read_bytes().split(b"\0")[:-1]
+    assert [arg.decode() for arg in argv] == ["run", "downloadinux", "jobs", *args]
+
+
 def test_no_recipe_names_the_old_home():
     # Its variable went with the last recipe that used it.
     lines = justfile()

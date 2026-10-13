@@ -7,15 +7,21 @@ an operation the TUI will call (target design, *Host application*).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import functools
 import getpass
 import json
 import os
+import re
+import signal
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import cookie_selectors, cookie_store, health, launch, migrate, operations, presets, servers
+from downloadinux import (
+    cookie_selectors, cookie_store, health, host_jobs, launch, migrate, operations, presets, servers, worker,
+)
 from downloadinux.errors import DownloadinuxError
 
 PROG = "downloadinux"
@@ -288,6 +294,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     servers_parser.set_defaults(handler=_servers)
 
+    jobs = commands.add_parser(
+        "jobs", help="list, inspect, follow, cancel, retry, and export the worker's jobs",
+        description="Act on the jobs in the worker. "
+        "Every subcommand needs the container running (dlx up).",
+    )
+    _add_global_options(jobs, 1)
+    job_commands = jobs.add_subparsers(dest="job_command", metavar="SUBCOMMAND", required=True)
+    jobs_list = job_commands.add_parser(
+        "list", help="queued, running, failed, and interrupted jobs in ID order")
+    _add_global_options(jobs_list, 2)
+    jobs_list.add_argument("--all", action="store_true", help="every job")
+    jobs_list.add_argument("--json", action="store_true", help="print JSON")
+    jobs_list.set_defaults(handler=_jobs_list)
+    jobs_show = job_commands.add_parser("show", help="one job's record and its log paths")
+    _add_global_options(jobs_show, 2)
+    jobs_show.add_argument("id", metavar="ID", type=_job_id)
+    jobs_show.add_argument("--json", action="store_true", help="print JSON")
+    jobs_show.set_defaults(handler=_jobs_show)
+    jobs_logs = job_commands.add_parser(
+        "logs", help="print an attempt's log (the latest by default)",
+        description="Print an attempt's log, the latest by default. With --follow, "
+        "stream it until the attempt ends; Ctrl-C detaches, and the job carries on.")
+    _add_global_options(jobs_logs, 2)
+    jobs_logs.add_argument("id", metavar="ID", type=_job_id)
+    jobs_logs.add_argument("--attempt", metavar="N", type=_attempt, help="this attempt's log")
+    jobs_logs.add_argument("--follow", action="store_true", help="stream until the attempt ends")
+    jobs_logs.set_defaults(handler=_jobs_logs)
+    jobs_cancel = job_commands.add_parser("cancel", help="cancel queued or running jobs")
+    _add_global_options(jobs_cancel, 2)
+    jobs_cancel.add_argument("ids", nargs="+", metavar="ID", type=_job_id)
+    jobs_cancel.set_defaults(handler=_jobs_cancel)
+    jobs_retry = job_commands.add_parser(
+        "retry", help="retry failed, cancelled, or interrupted jobs",
+        description="Retry failed, cancelled, or interrupted jobs as one new "
+        "submission. Each keeps its own cookie source, re-pinned to its current "
+        "revision, or stays anonymous, and keeps its user-agent, unless an option "
+        "replaces them. Options are dl's.")
+    _add_global_options(jobs_retry, 2)
+    _add_launch_options(jobs_retry)
+    jobs_retry.add_argument("ids", nargs="+", metavar="ID", type=_job_id)
+    jobs_retry.set_defaults(handler=_jobs_retry)
+    jobs_export = job_commands.add_parser(
+        "export", help="print a preset's failed, cancelled, and interrupted URLs: a queue file")
+    _add_global_options(jobs_export, 2)
+    jobs_export.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
+    jobs_export.set_defaults(handler=_jobs_export)
+
     doctor = commands.add_parser(
         "doctor", help="check configuration, Docker, the container, and VPN"
     )
@@ -316,6 +369,16 @@ def _add_launch_options(parser: argparse.ArgumentParser) -> None:
         help="user-agent for this run instead of downloads.user_agent "
         "(spell a VALUE beginning with - as --user-agent=VALUE)",
     )
+
+
+def _job_id(value: str) -> int:
+    """A job ID as the worker's clients take it (§6 *Arguments*): a usage
+    error in the host's form, as `--user-agent`'s is (DEC-40)."""
+    return worker.parse_id(value, "job ID must be a positive integer")
+
+
+def _attempt(value: str) -> int:
+    return worker.parse_id(value, "--attempt must be a positive integer")
 
 
 def _passthrough(args: list[str]) -> list[str]:
@@ -485,6 +548,208 @@ def _servers(args: argparse.Namespace, options: GlobalOptions) -> int:
         args.city, args.country, options.config, options.overrides
     ):
         print(line)
+    return 0
+
+
+# Persistent worker and jobs §6, "Job operations, output, and exit statuses"
+# (DEC-55).
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+DETACH_SIGNALS = (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)
+
+
+def escape(text: str) -> str:
+    r"""Human output's form of an interpolated string: each C0 control
+    character, DEL, and C1 control character as `\xNN`; nothing else."""
+    return _CONTROL.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
+
+
+def _jobs_errors(handler):
+    """An operation error's reason may come from a reply: escape it."""
+    @functools.wraps(handler)
+    def run(args: argparse.Namespace, options: GlobalOptions) -> int:
+        try:
+            return handler(args, options)
+        except DownloadinuxError as error:
+            raise type(error)(escape(str(error))) from None
+    return run
+
+
+def _json(value: object) -> None:
+    print(json.dumps(value, indent=2))
+
+
+def _job_state(job: dict) -> str:
+    wait = job["wait"]
+    if job["state"] == "queued" and wait is not None:
+        return "queued: vpn" if wait["reason"] == "vpn" else f"queued: throttle until {escape(wait['until'])}"
+    if job["state"] == "running" and job["cancel_requested"]:
+        return "running: cancelling"
+    return job["state"]
+
+
+def render_jobs(jobs: list[dict]) -> str:
+    """`jobs list`'s table: columns two spaces apart, each but the last
+    padded to its widest cell, header included (§6 *Output*)."""
+    rows = [("ID", "STATE", "PRESET", "QUEUE", "ATTEMPT", "URL")]
+    rows += [(str(job["id"]), _job_state(job), job["preset"], "lane" if job["lane"] else "immediate",
+              str(job["attempt"]), escape(job["url"])) for job in jobs]
+    widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]) - 1)]
+    return "\n".join("  ".join([*(cell.ljust(width) for cell, width in zip(row, widths)), row[-1]])
+                     for row in rows)
+
+
+def _or_dash(value: object) -> str:
+    return "-" if value is None else escape(str(value))
+
+
+def render_job(view: host_jobs.JobView) -> str:
+    """`jobs show`'s block: each value from the 21st character (§6 *Output*)."""
+    job = view.job
+    wait = job["wait"]
+    fields = [
+        ("URL", escape(job["url"])),
+        ("Preset", job["preset"]),
+        ("Queue", f"{job['preset']} lane" if job["lane"] else "immediate"),
+        ("Submission", str(job["submission"])),
+        ("Cookies", "anonymous" if job["source"] is None
+         else f"{escape(job['source'])} at revision {escape(job['revision'])}"),
+        ("User-agent", escape(job["user_agent"]) or "(empty)"),
+        ("Attempt", str(job["attempt"])),
+        ("Wait", "-" if wait is None else "vpn" if wait["reason"] == "vpn"
+         else f"throttle until {escape(wait['until'])}"),
+        ("Cancel requested", "yes" if job["cancel_requested"] else "no"),
+        ("Created", escape(job["created_at"])),
+        ("Queued", escape(job["queued_at"])),
+        ("Started", _or_dash(job["started_at"])),
+        ("Finished", _or_dash(job["finished_at"])),
+        ("Exit status", _or_dash(job["exit_status"])),
+        ("Error", _or_dash(job["error"])),
+        *((f"Log, attempt {attempt}", escape(str(path))) for attempt, path in view.logs),
+    ]
+    lines = [f"Job {job['id']}: {job['state']}"]
+    lines += [f"  {label}:".ljust(19) + " " + value for label, value in fields]
+    return "\n".join(lines)
+
+
+@_jobs_errors
+def _jobs_list(args: argparse.Namespace, options: GlobalOptions) -> int:
+    jobs = host_jobs.list_jobs(args.all, options.config, options.overrides)
+    if args.json:
+        _json({"jobs": jobs})
+    elif not jobs:
+        print("No jobs." if args.all else "No queued, running, failed, or interrupted jobs.")
+    else:
+        print(render_jobs(jobs))
+    return 0
+
+
+@_jobs_errors
+def _jobs_show(args: argparse.Namespace, options: GlobalOptions) -> int:
+    view = host_jobs.show(args.id, options.config, options.overrides)
+    if args.json:
+        _json({"job": view.job, "logs": [{"attempt": n, "path": str(path)} for n, path in view.logs]})
+    else:
+        print(render_job(view))
+    return 0
+
+
+class _Detached(Exception):
+    """A detach signal while following; it carries the signal's number."""
+
+    def __init__(self, number: int):
+        super().__init__(number)
+        self.number = number
+
+
+def _ignore(number, frame) -> None:
+    pass
+
+
+def _detach(number, frame) -> None:
+    # Further signals are ignored, so the stream's ending completes and the
+    # first signal sets the status (§6 *Output*).
+    for detach in DETACH_SIGNALS:
+        signal.signal(detach, _ignore)
+    raise _Detached(number)
+
+
+def _write(chunks) -> None:
+    """Each chunk to standard output's byte stream as it arrives. Closing
+    the generator, however this ends, ends the stream and Compose."""
+    out = sys.stdout.buffer
+    with contextlib.closing(chunks):
+        for data in chunks:
+            out.write(data)
+            out.flush()
+
+
+@_jobs_errors
+def _jobs_logs(args: argparse.Namespace, options: GlobalOptions) -> int:
+    chunks = host_jobs.logs(args.id, args.attempt, args.follow, options.config, options.overrides)
+    if not args.follow:
+        _write(chunks)
+        return 0
+    previous = {number: signal.getsignal(number) for number in DETACH_SIGNALS}
+    try:
+        for number in DETACH_SIGNALS:
+            signal.signal(number, _detach)
+        _write(chunks)
+    except _Detached as detached:
+        print(f"detached from job {args.id}, which carries on in the worker; follow it with "
+              f"dlx jobs logs --follow {args.id} or cancel it with dlx jobs cancel {args.id}", file=sys.stderr)
+        return 128 + detached.number
+    finally:
+        for number, handler in previous.items():
+            if handler is not None:  # None: a handler Python did not install
+                signal.signal(number, handler)
+    return 0
+
+
+@_jobs_errors
+def _jobs_cancel(args: argparse.Namespace, options: GlobalOptions) -> int:
+    outcomes = host_jobs.cancel(args.ids, options.config, options.overrides)
+    for outcome in outcomes:
+        job_id = outcome["id"]
+        print({
+            "cancelled": f"job {job_id} cancelled",
+            "requested": f"job {job_id}: cancel requested; it ends when its downloader exits",
+            "refused": f"job {job_id} is {outcome['state']}; only queued or running jobs can be cancelled",
+            "unknown": f"unknown job ID {job_id}",
+        }[outcome["outcome"]])
+    return 0 if all(outcome["outcome"] in ("cancelled", "requested") for outcome in outcomes) else 1
+
+
+def _retry_line(line: host_jobs.RetryLine) -> str:
+    outcome = line.outcome
+    if outcome is None:
+        if line.record is None:
+            return f"unknown job ID {line.id}"
+        state = line.record["state"]
+    elif outcome["outcome"] == "requeued":
+        return f"job {line.id} queued again as attempt {line.record['attempt'] + 1}"
+    elif outcome["outcome"] == "shadowed":
+        return f"job {line.id} not retried: job {outcome['holder']} already holds its preset and URL"
+    elif outcome["outcome"] == "unknown":
+        return f"unknown job ID {line.id}"
+    else:
+        state = outcome["state"]
+    return f"job {line.id} is {state}; only failed, cancelled, or interrupted jobs can be retried"
+
+
+@_jobs_errors
+def _jobs_retry(args: argparse.Namespace, options: GlobalOptions) -> int:
+    lines = host_jobs.retry(args.ids, options.config, options.overrides, **_launch_options(args))
+    for line in lines:
+        print(_retry_line(line))
+    return 0 if all(line.outcome and line.outcome["outcome"] == "requeued" for line in lines) else 1
+
+
+@_jobs_errors
+def _jobs_export(args: argparse.Namespace, options: GlobalOptions) -> int:
+    urls = host_jobs.export(args.preset, options.config, options.overrides)
+    sys.stdout.buffer.write("".join(f"{url}\n" for url in urls).encode("utf-8"))
+    sys.stdout.buffer.flush()
     return 0
 
 

@@ -18,6 +18,8 @@ import pytest
 from downloadinux import compose, worker
 
 FIXTURE = Path(__file__).parent / "fixtures" / "compose_stream.py"
+# The real spawn, kept for tests that monkeypatch `compose.spawn_process`.
+spawn_process = compose.spawn_process
 
 
 def chunk(data: bytes = b"", ended: bool = False, offset: int = 0, attempt: int = 1) -> str:
@@ -41,7 +43,7 @@ class Spawner:
 
     def __call__(self, argv, environ):
         self.calls.append((list(argv), dict(environ)))
-        process = compose.spawn_process(
+        process = spawn_process(
             [sys.executable, "-I", str(FIXTURE), json.dumps(self.steps)], environ)
         self.processes.append(process)
         return process
