@@ -504,3 +504,32 @@ def test_retry_refused_fits_a_queued_running_or_succeeded_state(cookies, state):
 def test_the_retry_listing_is_checked_like_any_other(cookies):
     root, _ = cookies
     assert refused(retry, root, Docker(ok(jobs=[{**record(4), "lane": "gallery"}])), [4]) == unexpected("list")
+
+
+@pytest.mark.parametrize('created,duplicates', [
+    ([], []),
+    ([{'id': 1, 'url': 'a'}, {'id': 2, 'url': 'foreign'}], []),
+    ([{'id': 1, 'url': 'a'}, {'id': 2, 'url': 'a'}], []),
+    ([{'id': 1, 'url': 'a'}], [{'id': 2, 'url': 'a'}]),
+    ([{'id': 1, 'url': 'b'}, {'id': 2, 'url': 'a'}], []),
+    ([], [{'id': 1, 'url': 'b'}, {'id': 2, 'url': 'a'}]),
+    ([{'id': 1, 'url': 'a'}, {'id': 1, 'url': 'b'}], []),
+    ([{'id': 1, 'url': 'a'}], [{'id': 1, 'url': 'b'}]),
+])
+def test_submit_checks_correspondence_before_returning(created, duplicates):
+    docker = Docker(ok(submission=1, created=created, duplicates=duplicates))
+    assert refused(host_jobs.submit, 'video', ['a', 'b', 'a'], None, cookie_store.ANONYMOUS, '',
+                   **docker.seams) == unexpected('submit')
+    assert len(docker.feeds) == 1
+
+
+def test_submit_arrays_follow_input_order_not_id_order_and_input_is_captured_before_feed():
+    urls = ['created-1', 'duplicate-1', 'created-2', 'duplicate-2', 'created-1']
+    reply = dict(submission=3, created=[{'id': 9, 'url': 'created-1'}, {'id': 10, 'url': 'created-2'}],
+                 duplicates=[{'id': 5, 'url': 'duplicate-1'}, {'id': 1, 'url': 'duplicate-2'}])
+    docker = Docker(ok(**reply))
+    def feed(*args):
+        urls.clear()
+        return docker.feed(*args)
+    assert host_jobs.submit('video', urls, None, cookie_store.ANONYMOUS, '',
+                            capture=docker.capture, feed=feed) == {'version': 1, **reply}

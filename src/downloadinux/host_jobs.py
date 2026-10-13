@@ -95,6 +95,22 @@ def _references(value: object) -> bool:
         _keys(item, "id", "url") and _positive(item["id"]) and _str(item["url"]) for item in value)
 
 
+def _corresponds(reply: dict, urls: Sequence[str]) -> bool:
+    """Each distinct input once, unique IDs, each array in input order (DEC-56)."""
+    order = {url: index for index, url in enumerate(dict.fromkeys(urls))}
+    groups = (reply["created"], reply["duplicates"])
+    references = [item for group in groups for item in group]
+    if (len(references) != len(order)
+            or {item["url"] for item in references} != set(order)
+            or len({item["id"] for item in references}) != len(references)):
+        return False
+    for group in groups:
+        positions = [order[item["url"]] for item in group]
+        if any(left >= right for left, right in zip(positions, positions[1:])):
+            return False
+    return True
+
+
 def _checked(reply: dict, subcommand: str, valid: bool) -> dict:
     if not valid:
         raise DownloadinuxError(f"{host_worker.PROGRAM} {subcommand} printed unexpected output")
@@ -152,12 +168,14 @@ def submit(
         source = revision = None
     else:
         raise TypeError(f"not a pinned or anonymous selection: {selection!r}")
+    urls = tuple(urls)
     effective = settings.load(config, overrides, host)
     request = _request({"preset": preset, "lane": lane, "source": source, "revision": revision,
                         "user_agent": user_agent, "urls": list(urls)})
     reply = host_worker.call(effective, host, ["submit"], request, capture=capture, feed=feed)
     valid = (_keys(reply, "version", "submission", "created", "duplicates") and _positive(reply["submission"])
-             and _references(reply["created"]) and _references(reply["duplicates"]))
+             and _references(reply["created"]) and _references(reply["duplicates"])
+             and _corresponds(reply, urls))
     return _checked(reply, "submit", valid)
 
 
