@@ -118,7 +118,7 @@ Acceptance criteria:
 ## Stage 3 — Persistent worker and jobs; remove tmux entirely
 
 Settled contract: target design *Persistent worker and jobs*, DEC-41 to
-DEC-56 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
+DEC-57 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)).
 The `downloadinux.job_store` library
 holds private versioned SQLite under reopened worker ownership, atomic pinned
 submissions, exact active duplicates, and typed record reads (target design
@@ -155,7 +155,10 @@ in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
 `watch` do not use the worker yet.
 Target design §6's host submission and byte-preserving queue import
 operations (DEC-56) are implemented as additive preparation in PR #92;
-the coordinated command cutover still awaits implementation.
+the coordinated command cutover still awaits implementation. Multi-job and
+lane following, its short-request client, shared host events, and later
+front output are settled in target design §1/§6 (DEC-57), pending additive
+implementation before that cutover.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -270,8 +273,8 @@ integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
-implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-56);
-the worker is packaged into the image with all its clients, and the host
+implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-57);
+the worker is packaged into the image with its implemented job clients, and the host
 `jobs` commands reach it, while the cutover is not yet implemented
 (*Stage 3* above); TUI styling
 and keybindings follow stable operations.
