@@ -19,8 +19,9 @@ the D4 cutover onto named sources, and PR #63 adds D5's completion evidence:
 Stage 2 is implemented. Stage 3 is settled
 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); its
 worker runs in the image and answers the host, `doctor`, and the `jobs`
-commands, but nothing on the host submits jobs to it yet. Stage 4 remains a
-proposal.
+commands. Reusable host submission and queue-import operations are implemented
+(DEC-56), while the download fronts still await the coordinated cutover.
+Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -269,7 +270,7 @@ integration, and PR #52 public cleanup and the explicit user-agent write. D4,
 the coordinated download cutover, is implemented: PR #55 adds its
 `cookies firefox` and `cookies setup` fronts and PR #62 the cutover itself.
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
-implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-55);
+implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-56);
 the worker is packaged into the image with all its clients, and the host
 `jobs` commands reach it, while the cutover is not yet implemented
 (*Stage 3* above); TUI styling

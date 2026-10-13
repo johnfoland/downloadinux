@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-55, issue #64). Implemented: the job store (§2's
+jobs*, DEC-41 to DEC-56, issue #64). Implemented: the job store (§2's
 foundation and §5's store lifecycle operations), §4's scheduler passes, VPN
 probe, and throttle seam helper (DEC-47), §5's runner execution: launch,
 attempt logs, exit polls, cancel signals, and the shutdown wait (DEC-48,
