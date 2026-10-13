@@ -10,12 +10,15 @@ Unix socket. Nothing here reads settings, cookie material, or host paths.
 
 Log lines name no URL, user-agent, or cookie value.
 """
+import base64
 from collections.abc import Mapping
 from datetime import datetime, timezone
+import errno
 import json
 import math
 import os
 from pathlib import Path
+import select
 import selectors
 import signal
 import socket
@@ -41,6 +44,9 @@ REPEAT = 60  # seconds before the waiting line, or an identical failure line, re
 SERVER_TIMEOUT = 10  # seconds to read a request, and again to send its reply
 CLIENT_TIMEOUT = 30  # seconds a client allows in all (DEC-51 *Wire protocol*)
 MAX_ID = 9223372036854775807  # SQLite's largest integer key
+CHUNK = 1048576  # bytes: the most one `logs` request reads (DEC-54 *Replies*)
+LOG_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC  # a planted FIFO cannot stall a read
+ENDED = ('succeeded', 'failed', 'cancelled', 'interrupted')  # §3's terminal states
 SUBMIT_KEYS = ('preset', 'lane', 'source', 'revision', 'user_agent', 'urls')  # §2's submission inputs
 STDIN_SUBCOMMANDS = ('submit', 'list', 'retry')  # each reads one JSON object as its ARGS
 INVALID = 'invalid request'
@@ -77,6 +83,8 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
             args = {'id': parse_show(rest)}
         elif command == 'cancel':
             args = {'ids': parse_cancel(rest)}
+        elif command == 'logs':
+            job_id, attempt, follow = parse_logs(rest)
         elif rest:
             raise ConfigError(f'{command}: unexpected operand {rest[0]!r}')
         elif command in STDIN_SUBCOMMANDS:
@@ -88,6 +96,8 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
         return 2
     if command == 'serve':
         return serve(cookies, state, socket_path=socket_path, **service)
+    if command == 'logs':
+        return logs(socket_path, job_id, attempt, follow, timeout=timeout)
     return request(socket_path, command, args, timeout=timeout)
 
 
@@ -139,6 +149,39 @@ def parse_cancel(rest: list[str]) -> list[int]:
     if not rest:
         raise ConfigError('cancel: at least one job ID is required')
     return [parse_id(word, 'cancel: job ID must be a positive integer') for word in rest]
+
+
+def parse_logs(rest: list[str]) -> tuple[int, int | None, bool]:
+    """`ID [--attempt N] [--follow]`, options at most once, in any order (DEC-54 *Usage*).
+
+    Every word beginning with `-` is an option, and `--attempt`'s value is
+    the next word, whatever it is. The option errors are found scanning
+    the words in order; the operand and value forms are checked after.
+    Returns the ID, the attempt or None, and whether to follow.
+    """
+    operands, value, follow, index = [], None, False, 0
+    while index < len(rest):
+        word = rest[index]
+        index += 1
+        if not word.startswith('-'):
+            operands.append(word)
+        elif word == '--attempt':
+            if index == len(rest):
+                raise ConfigError('logs: --attempt needs a value')
+            if value is not None:
+                raise ConfigError('logs: --attempt given more than once')
+            value, index = rest[index], index + 1
+        elif word == '--follow':
+            if follow:
+                raise ConfigError('logs: --follow given more than once')
+            follow = True
+        else:
+            raise ConfigError(f'logs: unknown option {word!r}')
+    if len(operands) != 1:
+        raise ConfigError('logs: exactly one job ID is required')
+    job_id = parse_id(operands[0], 'logs: job ID must be a positive integer')
+    attempt = None if value is None else parse_id(value, 'logs: --attempt must be a positive integer')
+    return job_id, attempt, follow
 
 
 def parse_id(word: str, reason: str) -> int:
@@ -252,21 +295,124 @@ def request(socket_path: Path, op: str, args: dict, *, timeout: float = CLIENT_T
     0 for a success reply, 1 for an error reply, each reprinted on standard
     output in the output form; 3, with DEC-51's detail on standard error,
     when the worker cannot be reached or does not reply properly. `timeout`
-    bounds the whole exchange (30 seconds outside tests).
+    bounds the whole exchange (30 seconds outside tests). An OS error
+    writing standard output is status 1 (DEC-54).
     """
+    try:
+        reply = _ask(socket_path, op, args, timeout)
+    except _NotAnswering as failure:
+        return _not_answering(str(failure))
+    if not _print(reply):
+        return 1
+    return 1 if 'error' in reply else 0
+
+
+def logs(socket_path: Path, job_id: int, attempt: int | None, follow: bool, *,
+         timeout: float = CLIENT_TIMEOUT) -> int:
+    """`logs`: one request per chunk, printing replies as DEC-54's *`logs`' output* pins.
+
+    The first request names `attempt` (None for the job's current one)
+    and offset 0; later ones the first reply's attempt and the previous
+    reply's offset. Prints each reply with data, and the reply it stops
+    after: without `follow` the first empty one, with it the first empty
+    one whose attempt has ended. While following, after any other empty
+    reply it waits TICK, and before each request and during each wait it
+    watches standard input, exiting 0 at end of file without printing
+    more; without `follow`, standard input is never read. Each request has
+    its own `timeout`. Returns 0, 1 after an error reply or an OS error
+    writing standard output, or 3 with DEC-51's detail.
+    """
+    offset, first = 0, True
+    while True:
+        if follow and _input_ended(0):
+            return 0
+        try:
+            reply = _ask(socket_path, 'logs', {'id': job_id, 'attempt': attempt, 'offset': offset}, timeout)
+            if 'error' not in reply and not _is_log_chunk(reply):
+                raise _NotAnswering('unexpected reply')
+        except _NotAnswering as failure:
+            return _not_answering(str(failure))
+        if 'error' in reply:
+            _print(reply)
+            return 1
+        if first:
+            attempt, first = reply['attempt'], False
+        offset = reply['offset']
+        empty = reply['data'] == ''
+        stop = empty and (not follow or reply['ended'])
+        if (not empty or stop) and not _print(reply):
+            return 1
+        if stop:
+            return 0
+        if empty and _input_ended(TICK):
+            return 0
+
+
+def _is_log_chunk(reply: dict) -> bool:
+    """A `logs` success reply of DEC-54's shape; any other is unexpected."""
+    return (set(reply) == {'version', 'attempt', 'ended', 'offset', 'data'} and _is_id(reply['attempt'])
+            and type(reply['ended']) is bool and _is_int(reply['offset']) and 0 <= reply['offset'] <= MAX_ID
+            and type(reply['data']) is str)
+
+
+def _input_ended(wait: float) -> bool:
+    """Watch standard input for up to `wait` seconds; True at end of file.
+
+    Data is read and discarded: only end of file detaches a follower
+    (DEC-54). Standard input that cannot be watched at all counts as end
+    of file, since nothing could then hold the follower open.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            readable, _, _ = select.select([0], [], [], max(0.0, deadline - time.monotonic()))
+            if not readable:
+                return False
+            if os.read(0, 65536) == b'':
+                return True
+        except OSError:
+            return True
+
+
+class _NotAnswering(Exception):
+    """The worker could not be reached or did not reply properly; the message is DEC-51's detail."""
+
+
+def _ask(socket_path: Path, op: str, args: dict, timeout: float) -> dict:
+    """One exchange: the accepted reply, or `_NotAnswering`."""
     payload = encode({'version': VERSION, 'op': op, 'args': args})
     try:
         data = _exchange(socket_path, payload, timeout)
     except TimeoutError:
-        return _not_answering('no reply within 30 seconds')
+        raise _NotAnswering('no reply within 30 seconds') from None
     except OSError as error:
-        return _not_answering(f'{socket_path}: {error.strerror}' if error.strerror else 'connection failed')
+        raise _NotAnswering(f'{socket_path}: {error.strerror}' if error.strerror else 'connection failed') from None
     reply = accept(data)
     if reply is None:
-        return _not_answering('unexpected reply')
-    sys.stdout.buffer.write(encode(reply))
-    sys.stdout.flush()
-    return 1 if 'error' in reply else 0
+        raise _NotAnswering('unexpected reply')
+    return reply
+
+
+def _print(reply: dict) -> bool:
+    """Write one reply on standard output, flushed; False after an OS error writing it.
+
+    On failure standard output is pointed at /dev/null, so the interpreter's
+    own flush at exit cannot fail again and print a traceback (DEC-54).
+    """
+    try:
+        sys.stdout.buffer.write(encode(reply))
+        sys.stdout.flush()
+    except OSError:
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, sys.stdout.fileno())
+            finally:
+                os.close(devnull)
+        except (OSError, ValueError):
+            pass  # no descriptor to repoint (a test's captured output)
+        return False
+    return True
 
 
 def _not_answering(detail: str) -> int:
@@ -678,7 +824,7 @@ class _Service:
 
     def _operations(self) -> dict[str, Callable[[dict], dict]]:
         return {'status': self._status, 'submit': self._submit, 'show': self._show, 'list': self._list,
-                'cancel': self._cancel, 'retry': self._retry}
+                'cancel': self._cancel, 'retry': self._retry, 'logs': self._logs}
 
     def _status(self, args: dict) -> dict:
         if args:
@@ -743,6 +889,60 @@ class _Service:
             raise _Refused(TOO_MANY_IDS)
         return {'outcomes': [{'id': outcome.id, 'outcome': CANCEL_OUTCOMES[outcome.outcome], 'state': outcome.state}
                              for outcome in self.executor.cancel(args['ids'])]}
+
+    def _logs(self, args: dict) -> dict:
+        """One chunk of an attempt's log (DEC-54 *Replies*).
+
+        `ended` is decided before the read, so bytes a runner wrote just
+        before it exited are read by a later request, never lost.
+        """
+        if (set(args) != {'id', 'attempt', 'offset'} or not _is_id(args['id'])
+                or args['attempt'] is not None and not _is_id(args['attempt'])
+                or not _is_int(args['offset']) or not 0 <= args['offset'] <= MAX_ID):
+            raise _Refused(INVALID)
+        job_id, offset = args['id'], args['offset']
+        record = self._known(job_id)
+        attempt = record.attempt if args['attempt'] is None else args['attempt']
+        if attempt > record.attempt:
+            raise _Refused(f'job {job_id} has no attempt {attempt}')
+        ended = attempt < record.attempt or record.state in ENDED
+        data = self._read_log(self.store.logs / job_store.log_name(job_id, attempt), offset)
+        return {'attempt': attempt, 'ended': ended, 'offset': offset + len(data),
+                'data': base64.b64encode(data).decode('ascii')}
+
+    def _read_log(self, log: Path, offset: int) -> bytes:
+        """At most CHUNK bytes from `offset`; the descriptor is closed before returning.
+
+        The `logs` directory is opened without following a final symlink,
+        as DEC-48's launch opens it, and the log relative to it read-only,
+        close-on-exec, nonblocking, and not following a symlink. A log that
+        does not exist reads as empty. Anything but a regular file, a
+        symlink included (`O_NOFOLLOW`'s ELOOP), is `<log>: not a regular
+        file`; any other OS error is `<log>: <OS reason>` (DEC-54).
+        """
+        try:
+            directory = os.open(self.store.logs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError as error:
+            raise DownloadinuxError(_os_reason(log, error)) from None
+        try:
+            try:
+                fd = os.open(log.name, LOG_READ_FLAGS, dir_fd=directory)
+            except FileNotFoundError:
+                return b''
+            except OSError as error:
+                if error.errno == errno.ELOOP:
+                    raise DownloadinuxError(f'{log}: not a regular file') from None
+                raise DownloadinuxError(_os_reason(log, error)) from None
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise DownloadinuxError(f'{log}: not a regular file')
+                return os.pread(fd, min(CHUNK, MAX_ID - offset), offset)
+            except OSError as error:
+                raise DownloadinuxError(_os_reason(log, error)) from None
+            finally:
+                _close(fd)
+        finally:
+            _close(directory)
 
     def _retry(self, args: dict) -> dict:
         """The store's retry with the selections the host pinned (§5 *Retry*, DEC-46, DEC-54).
@@ -810,6 +1010,14 @@ class _Service:
                 ok = _report(report, _os_reason(self.socket_path, error))
             self.bound = None
         return ok
+
+
+def _close(fd: int) -> None:
+    """Close a descriptor the worker has finished reading; a close error changes no reply."""
+    try:
+        os.close(fd)
+    except OSError:
+        pass
 
 
 def _report(report: bool, reason: str) -> bool:

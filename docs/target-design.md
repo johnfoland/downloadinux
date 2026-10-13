@@ -24,9 +24,10 @@ DEC-49), and §1's service with its `status`, `submit`, and `show` clients
 as the module `downloadinux.worker` (DEC-50, DEC-51; PR #78). PR #84
 packages it as the image's command under `init` with the 30-second grace
 period, drops a client being served on a stop (DEC-52), and adds the
-host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). The
-remaining clients and the host `jobs` commands (pinned in DEC-54 and DEC-55)
-and the cutover remain unimplemented,
+host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
+adds the worker's remaining clients, `list`, `cancel`, `retry`, and `logs`,
+with their reply bounds (DEC-54). The host `jobs` commands (pinned in
+DEC-55) and the cutover remain unimplemented,
 so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
@@ -1713,7 +1714,9 @@ image's command, `init`, the grace period, the entrypoint's
 `/run/downloadinux`), a stop dropping the client being served (DEC-52),
 the host's worker call (DEC-53), and §8's `worker.running` are implemented
 in PR #84; the gate's smoke test runs the worker in the built image. The
-other clients, host commands, and cutover remain unimplemented. Until the
+`list`, `cancel`, `retry`, and `logs` clients and the reply bounds (DEC-54)
+are implemented in PR #87. The host's job operations and commands (§6,
+DEC-55) and the cutover remain unimplemented. Until the
 cutover (§7), batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
@@ -1882,8 +1885,8 @@ received while stopping change nothing.
 and reachable in the container as `downloadinux-worker` (PR #84). `downloadinux.worker.main` also holds the client subcommands. This
 subsection pins `status`, `submit`, and `show`;
 the others §6's commands need (listing, cancel, retry, logs, and following)
-are pinned in "Job clients: listing, cancel, retry, and logs" below
-(DEC-54).
+are pinned, and implemented in PR #87, in "Job clients: listing, cancel,
+retry, and logs" below (DEC-54).
 
 | Subcommand | Input | Success reply |
 | --- | --- | --- |
@@ -1962,8 +1965,9 @@ is `unknown job ID <id>`.
 
 #### Job clients: listing, cancel, retry, and logs (DEC-54)
 
-Pinned before the chunk that builds them; not yet implemented. These
-clients join `status`, `submit`, and `show` in `downloadinux.worker`, under
+Implemented in `downloadinux.worker` (PR #87), with tests that run real
+`serve` processes and fixture runners, and real pipes on a follower's
+standard input. These clients join `status`, `submit`, and `show` in `downloadinux.worker`, under
 the previous subsection's exit statuses, output form, acceptance rule, wire
 protocol, and limits, except where this one says otherwise. Each request's
 `op` is its subcommand's name.
