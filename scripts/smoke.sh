@@ -17,6 +17,24 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$smoke_dir/downloads with space" "$smoke_dir/state" "$smoke_dir/cookies" \
   "$smoke_dir/fresh-cookies"
+# wait_for WHAT COMMAND...: poll COMMAND for up to a minute.
+wait_for() {
+  local what=$1 tries=0
+  shift
+  until "$@"; do
+    tries=$((tries + 1))
+    if [[ $tries -gt 600 ]]; then
+      echo "Smoke test: timed out waiting for $what" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+# The worker's client in the `up` container (Persistent worker and jobs §1).
+# After every up, restart, or start it answers only once the entrypoint is
+# done (issue #83), so the checks wait for it.
+worker=("${cli[@]}" compose -- exec -T -u dl downloadinux downloadinux-worker)
+worker_answers() { "${worker[@]}" status >/dev/null 2>&1; }
 
 # Pipe resolved config straight to a checker: never print it.
 "${cli[@]}" compose -- config --format json | python3 -c '
@@ -177,11 +195,17 @@ printf 'Runtime home failure diagnostics passed (mkdir and chown).\n'
 # check, while VPN probes are skipped without credentials. Its cookie rows
 # are the migrated Stage 1 install's (Named cookie sources §5's table).
 "${cli[@]}" up
+wait_for "the worker to answer" worker_answers
 "${cli[@]}" doctor --json | python3 -c '
 import json, sys
 report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True
+ids = [check["id"] for check in report["checks"]]
+assert ids[ids.index("container.running") + 1] == "worker.running", ids
+assert checks["worker.running"] == {
+    "id": "worker.running", "status": "ok", "summary": "worker running (0 running, 0 queued)",
+}, checks["worker.running"]
 container_ids = [name for name in checks if name.startswith(("mount.", "tools."))]
 assert container_ids == [
     "mount.downloads.mounted", "mount.downloads.writable",
@@ -221,6 +245,7 @@ fresh=(uv run --locked downloadinux --config "$smoke_dir/config.toml")
 "${fresh[@]}" "${sets[@]}" --set "paths.cookies=$smoke_dir/fresh-cookies" init >/dev/null
 cp "$smoke_dir/config.toml" "$smoke_dir/config.toml.copy"
 "${fresh[@]}" restart
+wait_for "the restarted worker to answer" worker_answers
 if ! "${fresh[@]}" doctor --json >"$smoke_dir/doctor-init.json"; then
   echo "doctor failed with a fresh init settings file:" >&2
   cat "$smoke_dir/doctor-init.json" >&2
@@ -232,6 +257,11 @@ report = json.load(sys.stdin)
 checks = {check["id"]: check for check in report["checks"]}
 assert report["ok"] is True, report
 assert checks["config.file"]["status"] == "ok", checks["config.file"]
+ids = [check["id"] for check in report["checks"]]
+assert ids[ids.index("container.running") + 1] == "worker.running", ids
+assert checks["worker.running"] == {
+    "id": "worker.running", "status": "ok", "summary": "worker running (0 running, 0 queued)",
+}, checks["worker.running"]
 for name in ("cookies.jar", "cookies.instagram", "cookies.youtube"):
     assert (checks[name]["status"], checks[name]["summary"]) == ("skip", "anonymous cookie default"), name
 assert (checks["downloads.user_agent"]["status"], checks["downloads.user_agent"]["summary"]) == (
@@ -312,19 +342,6 @@ route_check() {
 invocations() {
   find "$smoke_dir/state/cookie-invocations" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' '
 }
-# wait_for WHAT COMMAND...: poll COMMAND for up to a minute.
-wait_for() {
-  local what=$1 tries=0
-  shift
-  until "$@"; do
-    tries=$((tries + 1))
-    if [[ $tries -gt 600 ]]; then
-      echo "Host-route smoke: timed out waiting for $what" >&2
-      exit 1
-    fi
-    sleep 0.1
-  done
-}
 calls_logged() {
   [[ $(find "$route_log" -name 'call-*.json' | wc -l) -eq $1 ]]
 }
@@ -389,9 +406,7 @@ rm -f "$route_log"/call-*
 # client subcommands with compose exec. Jobs run the shipped runner around
 # the stub downloader. The checks print step names only, never cookie
 # material.
-worker=("${cli[@]}" compose -- exec -T -u dl downloadinux downloadinux-worker)
 worker_fail() { echo "Worker smoke: $*" >&2; exit 1; }
-worker_answers() { "${worker[@]}" status >/dev/null 2>&1; }
 # job_field ID FIELD: the field of `show ID`'s record, as JSON.
 job_field() {
   "${worker[@]}" show "$1" | python3 -c '

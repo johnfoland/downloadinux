@@ -240,7 +240,7 @@ def request(socket_path: Path, op: str, args: dict, *, timeout: float = CLIENT_T
         return _not_answering('no reply within 30 seconds')
     except OSError as error:
         return _not_answering(f'{socket_path}: {error.strerror}' if error.strerror else 'connection failed')
-    reply = _accept(data)
+    reply = accept(data)
     if reply is None:
         return _not_answering('unexpected reply')
     sys.stdout.buffer.write(encode(reply))
@@ -326,12 +326,15 @@ def _receive(sock: socket.socket, deadline: float, stop: Callable[[], bool] = _n
     return b''.join(chunks)
 
 
-def _accept(data: bytes) -> dict | None:
+def accept(data: bytes) -> dict | None:
     """The reply in the output form with `version` first, or None when it is unexpected.
 
     Expected: at most LIMIT bytes of one strict UTF-8 JSON object whose
     `version` is the integer 1 and which either has exactly `version` and
-    a string `error`, or has no `error` (DEC-51 *Output form*).
+    a string `error`, or has no `error` (DEC-51 *Output form*). The one
+    implementation of this rule: the client applies it to the worker's
+    reply, and the host to the client's output (§1, "Host invocation and
+    reply handling"; DEC-53).
     """
     if len(data) > LIMIT:
         return None

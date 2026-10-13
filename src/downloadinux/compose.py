@@ -19,6 +19,8 @@ from downloadinux.settings import Settings
 Runner = Callable[[Sequence[str], Mapping[str, str]], int]
 # Returns the exit status and standard output; standard error is not captured.
 Capture = Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]]
+# Capture with standard-input text, or None for empty standard input.
+Feed = Callable[[Sequence[str], Mapping[str, str], str | None], tuple[int, str]]
 
 SERVICE = "downloadinux"
 # Target design, Host application, C03 list: "the container is running".
@@ -53,6 +55,21 @@ def capture_process(argv: Sequence[str], environ: Mapping[str, str]) -> tuple[in
     return completed.returncode, completed.stdout
 
 
+def capture_with_input(
+    argv: Sequence[str], environ: Mapping[str, str], text: str | None
+) -> tuple[int, str]:
+    """`capture_process` with `text` as standard input, UTF-8 encoded, or
+    an empty one when it is None: never the terminal's, which Compose's
+    `exec` would forward (DEC-53). Standard output is decoded with
+    `surrogateescape`, so bytes that are not UTF-8 survive for the caller
+    to refuse; standard error stays on the terminal (DEC-17)."""
+    completed = subprocess.run(
+        list(argv), env=dict(environ), input=b"" if text is None else text.encode("utf-8"),
+        stdout=subprocess.PIPE, check=False,
+    )
+    return completed.returncode, completed.stdout.decode("utf-8", "surrogateescape")
+
+
 def exec_args(
     program: Sequence[str], *, captured: bool = False, variables: Sequence[str] = ()
 ) -> list[str]:
@@ -82,6 +99,12 @@ class Invocation:
         return (capture or capture_process)(
             [*self.argv, *args], {**self.environ, **(environ or {})}
         )
+
+    def feed(
+        self, args: Sequence[str], text: str | None, feed: Feed | None = None
+    ) -> tuple[int, str]:
+        """`capture` with standard-input text (`capture_with_input`)."""
+        return (feed or capture_with_input)([*self.argv, *args], self.environ, text)
 
     def running(self, capture: Capture | None = None) -> bool:
         """`ps --status running --quiet downloadinux` exits 0 with output; a

@@ -36,11 +36,16 @@ CONTAINER_IDS = [
     "tools.gallery-dl",
 ]
 VPN_IDS = ["vpn.login", "vpn.connected", "vpn.killswitch", "vpn.exit_ip"]
+# Persistent worker and jobs §8: immediately after container.running.
+WORKER_ID = "worker.running"
+ALL_IDS = HOST_IDS + [WORKER_ID] + CONTAINER_IDS + VPN_IDS
+WORKER_STATUS = ("downloadinux-worker", "status")
 
 
 class Docker:
     daemon = (0, "27.5.1\n")
     running = (0, "abc123\n")
+    worker = (0, '{"version":1,"running":0,"queued":0}\n')
 
     def __init__(self):
         self.calls = []
@@ -73,6 +78,10 @@ class Docker:
                 return self.container[program]
             if program in self.vpn:
                 return self.vpn[program]
+            if program == WORKER_STATUS:
+                if isinstance(self.worker, Exception):
+                    raise self.worker
+                return self.worker
             if program[:2] == ("mountpoint", "-q"):
                 return 0, ""
             if program[:2] == ("sh", "-c"):
@@ -149,9 +158,7 @@ def test_host_checks_are_ordered_and_warns_and_skips_are_ok(
 ):
     status, report, err = run_json(capsys, doctor_paths)
     assert (status, err, report["ok"]) == (0, "", True)
-    assert [check["id"] for check in report["checks"]] == (
-        HOST_IDS + CONTAINER_IDS + VPN_IDS
-    )
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
     checks = by_id(report)
     assert checks["config.file"] == {
         "id": "config.file",
@@ -275,7 +282,7 @@ def test_doctor_migrates_the_stage1_jar_and_reports_legacy(docker, doctor_paths,
     before = doctor_paths["jar"].read_bytes()
     status, report, err = run_json(capsys, doctor_paths)
     assert (status, err) == (0, "")
-    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS + VPN_IDS
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
     assert cookie_rows(report) == [
         {"id": "cookies.jar", "status": "ok", "summary": "source legacy: 2 cookies (0 expired)"},
         {"id": "cookies.instagram", "status": "ok", "summary": "instagram: session cookie present"},
@@ -337,7 +344,7 @@ def test_a_damaged_store_fails_the_jar_row_and_the_report_continues(docker, doct
     registry.write_text("{")
     status, report, err = run_json(capsys, doctor_paths)
     assert (status, err, report["ok"]) == (1, "", False)
-    assert [check["id"] for check in report["checks"]] == HOST_IDS + CONTAINER_IDS + VPN_IDS
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
     assert cookie_rows(report)[:3] == [
         {"id": "cookies.jar", "status": "fail",
          "summary": f"{registry}: invalid registry JSON; repair the source store or retry the operation",
@@ -434,6 +441,92 @@ def test_stopped_container_fails_with_dlx_up(docker, doctor_paths, capsys):
     }
 
 
+# --- worker.running (Persistent worker and jobs §8; DEC-22 as amended, DEC-53)
+
+NOT_ANSWERING = {"id": WORKER_ID, "status": "fail", "summary": "worker not answering", "fix": "dlx restart"}
+
+
+def test_a_running_worker_is_ok_with_its_counts(docker, doctor_paths, capsys):
+    docker.worker = (0, '{"version":1,"running":3,"queued":4}\n')
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 0
+    assert by_id(report)[WORKER_ID] == {
+        "id": WORKER_ID, "status": "ok", "summary": "worker running (3 running, 4 queued)",
+    }
+
+
+@pytest.mark.parametrize("code", [126, 127])
+def test_an_image_without_the_worker_fails_with_build_then_restart(docker, doctor_paths, capsys, code):
+    docker.worker = (code, "")
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 1 and report["ok"] is False
+    assert by_id(report)[WORKER_ID] == {
+        "id": WORKER_ID, "status": "fail", "summary": "the running image has no worker",
+        "fix": "dlx build, then dlx restart",
+    }
+
+
+@pytest.mark.parametrize("result", [
+    (1, '{"version":1,"error":"unexpected"}\n'),
+    (1, '{"version":1,"running":0,"queued":0}\n'),
+    (2, '{"version":1,"running":0,"queued":0}\n'),
+    (3, '{"version":1,"running":0,"queued":0}\n'),
+    (2, ""),
+    (3, ""),
+    (0, ""),
+    (0, "not json\n"),
+    (0, '{"version":1,"running":0,"queued":0}\n{"version":1,"running":0,"queued":0}\n'),
+    (0, '{"version":1,"running":0,"running":0,"queued":0}\n'),
+    (0, '{"version":1,"running":NaN,"queued":0}\n'),
+    (0, '{"version":2,"running":0,"queued":0}\n'),
+    (0, '{"version":1,"running":0,"queued":0,"x":"\ufffd\ufffd'),
+    (0, '{"version":1,"error":"invalid request"}\n'),
+    (0, '{"version":1,"running":true,"queued":0}\n'),
+    (0, '{"version":1,"running":-1,"queued":0}\n'),
+    (0, '{"version":1,"running":1.0,"queued":0}\n'),
+    (0, '{"version":1,"queued":0}\n'),
+    (0, '{"version":1,"running":0}\n'),
+    (0, '{"version":1,"running":0,"queued":"0"}\n'),
+])
+def test_anything_else_is_not_answering_with_restart(docker, doctor_paths, capsys, result):
+    docker.worker = result
+    status, report, _ = run_json(capsys, doctor_paths)
+    assert status == 1
+    assert by_id(report)[WORKER_ID] == NOT_ANSWERING
+
+
+def test_an_os_error_running_compose_is_not_answering(docker, doctor_paths, capsys):
+    docker.worker = PermissionError(13, "Permission denied")
+    status, report, err = run_json(capsys, doctor_paths)
+    assert (status, err) == (1, "")
+    assert by_id(report)[WORKER_ID] == NOT_ANSWERING
+
+
+def test_the_worker_row_skips_without_docker_or_the_container(docker, doctor_paths, capsys):
+    docker.daemon = (1, "")
+    report = run_json(capsys, doctor_paths)[1]
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
+    assert by_id(report)[WORKER_ID] == {
+        "id": WORKER_ID, "status": "skip", "summary": "Docker daemon not reachable",
+    }
+    docker.daemon, docker.running = Docker.daemon, (0, "")
+    report = run_json(capsys, doctor_paths)[1]
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
+    assert by_id(report)[WORKER_ID] == {
+        "id": WORKER_ID, "status": "skip", "summary": "container not running",
+    }
+    assert not any(call[-2:] == list(WORKER_STATUS) for call, _ in docker.calls)
+
+
+def test_the_worker_row_follows_container_running_in_the_human_view(docker, doctor_paths, capsys):
+    args = argv(doctor_paths)
+    args.remove("--json")
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert ("  ✓ container running (project downloadinux)\n"
+            "  ✓ worker running (0 running, 0 queued)\n") in out
+
+
 WRITE_PROBE = (
     "sh", "-c",
     'f=$(mktemp -p "$1" .downloadinux-doctor.XXXXXX 2>/dev/null) && rm -f "$f"',
@@ -457,6 +550,7 @@ def test_every_container_check_uses_its_whole_pinned_compose_argv(
         "exec", "-T", "-u", "dl", "downloadinux",
     ]
     programs = [
+        [*WORKER_STATUS],
         ["mountpoint", "-q", "/downloads"], [*WRITE_PROBE, "/downloads"],
         ["mountpoint", "-q", "/config"], ["test", "-w", "/config"],
         ["mountpoint", "-q", "/state"], [*WRITE_PROBE, "/state"],
@@ -504,9 +598,7 @@ def test_config_not_a_mount_fails_then_skips_its_readonly_probe(
         "id": "mount.config.readonly", "status": "skip",
         "summary": "/config is not a mount point",
     }
-    assert [check["id"] for check in report["checks"]] == (
-        HOST_IDS + CONTAINER_IDS + VPN_IDS
-    )
+    assert [check["id"] for check in report["checks"]] == ALL_IDS
     programs = [compose_args(call)[5:] for call, _ in docker.calls[2:]]
     assert ["test", "-w", "/config"] not in programs
     assert [*WRITE_PROBE, "/state"] in programs

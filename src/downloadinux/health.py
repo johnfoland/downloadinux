@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from downloadinux import (
-    compose, cookie_store, cookie_writer, cookiejar, credentials, nordvpn_output,
+    compose, cookie_store, cookie_writer, cookiejar, credentials, host_worker, nordvpn_output,
 )
 from downloadinux.errors import DownloadinuxError
 from downloadinux.mounts import mounts
@@ -253,6 +253,36 @@ def _container_capture(
         )
     except OSError:
         return 1, ""
+
+
+def _worker_running(
+    invocation: compose.Invocation | None,
+    capture: compose.Capture,
+    docker: Check,
+    running: Check,
+) -> Check:
+    """`worker.running` (Persistent worker and jobs §8; DEC-22 as amended,
+    DEC-53): `downloadinux-worker status` as a container check, its output
+    judged by the host's shared reply rule, with §8's texts."""
+    if docker.status is not Status.OK:
+        return _check("worker.running", Status.SKIP, "Docker daemon not reachable")
+    if running.status is not Status.OK or invocation is None:
+        return _check("worker.running", Status.SKIP, "container not running")
+    status, output = _container_capture(
+        invocation, [host_worker.PROGRAM, "status"], capture
+    )
+    if status in (126, 127):
+        return _check(
+            "worker.running", Status.FAIL, "the running image has no worker",
+            "dlx build, then dlx restart",
+        )
+    reply = host_worker.reply(output) if status == 0 else None
+    counts = None if reply is None or "error" in reply else (reply.get("running"), reply.get("queued"))
+    if counts is not None and all(type(count) is int and count >= 0 for count in counts):
+        return _check(
+            "worker.running", Status.OK, f"worker running ({counts[0]} running, {counts[1]} queued)"
+        )
+    return _check("worker.running", Status.FAIL, "worker not answering", "dlx restart")
 
 
 def _container_checks(
@@ -528,6 +558,7 @@ def inspect(
             None if running else "dlx up",
         )
     checks.append(running_check)
+    checks.append(_worker_running(invocation, run_capture, docker, running_check))
     checks += _container_checks(settings, invocation, run_capture, running_check)
     checks += _vpn_checks(settings, invocation, run_capture, running_check)
     return Result(tuple(checks))

@@ -12,9 +12,13 @@ all use named sources with a default, each download or batch runs through the
 container's `downloadinux-runner` on its own private copy of the pinned
 source revision (or anonymously), and `--user-agent` overrides the setting
 for one run. Stage 2 is implemented, with its completion evidence in
-[PR #63](https://github.com/johnfoland/downloadinux/pull/63). The [planning documents](docs/README.md) describe the
-proposed worker and Python + Textual TUI (Stages 3–4); batch runs still use
-tmux until then. This README covers what is implemented.
+[PR #63](https://github.com/johnfoland/downloadinux/pull/63). Stage 3's
+persistent worker now runs as the container's main process
+([The worker](#the-worker)), but nothing hands it downloads yet: `dl` still
+runs in the foreground and batches still use tmux. The
+[planning documents](docs/README.md) describe the rest of the worker, its
+`jobs` commands, and the Python + Textual TUI (Stages 3–4). This README
+covers what is implemented.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, run from the host with `just dl` and `just batch`. The one thing that had to
@@ -234,6 +238,7 @@ downloadinux
   ✓ explicit user-agent set
   ✓ Docker 27.5.1
   ✓ container running (project downloadinux)
+  ✓ worker running (0 running, 0 queued)
   ✓ /downloads is a mount point
   ✓ dl (uid 501) can write /downloads
   ✓ /config is a mount point
@@ -265,6 +270,12 @@ the rest of the report still runs. A source with no cookies warns. A site row
 warns when its session cookie is absent or only expired; none can tell
 whether the site still accepts an unexpired one. The user-agent row checks
 only that `downloads.user_agent` is a nonempty single line.
+
+The worker row asks the container's worker for its job counts. `the running
+image has no worker` means the container predates it: `dlx build`, then
+`dlx restart`. `worker not answering` covers everything else, including a
+worker still starting just after `up` or `restart`; its log is in
+`dlx compose -- logs downloadinux`.
 
 ---
 
@@ -683,6 +694,24 @@ without recursively changing retained data or following a final symlink.
 Installing this entrypoint repair requires `just build && just up`, because
 the script is copied into the image.
 
+## The worker
+
+The container's main process is `downloadinux-worker`, run as `dl` under
+Docker's init. It keeps job history in `paths.state/jobs/` (a SQLite
+database and one log per attempt, private to your user) and listens on a
+socket inside the container, never on a mount or a port. Only one worker
+uses a state directory at a time: a second one, say from another
+configuration sharing `paths.state`, waits for it and says so in its log.
+
+Nothing submits jobs to it yet: `dl` and `batch` work as described under
+[Daily use](#daily-use), and the `jobs` commands are still to come. What it
+already changes is stopping. `docker stop` and `dlx down` stop it
+gracefully: it stops starting jobs, signals running downloads, waits up to
+20 seconds for them, and records any still running as interrupted, all
+within Compose's 30-second grace period. A job queued at the time runs
+after the next start. Recreating the container (`dlx restart`) interrupts
+running jobs the same way.
+
 ## Mounted config and installed shell files
 
 The checkout's `presets/` is mounted read-only at `/config`, so host edits to
@@ -946,6 +975,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── config-value.sh           # recipes read config show --json
 │   ├── downloadinux-runner       # the image's cookie runner entry point (not yet called)
+│   ├── downloadinux-worker       # the image's worker entry point: its command and clients
 │   ├── setup.sh                  # `just setup`'s settings and token steps
 │   ├── smoke.sh                  # credential-free container contract test
 │   └── vpn.sh                    # the `vpn` helper
@@ -957,8 +987,10 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
 │   ├── cookie_writer.py          # atomic publication and locked legacy migration
+│   ├── host_worker.py            # the host's one call to the worker's clients
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
-│   └── servers.py                # ranks NordVPN servers by city for `dlx servers`
+│   ├── servers.py                # ranks NordVPN servers by city for `dlx servers`
+│   └── worker.py                 # container worker: job service and its clients
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 │   └── fixtures/runner-smoke/    # stub downloaders and the in-image runner check
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
