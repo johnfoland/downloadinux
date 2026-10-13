@@ -2074,8 +2074,11 @@ distinct URL in the request (exact string equality, as the store collapses
 repeats), 34 bytes and the length of the URL's JSON string in the output
 form, quotes included. When the bound exceeds 32 MiB, the worker refuses
 with `submission too large: its reply would exceed 32 MiB`, committing
-nothing. The reply is never larger than the bound, so a committed
-submission's reply always fits.
+nothing. `cancel` and `retry` bound theirs the same way, before the store
+runs: 128 bytes plus, per distinct ID, 72 bytes for `cancel` and 100 for
+`retry`, refusing with `too many job IDs: the reply would exceed 32 MiB`.
+No reply is larger than its bound, so a committed operation's reply always
+fits.
 
 #### Host invocation and reply handling (DEC-53)
 

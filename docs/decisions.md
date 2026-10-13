@@ -1259,8 +1259,9 @@ over 32 MiB rather than truncating it. `cancel` and `retry` reply with one
 outcome per ID, so the host decides the exit status. `logs` sends one short
 request per chunk of at most 1 MiB, base64-encoded, and, when following,
 polls every half second until the attempt has ended and nothing is left;
-it ends at once when its standard input closes. A submission whose reply
-could exceed 32 MiB is refused before it commits (issue #79).
+it ends at once when its standard input closes. A submission, cancel, or
+retry whose reply could exceed 32 MiB is refused before it commits (issue
+#79).
 
 Letting the client open the log file itself was rejected: the worker is the
 only process that opens anything under the job store, which keeps the
