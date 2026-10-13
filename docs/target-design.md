@@ -2150,6 +2150,13 @@ or the caller stopping), the call closes the follower's standard input,
 then, if the Compose process is still running, sends it `SIGTERM`, waits up
 to 5 seconds, and if need be kills it and waits.
 
+Compose v5.1.3 writes a blank line to its inherited standard error when
+ended with `SIGTERM` (exit 130). A detach may therefore show that blank
+line before the CLI's required detach message; the smoke assertion allows
+empty lines beside that message. Closing standard input alone ends
+Compose with status 0 and no such output, but the stopping sequence above
+still applies.
+
 ### 2. Job store and records
 
 The store is `/state/jobs/` (`paths.state/jobs/` on the host), created by the
