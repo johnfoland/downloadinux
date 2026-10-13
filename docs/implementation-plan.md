@@ -153,8 +153,8 @@ the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
 in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
 `watch` do not use the worker yet.
 Target design §6's host submission and byte-preserving queue import
-operations (DEC-56) are settled as additive preparation for that cutover;
-they are not implemented yet.
+operations (DEC-56) are implemented as additive preparation in PR #92;
+the coordinated command cutover still awaits implementation.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job

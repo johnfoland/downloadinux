@@ -27,7 +27,8 @@ period, drops a client being served on a stop (DEC-52), and adds the
 host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
 adds the worker's remaining clients, `list`, `cancel`, `retry`, and `logs`,
 with their reply bounds (DEC-54). The host's streaming call, job
-operations, and `jobs` commands (DEC-55) are implemented in PR #90. The cutover
+operations, and `jobs` commands (DEC-55) are implemented in PR #90. PR #92
+adds reusable host submissions and byte-preserving queue imports (DEC-56). The cutover
 remains unimplemented, so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
@@ -1718,8 +1719,10 @@ in PR #84; the gate's smoke test runs the worker in the built image. The
 are implemented in PR #87. The host's streaming call (§1 *Streaming*), its
 job operations in `downloadinux.host_jobs`, and the `jobs` commands with
 `just jobs` (§6, DEC-55) are implemented in PR #90, and the gate's smoke
-test drives them against the worker in the built image. The cutover (§7) remains
-unimplemented: nothing on the host submits jobs yet. Until the
+test drives them against the worker in the built image. PR #92 implements
+§6's additive `host_downloads` submission and `queue_file` import libraries
+(DEC-56), tested against the real worker and client. The cutover (§7) remains
+unimplemented: the download fronts do not submit jobs yet. Until the
 cutover, batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
 the foreground. Do not mark this design implemented merely because its
@@ -2745,7 +2748,7 @@ The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 
 #### Host submission and queue import (DEC-56)
 
-Settled preparation for §7's cutover; not yet implemented. The reusable host
+Implemented as additive preparation for §7's cutover in PR #92. The reusable host
 module is `downloadinux.host_downloads`, with `submit_download` and
 `import_batch` operations. They return data for the CLI and Stage 4 TUI;
 they print nothing and do not follow jobs. They ship additively before the

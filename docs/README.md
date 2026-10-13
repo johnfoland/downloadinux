@@ -18,7 +18,9 @@ retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage
 is implemented. Stage 3, a persistent worker and jobs in place of tmux, is
 settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
 (DEC-41 to DEC-56). Host submission and byte-preserving queue import are
-settled as additive preparation (DEC-56), not implemented yet.
+implemented as additive preparation (DEC-56) in
+[PR #92](https://github.com/johnfoland/downloadinux/pull/92); the command
+cutover still awaits implementation.
 Implemented so far: the
 `downloadinux.job_store` library (private versioned SQLite ownership, atomic
 pinned submissions, exact active duplicates, typed record reads, and the
