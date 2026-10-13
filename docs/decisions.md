@@ -1366,3 +1366,46 @@ uncertainty. The existing active-duplicate rule remains the rerun boundary.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §6,
 "Host submission and queue import". Added on 2026-10-13 for issue #64;
 fills host import details without changing DEC-31, DEC-44, or DEC-55.
+
+## DEC-57: Following polls through a client, preserves attempt boundaries, and separates notices from log bytes (2026-10)
+
+A standard-library worker `follow` client selects fixed IDs in request order
+or the current batch lane, then uses short `show`/`logs` requests to emit
+selected-job, changed-wait, raw-log, finished-attempt, and done events. A
+read-only `lane` request picks running work first, else the real internal
+queue head; immediate work is excluded. Each selected attempt starts reading
+at byte zero and ends only after a terminal record observed before an empty
+ended log chunk. EOF on the client's lifetime input detaches as `logs` does.
+A retry observed before the selected attempt ends fails explicitly, since
+the store keeps earlier logs but no earlier result record. Later unselected
+jobs use the attempt current when reached, and a lane accepts new work until
+it is observed idle. The target design pins usage, shapes, order, limits,
+validation, and failure texts. Record validation is shared through the
+standard-library `job_protocol` module without changing existing acceptance.
+
+The host's reusable `host_follow` operations validate that sequence through
+`host_worker.stream` and yield typed events without printing or mutating work.
+Fixed-job following opens one single-ID client at a time and combines their
+done events, keeping large ID lists out of process arguments. Closing the
+generator completes the stream's existing cleanup, including signals during
+cleanup entered for other failures. At the coordinated cutover, logs remain
+raw stdout bytes; job headers and observed wait changes go to stderr with
+control characters escaped. The design also pins detached IDs, idle-lane and
+detach reports, and the existing single/multiple-job exit rules. This
+preparation switches no front and retires nothing.
+
+Holding a service connection while following was rejected because the
+worker serves requests serially and must schedule between them (DEC-50).
+Host-side polling through a new Compose invocation for every half-second
+observation was rejected because one container client can make those short
+requests. Guessing lane order from timestamps or IDs was rejected because
+retries and clock changes make them differ from queue order (DEC-45/46).
+Mixing headers into raw log stdout was rejected because logs can contain any
+bytes or lack a final newline. Silently following a retried attempt was
+rejected because it changes the selected log and loses the earlier outcome.
+These fill the following details DEC-44 delegated; no settled command,
+scheduling, store, or retirement rule changes.
+
+*Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
+“Multi-job and lane following client”, and §6, “Host following operations and
+later front output”. Added on 2026-10-14 for issue #64.

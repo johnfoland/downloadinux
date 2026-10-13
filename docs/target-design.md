@@ -16,7 +16,7 @@ setup, and doctor use named sources; the container's download shortcuts,
 completion evidence (D5), so Stage 2 is implemented. Passages
 the cutover replaced are marked as history where they stand.
 Stage 3's persistent worker and jobs are settled (*Persistent worker and
-jobs*, DEC-41 to DEC-56, issue #64). Implemented: the job store (§2's
+jobs*, DEC-41 to DEC-57, issue #64). Implemented: the job store (§2's
 foundation and §5's store lifecycle operations), §4's scheduler passes, VPN
 probe, and throttle seam helper (DEC-47), §5's runner execution: launch,
 attempt logs, exit polls, cancel signals, and the shutdown wait (DEC-48,
@@ -25,7 +25,7 @@ as the module `downloadinux.worker` (DEC-50, DEC-51; PR #78). PR #84
 packages it as the image's command under `init` with the 30-second grace
 period, drops a client being served on a stop (DEC-52), and adds the
 host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
-adds the worker's remaining clients, `list`, `cancel`, `retry`, and `logs`,
+adds the worker's job clients, `list`, `cancel`, `retry`, and `logs`,
 with their reply bounds (DEC-54). The host's streaming call, job
 operations, and `jobs` commands (DEC-55) are implemented in PR #90. PR #92
 adds reusable host submissions and byte-preserving queue imports (DEC-56). The cutover
@@ -1700,7 +1700,7 @@ mark this design implemented merely because its planning PR merged.
 ## Persistent worker and jobs
 
 Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-56). Implemented: the job store, with §2's foundation (private versioned storage
+(DEC-41 to DEC-57). Implemented: the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
 waits, ends and lane deadlines, cancel, retry, and interrupted marks),
@@ -1891,8 +1891,9 @@ received while stopping change nothing.
 and reachable in the container as `downloadinux-worker` (PR #84). `downloadinux.worker.main` also holds the client subcommands. This
 subsection pins `status`, `submit`, and `show`;
 the others §6's commands need (listing, cancel, retry, logs, and following)
-are pinned, and implemented in PR #87, in "Job clients: listing, cancel,
-retry, and logs" below (DEC-54).
+are pinned below: listing, cancel, retry, and logs are implemented in
+PR #87 (DEC-54); multi-job and lane following is settled in DEC-57 and
+awaits implementation.
 
 | Subcommand | Input | Success reply |
 | --- | --- | --- |
@@ -2094,6 +2095,103 @@ runs: 128 bytes plus, per distinct ID, 72 bytes for `cancel` and 100 for
 `retry`, refusing with `too many job IDs: the reply would exceed 32 MiB`.
 No reply is larger than its bound, so a committed operation's reply always
 fits.
+
+#### Multi-job and lane following client (DEC-57)
+
+Settled as additive preparation for §7's cutover, not yet implemented.
+`downloadinux-worker follow ID…` follows distinct IDs in first-occurrence
+argument order, including active duplicates from a submission. `follow
+--lane PRESET` follows a canonical `video` or `gallery` lane to idle. These
+are client modes, not long-lived service requests: scheduling keeps running
+between the client's short requests. The client imports only the standard
+library and opens no store or log itself.
+
+*Usage.* Add `follow` at the end of both subcommand lists in DEC-54's usage
+reasons, as `…, logs, or follow`. Scan words left to right. A word beginning
+with `-` other than `--lane` is `follow: unknown option '<word>'`; repeated
+`--lane` is `follow: --lane given more than once`; a last `--lane` is
+`follow: --lane needs a value`; otherwise its next word is its value,
+whatever that word is. After scanning: a lane with any operands is
+`follow: --lane cannot be combined with job IDs`; an invalid lane value is
+`follow: lane must be video or gallery`; no lane and no operands is
+`follow: at least one job ID is required`; invalid IDs use `follow: job ID
+must be a positive integer`, with DEC-51's ASCII/range rule. No socket is
+contacted on a usage error. The host resolves preset aliases before calling
+this client. IDs here are the accepted references; the host never passes URLs.
+
+*Lane head request.* The new socket operation `lane` takes exactly
+`{"preset":PRESET}`, a canonical preset, else `invalid request`. It returns
+`{"version":1,"job":RECORD}` or `{"version":1,"job":null}` when idle.
+On the service's owning thread, select the lane's running job first;
+otherwise use that lane's queued head from `JobStore.queue_heads`, which
+uses internal queue order, never `queued_at` or job ID (§2, DEC-45/46).
+Ignore immediate jobs of the same preset. A running-only lane is not idle:
+`queue_heads` omits queues with no queued records, so inspect the store's
+running records as well. This read changes no job or lane data and never waits for a
+job. It has the existing one-request bounds and error mapping.
+
+*Following algorithm.* For fixed IDs, select the next ID with `show`;
+unknown IDs use its existing error reply. For a lane, select with `lane`;
+null ends the follow. Keep a selected job until it ends, even if it was
+selected while queued and is subsequently cancelled. Capture its current
+attempt on selection and emit `job` below once. Use that selected record
+for the first iteration; later iterations read it with `show`, checking
+its ID and captured attempt. Observe its queued wait and read `logs` for that attempt from an offset initially 0. Check record
+and log reply shapes before using them. Record validation is shared with
+DEC-55's host operations through a standard-library `downloadinux.job_protocol`
+module; extracting the existing predicate does not change its acceptance
+rule. Its public helpers are `record(value) -> bool`, `wait(value) -> bool`,
+and `strict_base64(data) -> bytes | None`, extracted with their needed
+scalar helpers from `host_jobs`; invalid base64 returns null as before.
+Use the existing worker log-chunk shape check and that shared decoder.
+A log chunk must name the captured attempt and advance the supplied offset
+by exactly the decoded byte count, at most 1 MiB, without exceeding DEC-51's
+largest ID. Nonempty data emits `log`; empty data emits nothing.
+
+A terminal record observed **before** a log read, followed by an empty
+chunk with `ended=true`, emits `end` with that record; this drains all bytes
+written before completion. A terminal record followed by data keeps draining.
+A queued or running record never ends the follow solely because its log
+is empty. After `end`, move to the next fixed ID or query `lane` again, so
+newly submitted lane work joins the watch until an idle observation. Each
+empty read without completion waits half a second; nonempty chunks drain
+without that wait. Before every request and during that wait, watch standard
+input exactly as the existing `logs --follow` client does (DEC-54): EOF or
+an unwatchable descriptor exits 0 without another event, including `done`.
+Every request has its own 30-second allowance; no connection is held across
+polls. Reconnecting begins at byte 0 of each selected attempt.
+
+If a selected job's attempt changes before its `end`, print the error reply
+`job I was retried while following; inspect with dlx jobs show I` and exit 1.
+Never splice two attempts' bytes or guess the earlier attempt's result:
+§2 retains its log but no earlier result record. Jobs not yet selected use
+their current attempt when reached. Once a fixed job has ended, a later
+retry does not reopen it in that follow. Lane monitoring observes the current
+lane; it does not replay jobs that finished before selection.
+
+*Events.* Every line has exactly the keys shown, in that order, under
+DEC-51's output form, flushed immediately:
+
+| Event | Object |
+| --- | --- |
+| Selected job | `{"version":1,"event":"job","job":RECORD}` |
+| Wait changed | `{"version":1,"event":"wait","id":I,"wait":WAIT}` |
+| Log bytes | `{"version":1,"event":"log","id":I,"attempt":N,"offset":O,"data":D}` |
+| Attempt finished and drained | `{"version":1,"event":"end","job":RECORD}` |
+| All fixed IDs ended, or lane observed idle | `{"version":1,"event":"done"}` |
+
+`WAIT` is §2's wait object or null. For the selected job, compare waits to
+an initially null value, emitting only changes; a non-queued record has
+null wait. Thus an initial null produces no wait event, and leaving a wait
+emits null, including at completion. `D` is nonempty strict padded base64;
+`O` is the cumulative byte count. One `job` starts each selected attempt;
+its wait/log events precede exactly one `end`, then the next job or `done`.
+No event follows `done`, and it is emitted once, even on an initially idle
+lane. Fixed IDs produce one job/end pair each in request order; a lane may
+select the same job again after a later retry. A refusal prints the usual
+error reply last and exits 1; malformed/inconsistent replies or unreachable
+requests exit 3 with DEC-51's detail. Prior events stay printed. An OS failure
+writing output exits 1 without a traceback, as `logs` does.
 
 #### Host invocation and reply handling (DEC-53)
 
@@ -2754,7 +2852,7 @@ module is `downloadinux.host_downloads`, with `submit_download` and
 they print nothing and do not follow jobs. They ship additively before the
 cutover: until §7 switches the commands together, `dl`, `batch`, and `watch`
 keep their existing routes. Following and its remaining texts are pinned
-before the later implementation that needs them.
+in DEC-57 below before their implementation.
 
 *Submission.* Both operations take the existing configuration, overrides,
 host, and selection arguments; `submit_download` takes a preset and URLs,
@@ -2857,6 +2955,92 @@ otherwise print `Queued N jobs; skipped M active duplicates in PRESET lane.`
 and `Follow with: dlx watch PRESET`, each on standard output, exit 0. Human
 paths use DEC-55's control-character escaping. These operations themselves
 produce no output; the batch front renders their result at the cutover.
+
+#### Host following operations and later front output (DEC-57)
+
+Settled as additive preparation, not yet implemented. `downloadinux.host_follow`
+exposes `follow_jobs(ids, config=None, overrides=(), host=Host(), *,
+capture=None, spawn=None)` and `follow_lane(preset="video", config=None,
+overrides=(), host=Host(), *, capture=None, spawn=None)`. Each loads settings
+and uses `host_worker.stream` with DEC-57's client; aliases are resolved for
+the lane. `follow_jobs` collapses repeated IDs to their first occurrence and
+opens one `follow ID` stream at a time, in that order. It validates and
+consumes each child's `done` without yielding it, then yields one
+`FollowDone` after every ID; `follow_lane` uses one `follow --lane PRESET`
+stream and yields its done. This keeps a large submission's ID list out of
+the process argument-size limit without changing its ordering or splitting
+its committed submission. Fixed IDs must be a nonempty ordered sequence
+of integers in DEC-51's range, booleans excluded; invalid input is the
+operation error `follow IDs must be a nonempty ordered sequence of positive
+integers`, before invoking Compose. They submit, pin, cancel, retry, and
+open no host state or log, and print nothing. Closing either generator closes its inner stream, under
+DEC-55's complete cleanup, including a first signal during cleanup entered
+for bad output, a consumer's write failure, or early close. No new signal
+handlers are installed by these operations.
+
+Validate exact event keys/types, records with the shared `job_protocol`
+predicate, ID/attempt ranges, strict base64, decoded size and cumulative
+offsets, and the entire event sequence in §1. A fixed stream must select
+exactly the distinct requested IDs in order. A lane's selected record must
+belong to that canonical lane and be queued or running. Wait/log IDs and
+attempts must belong to the current job, redundant waits are refused, and
+an end has its selected ID/attempt and terminal state; its preset, URL,
+lane, source, revision, and user-agent match the selection. Its exit status
+is null or an integer from 0 to 255. A normal stream requires a final `done`
+and no events after it. Buffer that event until the inner stream has
+exhausted with successful exit and completed cleanup, then yield it; a
+consumer stopping on `FollowDone` must not skip the child's exit check.
+EOF without `done` is `the worker went away; see dlx jobs list`. A wrong shape, correspondence, offset, or order is
+`downloadinux-worker follow printed unexpected output`. Other failures use
+the streaming call's mapping. Across fixed-job streams, once any event has
+been yielded, a later not-running, no-worker, or not-answering failure is
+`the worker went away; see dlx jobs list`; a genuine worker refusal keeps
+its reason. These checks add no new host submission rule.
+
+Yield frozen dataclasses `FollowJob(job: dict)`, `FollowWait(id: int,
+wait: dict | None)`, `FollowLog(id: int, attempt: int, data: bytes)`,
+`FollowEnd(job: dict)`, and `FollowDone()`, with independent record/wait
+objects. Only log data is decoded; records remain the checked public values.
+The CLI and TUI can render the same events. `download_status(records)`
+returns 0 when all nonempty final records succeeded; for exactly one that
+did not, its non-null nonzero exit status, otherwise 1. A recorded zero on
+a nonsuccess state still returns 1. Multi-job nonsuccess returns 1, regardless
+of any one runner's code. An empty list returns 1, avoiding false success.
+
+*Output at the coordinated cutover.* These texts are pinned now and rendered
+only when §7 switches the fronts. `dl` uses DEC-56's reference order, and
+`--detach` prints `Jobs: I J …` on standard output, the distinct IDs in that
+order, then exits 0 without opening a follow stream. `--detach` is a boolean
+option allowed before or after the positionals, under DEC-40's placement
+rule. `dl` without it calls `follow_jobs` and uses `download_status` on the
+end records; `watch` calls `follow_lane` and exits 0 on `done`, even if a
+followed job failed. An initially idle lane prints `No queued or running
+jobs in PRESET lane.` on standard output. A watch that followed work prints
+no closing summary. `watch` keeps §6's preset/default/usage rules.
+
+For either front, `FollowJob` prints `Job I: URL` on standard error before
+its bytes. `FollowLog` writes its bytes unchanged to standard output's byte
+stream and flushes. `FollowWait` prints `job I waiting for VPN`, `job I
+waiting for throttle until T`, or `job I resumed` (null) on standard error.
+Separating notices from raw stdout preserves even an unterminated or binary
+log without adding a newline to it. Human interpolated strings use DEC-55's
+control-character escaping. Wait notices describe observed changes; no
+poll can report a wait that begins and ends entirely between observations.
+
+While following, the three detach signals use DEC-55's handling/restoration
+and 128+N status; later signals during ending are ignored. For `dl`, track
+unfinished IDs as all references minus received end events. On detach print
+one line per remaining ID, in reference order, with `jobs logs --follow`'s
+exact detach text from DEC-55. If none remain, print `detached; all followed
+jobs have ended; inspect with dlx jobs list`. For `watch`, print `detached
+from PRESET lane, which carries on in the worker; follow it with dlx watch
+PRESET or inspect and cancel jobs with dlx jobs list and dlx jobs cancel ID`.
+No worker query or mutation is attempted after the signal. These observations
+may be stale by the time the user reads them. Preserve inherited Compose
+stderr alongside the required messages (§1 *Streaming*); do not assert that
+the application owns that entire stream. A failed output write is the usual
+operation error, exit 1, after closing the follow generator. No front is
+switched by the additive following preparation.
 
 #### Job operations, output, and exit statuses (DEC-55)
 
