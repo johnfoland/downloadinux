@@ -1320,3 +1320,13 @@ container side would keep following until the job ended.
 operations, output, and exit statuses". Added on 2026-10-13 for issue #64;
 fills the host shapes and texts §6 leaves to planning without changing
 DEC-44 or DEC-53.
+Clarified on 2026-10-13 before the chunk that builds it: the streaming call
+starts Compose in its own process group, so a terminal's Ctrl-C reaches
+only the CLI and the stream's ending is the one way Compose stops
+(checked against Compose v5.1.3: closing the pipe ends `exec -T` with
+status 0 once the client sees end of file, and `SIGTERM` ends it at once
+with 130); a further signal during that ending is ignored. It also pins
+`submit`'s reply check, what strict base64 means, and that every
+interpolated reply string and path is escaped in human output, including
+the user-agent and timestamps, with `-` for each null field in `jobs
+show`.
