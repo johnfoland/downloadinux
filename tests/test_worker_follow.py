@@ -344,3 +344,72 @@ def test_oversize_chunk_is_refused(monkeypatch, capsysbinary):
     controlled(monkeypatch, [shown(), log(b'x' * (worker.CHUNK + 1))])
     assert worker.follow(Path('/unused'), [1], None) == 3
     assert [v['event'] for v in events(capsysbinary)[0]] == ['job']
+
+
+def test_real_selected_retry_is_an_explicit_failure(rig, monkeypatch):
+    import test_worker
+    hook = '''
+if sys.argv[4:5] == ['serve']:
+    original = worker._Service._logs
+    def retry_selected(self, args):
+        reply = original(self, args)
+        if not getattr(self, 'retried_for_test', False):
+            self.retried_for_test = True
+            self.store.cancel([1])
+            self.store.retry([(1, None, None, 'UA')])
+        return reply
+    worker._Service._logs = retry_selected
+'''
+    monkeypatch.setattr(test_worker, 'LAUNCHER', test_worker.LAUNCHER.replace('service = ', hook + '\nservice = ', 1))
+    with rig.open() as store:
+        store.submit('video', ['selected'], lane='video', user_agent=UA)
+    service = rig.start(env=rig.env(DL_VPN='on')).listening()
+    status, out, err = rig.finish(rig.spawn('follow', '1'))
+    assert (status, err) == (1, b'')
+    values = [json.loads(line) for line in out.splitlines()]
+    assert values[0]['event'] == 'job' and values[0]['job']['attempt'] == 1
+    assert values[-1] == dict(version=1, error='job 1 was retried while following; inspect with dlx jobs show 1')
+    assert not any(v.get('event') in ('end', 'done') for v in values)
+    assert service.stop() == 0
+
+
+def test_real_later_unselected_retry_uses_the_new_attempt(rig, monkeypatch):
+    import test_worker
+    hook = '''
+if sys.argv[4:5] == ['serve']:
+    original = worker._Service._logs
+    def retry_later(self, args):
+        reply = original(self, args)
+        if not getattr(self, 'retried_for_test', False):
+            self.retried_for_test = True
+            self.store.retry([(2, None, None, 'UA')])
+        return reply
+    worker._Service._logs = retry_later
+'''
+    monkeypatch.setattr(test_worker, 'LAUNCHER', test_worker.LAUNCHER.replace('service = ', hook + '\nservice = ', 1))
+    with rig.open() as store:
+        store.submit('video', ['one', 'two'], lane='video', user_agent=UA)
+        store.cancel([1, 2])
+    service = rig.start(env=rig.env(DL_VPN='on')).listening()
+    process = rig.spawn('follow', '1', '2')
+    wait_for(lambda: b'"event":"job","job":{"id":2' in process.out.read_bytes())
+    assert rig.client('cancel', '2').returncode == 0
+    status, out, err = rig.finish(process)
+    assert (status, err) == (0, b'')
+    values = [json.loads(line) for line in out.splitlines()]
+    assert [(v['job']['id'], v['job']['attempt']) for v in values if v['event'] == 'job'] == [(1, 1), (2, 2)]
+    assert values[-1]['event'] == 'done'
+    assert service.stop() == 0
+
+
+def test_real_malformed_reply_and_unknown_id(rig):
+    from test_worker import FakeWorker
+    fake = FakeWorker(rig.socket, b'{"version":1,"job":{}}\n')
+    try:
+        status, out, err = rig.finish(rig.spawn('follow', '1'))
+        assert status == 3 and out == b'' and err.endswith(b'unexpected reply\n')
+    finally:
+        fake.close()
+    service = rig.start(env=rig.env(DL_VPN='off')).listening()
+    assert rig.finish(rig.spawn('follow', '99')) == (1, b'{"version":1,"error":"unknown job ID 99"}\n', b'')
+    assert service.stop() == 0

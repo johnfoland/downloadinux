@@ -28,7 +28,9 @@ host's worker call (DEC-53) and `doctor`'s `worker.running` (§8). PR #87
 adds the worker's job clients, `list`, `cancel`, `retry`, and `logs`,
 with their reply bounds (DEC-54). The host's streaming call, job
 operations, and `jobs` commands (DEC-55) are implemented in PR #90. PR #92
-adds reusable host submissions and byte-preserving queue imports (DEC-56). The cutover
+adds reusable host submissions and byte-preserving queue imports (DEC-56). PR #94
+adds the following client, shared record predicates, typed host following events,
+and download status reduction (DEC-57). The cutover
 remains unimplemented, so `dl` and batches still run as Stage 2 left them. Stage 4 remains
 proposed.
 
@@ -1721,7 +1723,10 @@ job operations in `downloadinux.host_jobs`, and the `jobs` commands with
 `just jobs` (§6, DEC-55) are implemented in PR #90, and the gate's smoke
 test drives them against the worker in the built image. PR #92 implements
 §6's additive `host_downloads` submission and `queue_file` import libraries
-(DEC-56), tested against the real worker and client. The cutover (§7) remains
+(DEC-56), tested against the real worker and client. PR #94 implements the
+additive following client and lane read, `job_protocol` shared validation, and
+`host_follow` typed events and status reduction (DEC-57), with real client,
+service, and cleanup-signal tests. The cutover (§7) remains
 unimplemented: the download fronts do not submit jobs yet. Until the
 cutover, batches run
 in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
@@ -1892,8 +1897,8 @@ and reachable in the container as `downloadinux-worker` (PR #84). `downloadinux.
 subsection pins `status`, `submit`, and `show`;
 the others §6's commands need (listing, cancel, retry, logs, and following)
 are pinned below: listing, cancel, retry, and logs are implemented in
-PR #87 (DEC-54); multi-job and lane following is settled in DEC-57 and
-awaits implementation.
+PR #87 (DEC-54); multi-job and lane following is implemented in
+PR #94 (DEC-57).
 
 | Subcommand | Input | Success reply |
 | --- | --- | --- |
@@ -2098,7 +2103,9 @@ fits.
 
 #### Multi-job and lane following client (DEC-57)
 
-Settled as additive preparation for §7's cutover, not yet implemented.
+Implemented in PR #94 as additive preparation for §7's cutover.
+The tests drive short requests against the real service and fixture runners,
+including the standard-library import boundary.
 `downloadinux-worker follow ID…` follows distinct IDs in first-occurrence
 argument order, including active duplicates from a submission. `follow
 --lane PRESET` follows a canonical `video` or `gallery` lane to idle. These
@@ -2243,7 +2250,10 @@ but the last, is `downloadinux-worker SUB printed unexpected output`. At the
 end of output it waits for the exit status. Status 0 after one or more
 lines, all success replies, ends the stream normally; status 1 whose last
 line was an error reply fails with its reason; any other pairing of 0 or 1
-with the lines, none included, is unexpected output. Any other status maps
+with the lines, none included, is unexpected output. For following, the caller
+classifies
+status-0 EOF without any replies as missing `done` (DEC-57), while all other
+exit and reply handling stays the same. Any other status maps
 as `call` maps it (126 or 127, 3, and the rest) when no line was accepted,
 and once a line was accepted is `the worker went away; see dlx jobs list`:
 the container stopped under it. However the stream ends, normally or early (a detach, a failure,
@@ -2958,7 +2968,8 @@ produce no output; the batch front renders their result at the cutover.
 
 #### Host following operations and later front output (DEC-57)
 
-Settled as additive preparation, not yet implemented. `downloadinux.host_follow`
+Implemented in PR #94 as additive preparation; the front output below
+remains pinned for the later cutover. `downloadinux.host_follow`
 exposes `follow_jobs(ids, config=None, overrides=(), host=Host(), *,
 capture=None, spawn=None)` and `follow_lane(preset="video", config=None,
 overrides=(), host=Host(), *, capture=None, spawn=None)`. Each loads settings
