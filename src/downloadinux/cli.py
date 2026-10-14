@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from downloadinux import (
-    cookie_selectors, cookie_store, health, host_follow, host_jobs, launch, migrate, operations, presets, servers, worker,
+    cookie_selectors, cookie_store, health, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, servers, worker,
 )
 from downloadinux.errors import DownloadinuxError, _Detached
 
@@ -35,6 +35,17 @@ class GlobalOptions:
 
     config: str | None
     overrides: tuple[str, ...]
+
+
+def _jobs_errors(handler):
+    """An operation error's reason may come from a reply: escape it."""
+    @functools.wraps(handler)
+    def run(args: argparse.Namespace, options: GlobalOptions) -> int:
+        try:
+            return handler(args, options)
+        except DownloadinuxError as error:
+            raise type(error)(escape(str(error))) from None
+    return run
 
 
 def _add_global_options(parser: argparse.ArgumentParser, level: int) -> None:
@@ -220,28 +231,26 @@ def build_parser() -> argparse.ArgumentParser:
         lifecycle.set_defaults(handler=_lifecycle)
 
     dl = commands.add_parser(
-        "dl",
-        help="download with a preset",
-        description="Run a preset's downloader in the container, with a private "
-        "copy of the pinned cookie source (or none) and the user-agent from the "
-        "settings. PRESET is video (v: yt-dlp) or gallery (gal, g: gallery-dl). "
+        "dl", help="submit downloads and follow their logs",
+        description="Submit one immediate worker job per URL, then follow their logs. "
+        "Ctrl-C detaches and leaves the jobs running; --detach returns their IDs without "
+        "following. PRESET is video (v: yt-dlp) or gallery (gal, g: gallery-dl). "
         "Without --cookie-source or --anonymous the cookie default applies. "
-        "Options go before PRESET or after the last URL.",
+        "Options go before PRESET, after it, or after the last URL.",
     )
     _add_global_options(dl, 1)
     _add_launch_options(dl)
+    dl.add_argument("--detach", action="store_true", help="print job IDs without following")
     dl.add_argument("preset", choices=list(presets.ALIASES), metavar="PRESET")
     dl.add_argument("urls", nargs="+", metavar="URL")
     dl.set_defaults(handler=_dl)
 
     batch = commands.add_parser(
-        "batch",
-        help="run a queue file in a detached tmux session",
-        description="Start the batch loop on a queue file under "
-        "paths.downloads in a detached tmux session in the container, with one "
-        "private copy of the pinned cookie source (or none) for the whole "
-        "batch. The queue defaults to dlmp4_queue (video) or dlgal_queue "
-        "(gallery) in paths.downloads. Options are dl's.",
+        "batch", help="import and consume a queue file into a worker lane",
+        description="Import URLs from any host queue file into the preset's worker lane, "
+        "then remove created and active duplicate URLs from the file. Never follows. "
+        "The queue defaults to dlmp4_queue (video) or dlgal_queue (gallery) in "
+        "paths.downloads. Selection and user-agent options are dl's.",
     )
     _add_global_options(batch, 1)
     _add_launch_options(batch)
@@ -250,14 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
     batch.set_defaults(handler=_batch)
 
     watch = commands.add_parser(
-        "watch",
-        help="attach to a batch session (Ctrl-b d detaches)",
-        description="Attach to a preset's batch session; any other word is "
-        "taken as a tmux session name.",
+        "watch", help="follow a worker lane until idle; Ctrl-C detaches",
+        description="Follow a preset's lane until it has no queued or running jobs. "
+        "Ctrl-C leaves the lane running in the worker.",
     )
     _add_global_options(watch, 1)
-    watch.add_argument("target", nargs="?", default=presets.VIDEO, metavar="PRESET",
-                       help="video (default), gallery, or a tmux session name")
+    watch.add_argument("target", nargs="?", default=presets.VIDEO,
+                       choices=list(presets.ALIASES), metavar="PRESET",
+                       help="video (v, default) or gallery (gal, g)")
     watch.set_defaults(handler=_watch)
 
     shell = commands.add_parser("shell", help="interactive zsh in the container as dl")
@@ -515,24 +524,35 @@ def _launch_options(args: argparse.Namespace) -> dict:
                 user_agent=args.user_agent)
 
 
+@_jobs_errors
 def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
-    return operations.download(args.preset, args.urls, options.config, options.overrides,
-                               **_launch_options(args))
+    result = host_downloads.submit_download(args.preset, args.urls, options.config, options.overrides,
+                                            **_launch_options(args))
+    ids = tuple(reference.id for reference in result.references)
+    if args.detach:
+        print('Jobs: ' + ' '.join(map(str, ids)))
+        return 0
+    return _render_follow(host_follow.follow_jobs(ids, options.config, options.overrides), ids=ids)
 
 
+@_jobs_errors
 def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
-    result = operations.batch(args.preset, args.queue, options.config, options.overrides,
-                              **_launch_options(args))
-    print(f"Queue: {result.queue}")
-    print(
-        f"Running detached in tmux session {result.session}. "
-        f"Watch it with: dlx watch {result.preset}"
-    )
+    result = host_downloads.import_batch(args.preset, args.queue, options.config, options.overrides,
+                                         **_launch_options(args))
+    if result.submission is None:
+        print(f"No URLs in queue: {escape(str(result.queue))}")
+    else:
+        skipped = sum(reference.duplicate for reference in result.references)
+        print(f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
+              f"in {result.preset} lane.")
+        print(f"Follow with: dlx watch {result.preset}")
     return 0
 
 
+@_jobs_errors
 def _watch(args: argparse.Namespace, options: GlobalOptions) -> int:
-    return operations.watch(args.target, options.config, options.overrides)
+    lane = presets.resolve(args.target).name
+    return _render_follow(host_follow.follow_lane(lane, options.config, options.overrides), lane=lane)
 
 
 def _shell(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -562,17 +582,6 @@ def escape(text: str) -> str:
     r"""Human output's form of an interpolated string: each C0 control
     character, DEL, and C1 control character as `\xNN`; nothing else."""
     return _CONTROL.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
-
-
-def _jobs_errors(handler):
-    """An operation error's reason may come from a reply: escape it."""
-    @functools.wraps(handler)
-    def run(args: argparse.Namespace, options: GlobalOptions) -> int:
-        try:
-            return handler(args, options)
-        except DownloadinuxError as error:
-            raise type(error)(escape(str(error))) from None
-    return run
 
 
 def _json(value: object) -> None:
@@ -683,6 +692,41 @@ def _detached_job(job_id: int) -> str:
             f"dlx jobs logs --follow {job_id} or cancel it with dlx jobs cancel {job_id}")
 
 
+def _discard_output(stream) -> None:
+    """Prevent an exit-time retry of a failed write from replacing exit 1.
+
+    Persistent worker and jobs §6 (DEC-55/57): failed output is an operation
+    error, including an unavailable stderr. The caller still closes its follow generator.
+    """
+    try:
+        descriptor = stream.fileno()
+        replacement = os.open(os.devnull, os.O_WRONLY)
+        if replacement != descriptor:
+            try:
+                os.dup2(replacement, descriptor)
+            finally:
+                os.close(replacement)
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass  # No usable descriptor, or the OS also refused this repair.
+
+
+def _notice(text: str) -> None:
+    try:
+        print(text, file=sys.stderr)
+    except OSError:
+        _discard_output(sys.stderr)
+        raise
+
+
+def _write_bytes(data: bytes) -> None:
+    try:
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+    except OSError:
+        _discard_output(sys.stdout)
+        raise
+
+
 def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
     """Render DEC-57's typed events; exhaustion includes the child's exit check.
 
@@ -700,16 +744,15 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
                     if isinstance(event, host_follow.FollowJob):
                         selected = True
                         job = event.job
-                        print(f"Job {job['id']}: {escape(job['url'])}", file=sys.stderr)
+                        _notice(f"Job {job['id']}: {escape(job['url'])}")
                     elif isinstance(event, host_follow.FollowWait):
                         wait = event.wait
                         reason = ('resumed' if wait is None else 'waiting for VPN'
                                   if wait['reason'] == 'vpn' else
                                   f"waiting for throttle until {escape(wait['until'])}")
-                        print(f"job {event.id} {reason}", file=sys.stderr)
+                        _notice(f"job {event.id} {reason}")
                     elif isinstance(event, host_follow.FollowLog):
-                        sys.stdout.buffer.write(event.data)
-                        sys.stdout.buffer.flush()
+                        _write_bytes(event.data)
                     elif isinstance(event, host_follow.FollowEnd):
                         records.append(event.job)
                         remaining.pop(event.job['id'], None)
@@ -719,15 +762,14 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
                     raise DownloadinuxError('the worker went away; see dlx jobs list')
         except _Detached as detached:
             if lane is not None:
-                print(f"detached from {escape(lane)} lane, which carries on in the worker; "
-                      f"follow it with dlx watch {escape(lane)} or inspect and cancel jobs with "
-                      "dlx jobs list and dlx jobs cancel ID", file=sys.stderr)
+                _notice(f"detached from {escape(lane)} lane, which carries on in the worker; "
+                        f"follow it with dlx watch {escape(lane)} or inspect and cancel jobs with "
+                        "dlx jobs list and dlx jobs cancel ID")
             elif remaining:
                 for job_id in remaining:
-                    print(_detached_job(job_id), file=sys.stderr)
+                    _notice(_detached_job(job_id))
             else:
-                print('detached; all followed jobs have ended; inspect with dlx jobs list',
-                      file=sys.stderr)
+                _notice('detached; all followed jobs have ended; inspect with dlx jobs list')
             return 128 + detached.number
     if lane is not None:
         if not selected:
@@ -739,11 +781,9 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
 def _write(chunks) -> None:
     """Each chunk to standard output's byte stream as it arrives. Closing
     the generator, however this ends, ends the stream and Compose."""
-    out = sys.stdout.buffer
     with contextlib.closing(chunks):
         for data in chunks:
-            out.write(data)
-            out.flush()
+            _write_bytes(data)
 
 
 @_jobs_errors
@@ -758,7 +798,7 @@ def _jobs_logs(args: argparse.Namespace, options: GlobalOptions) -> int:
                 signal.signal(number, _detach)
             _write(chunks)
         except _Detached as detached:
-            print(_detached_job(args.id), file=sys.stderr)
+            _notice(_detached_job(args.id))
             return 128 + detached.number
     return 0
 
@@ -975,6 +1015,14 @@ def render_health(result: health.Result) -> str:
     return "\n".join(lines)
 
 
+def _report_error(error: DownloadinuxError) -> int:
+    try:
+        _notice(f"{PROG}: error: {error}")
+    except OSError:
+        return 1  # A failed error report is itself an output operation failure.
+    return error.exit_status
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -982,8 +1030,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DownloadinuxError as error:
         # An argument type may raise the project's usage error, which keeps
         # the host's error form rather than argparse's (DEC-40).
-        print(f"{PROG}: error: {error}", file=sys.stderr)
-        return error.exit_status
+        return _report_error(error)
     handler = getattr(args, "handler", None)
     if handler is None:
         # Bare invocation is reserved for the TUI; until Stage 4 it prints
@@ -993,13 +1040,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return handler(args, _global_options(args))
     except DownloadinuxError as error:
-        print(f"{PROG}: error: {error}", file=sys.stderr)
-        return error.exit_status
+        return _report_error(error)
     except OSError as error:
         # Host application: OS failures are operation errors, including
         # reads, atomic writes, and subprocess creation (review-checklist §1).
         failure = DownloadinuxError(
             f"{error.filename or '<stdin/stdout>'}: {error.strerror}"
         )
-        print(f"{PROG}: error: {failure}", file=sys.stderr)
-        return failure.exit_status
+        return _report_error(failure)

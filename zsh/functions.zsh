@@ -1,9 +1,7 @@
 # downloadinux functions
-# Ported from ~/.oh-my-zsh/custom/functions.zsh. The download shortcuts are
-# retired: downloads start on the host (`just dl`, `just batch`, or `dlx dl`
-# and `dlx batch`), which run them through downloadinux-runner (DEC-33,
-# docs/target-design.md, Named cookie sources §5). The batch loop lives in
-# batch.zsh.
+# Managed downloads start on the host and are submitted to the worker
+# (`just dl`, `just batch`, or their dlx equivalents; DEC-44,
+# docs/target-design.md, Persistent worker and jobs §6/§7).
 
 # Interactively modify all relevant dates using exiftool
 # Usage: exifmod <input_file_or_directory>

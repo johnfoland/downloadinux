@@ -9,7 +9,7 @@ naming its cookie argument, that file's SHA-256, and the source and revision
 in the metadata.json beside it. It never records or prints cookie contents.
 Then it prints the line `route-smoke stub ran` (no argument or cookie
 material), so a worker job's log shows it ran (Persistent worker and jobs
-§1). When a URL ends in /hold it then polls every 0.1 s forever, keeping the
+§1). When a URL ends in /hold it then polls every 0.1 s until the fixture release file exists, keeping the
 default SIGTERM disposition, so a signal kills it. Otherwise it exits 7 when
 a URL ends in /exit7, else 0.
 """
@@ -40,6 +40,6 @@ staged.write_text(json.dumps(record))
 staged.rename(stem.with_suffix('.json'))
 print('route-smoke stub ran', flush=True)
 if any(arg.endswith('/hold') for arg in args):
-    while True:
+    while not (LOG / 'release').exists():
         time.sleep(0.1)
 sys.exit(7 if any(arg.endswith('/exit7') for arg in args) else 0)

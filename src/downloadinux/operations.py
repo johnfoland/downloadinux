@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from downloadinux import compose, cookiejar, cookie_pinning, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, launch, presets, servers, settings, useragent
+from downloadinux import compose, cookiejar, cookie_selectors, cookie_store, cookie_writer, credentials, files, health, servers, settings, useragent
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
@@ -278,48 +278,6 @@ def vpn(
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
-def _launch(
-    effective: settings.Settings,
-    command: str,
-    preset: str,
-    operands: Sequence[str],
-    cookie_source: str | None,
-    anonymous: bool,
-    user_agent: str | None,
-) -> list[str]:
-    """The runner list for a validated request (Named cookie sources §3,
-    "Host launch (DEC-39)"): refuse a configured user-agent with CR or LF,
-    then pin the selection, so a refused run never migrates and explicit
-    anonymous never touches the store (§5)."""
-    agent = launch.effective_user_agent(effective["downloads.user_agent"], user_agent)
-    selection = cookie_pinning.pin(effective["paths.cookies"], cookie_source, anonymous=anonymous)
-    return launch.runner_argv(command, selection, agent, preset, operands)
-
-
-def download(
-    preset: str,
-    urls: Sequence[str],
-    config: str | None = None,
-    overrides: Sequence[str] = (),
-    host: Host = Host(),
-    runner: compose.Runner | None = None,
-    *,
-    cookie_source: str | None = None,
-    anonymous: bool = False,
-    user_agent: str | None = None,
-) -> int:
-    """`dl`: pin the cookie source and revision on the host, then run
-    `downloadinux-runner download` as `dl` uncaptured, since the downloaders
-    draw progress on the terminal; the runner's exit status. One call, all
-    its URLs, one private jar. No VPN or running check: Compose reports a
-    stopped service itself (Named cookie sources §3, "Host launch (DEC-39)";
-    Host application, "Downloads, pinned for P0001-C04")."""
-    effective = settings.load(config, overrides, host)
-    presets.resolve(preset)
-    program = _launch(effective, "download", preset, urls, cookie_source, anonymous, user_agent)
-    return _invocation(effective, host).run(compose.exec_args(program), runner)
-
-
 # Named cookie sources §3, the host front (DEC-37): exact messages.
 CLEANUP_PROGRAM = ("downloadinux-runner", "cleanup", "--state", "/state")
 CLEANUP_NOT_RUNNING = (
@@ -387,72 +345,6 @@ def cookie_cleanup(
     if counts is None:
         raise DownloadinuxError(CLEANUP_UNEXPECTED)
     return counts
-
-
-@dataclass(frozen=True)
-class BatchResult:
-    queue: str  # the container's path
-    session: str
-    preset: str
-
-
-def batch(
-    preset: str,
-    queue: str | None = None,
-    config: str | None = None,
-    overrides: Sequence[str] = (),
-    host: Host = Host(),
-    runner: compose.Runner | None = None,
-    *,
-    cookie_source: str | None = None,
-    anonymous: bool = False,
-    user_agent: str | None = None,
-) -> BatchResult:
-    """`batch`: check the queue lies under `paths.downloads`, pin the cookie
-    source and revision, then start `downloadinux-runner batch` in the
-    preset's detached tmux session, every word a separate tmux argument; the
-    whole batch shares one private jar (Named cookie sources §3, "Host launch
-    (DEC-39)"; Host application, "Downloads, pinned for P0001-C04"). Paths
-    are made absolute without resolving links, so a symlinked drive compares
-    as written."""
-    effective = settings.load(config, overrides, host)
-    chosen = presets.resolve(preset)
-    downloads = os.path.abspath(effective["paths.downloads"])
-    if queue is None:
-        path = os.path.join(downloads, chosen.queue)
-    else:
-        path = os.path.abspath(os.path.expanduser(queue))
-    if not os.path.isfile(path):
-        raise DownloadinuxError(f"no such queue file: {path}")
-    if path == downloads or os.path.commonpath([downloads, path]) != downloads:
-        raise DownloadinuxError(
-            f"{path} is outside paths.downloads ({downloads}); the container cannot see it"
-        )
-    container = "/downloads/" + os.path.relpath(path, downloads)
-    args = _launch(effective, "batch", preset, [container], cookie_source, anonymous, user_agent)
-    program = launch.batch_program(preset, args)
-    status = _invocation(effective, host).run(compose.exec_args(program), runner)
-    if status != 0:
-        raise DownloadinuxError(
-            f"could not start tmux session {chosen.session}; if one is already "
-            f"running, attach with dlx watch {chosen.name}"
-        )
-    return BatchResult(container, chosen.session, chosen.name)
-
-
-def watch(
-    target: str = presets.VIDEO,
-    config: str | None = None,
-    overrides: Sequence[str] = (),
-    host: Host = Host(),
-    runner: compose.Runner | None = None,
-) -> int:
-    """`watch`: attach to a preset's batch session, or to any other word
-    taken as a tmux session name; tmux's exit status."""
-    effective = settings.load(config, overrides, host)
-    session = presets.resolve(target).session if target in presets.ALIASES else target
-    program = ["tmux", "attach", "-t", session]
-    return _invocation(effective, host).run(compose.exec_args(program), runner)
 
 
 def list_servers(

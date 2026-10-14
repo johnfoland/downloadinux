@@ -5,8 +5,7 @@ preset file under the checkout's `presets/` (the container's `/config`)
 holds media behavior only; the output root, cookie jar, user-agent, and the
 gallery archive are downloader arguments built here, one list element each,
 with the URLs after them. Only the container runner (Named cookie sources
-§3, "Child argument lists"; DEC-36) builds them, for downloads and batches
-alike, naming its private jar or, for anonymous runs, no cookie argument at
+§3, "Child argument lists"; DEC-36) builds them, once per worker job, naming its private jar or, for anonymous runs, no cookie argument at
 all.
 """
 
@@ -20,28 +19,15 @@ GALLERY = "gallery"
 # Each preset's name and aliases (*Host application*).
 ALIASES = {"video": VIDEO, "v": VIDEO, "gallery": GALLERY, "gal": GALLERY, "g": GALLERY}
 
-# The non-interactive batch loop, run as `zsh -f -c LOOP zsh <queue> <log
-# prefix> <title> <colour> <argv…>`. `zsh -f` reads none of dl's startup
-# files, only the loop's own (*Host application*; DEC-13, DEC-36).
-LOOP = 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
-
-
 @dataclass(frozen=True)
 class Preset:
     name: str
-    # The `batch` table in *Host application*.
-    session: str
     queue: str
-    log_prefix: str
-    title: str
-    colour: str
 
 
 PRESETS = {
-    VIDEO: Preset(VIDEO, "batch-video", "dlmp4_queue", "dlmp4", "Batch Download", "blue"),
-    GALLERY: Preset(
-        GALLERY, "batch-gallery", "dlgal_queue", "dlgal", "Gallery Batch Download", "magenta"
-    ),
+    VIDEO: Preset(VIDEO, "dlmp4_queue"),
+    GALLERY: Preset(GALLERY, "dlgal_queue"),
 }
 
 
@@ -51,13 +37,13 @@ def resolve(word: str) -> Preset:
 
 
 def argv(
-    name: str, user_agent: str, *, batch: bool = False, cookies: str | None
+    name: str, user_agent: str, *, cookies: str | None
 ) -> list[str]:
-    """The preset's argument list without URLs. `batch` adds gallery-dl's
-    `-q` right after the program: batches run quiet (DEC-6). `cookies` is
-    the runner's private jar path, with no default; None omits the cookie
-    argument entirely, for an anonymous run (Named cookie sources §3, "Child
-    argument lists")."""
+    """The per-job argument list without URLs (DEC-44).
+
+    `cookies` names the runner's private jar; None omits cookies entirely.
+    Gallery cookies remain Instagram-only (DEC-6).
+    """
     if name == VIDEO:
         return [
             "yt-dlp", "--config-locations", "/config/video/yt-dlp.conf",
@@ -70,7 +56,7 @@ def argv(
         # User-agent and archive for every extractor; output root and
         # cookies for Instagram only, as the old config scoped them.
         return [
-            "gallery-dl", *(["-q"] if batch else []),
+            "gallery-dl",
             "--config", "/config/gallery/config.json",
             "-o", "extractor.archive=/downloads/dlgal/gallery-dl-archive.sqlite3",
             "-o", f"extractor.user-agent={user_agent}",

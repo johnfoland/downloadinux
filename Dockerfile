@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # openvpn/iptables/iproute2 -> required by the NordVPN daemon
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg gosu \
-        zsh git tmux less nano jq unzip \
+        zsh git less nano jq unzip \
         procps iproute2 iputils-ping dnsutils \
         ffmpeg atomicparsley libimage-exiftool-perl \
         python3 python3-venv \

@@ -77,15 +77,15 @@ useragent *args:
 shell:
     @uv run downloadinux shell
 
-# Download with a preset: just dl [--cookie-source NAME | --anonymous] [--user-agent=UA] video|gallery <url>...
+# Submit and follow downloads: just dl [--detach] [--cookie-source NAME | --anonymous] [--user-agent=UA] video|gallery <url>...
 dl +args:
     @uv run downloadinux dl "$@"
 
-# Queue in detached tmux: just batch [dl's options] video|gallery [file]
+# Import a queue into the worker: just batch [dl's selection options] video|gallery [file]
 batch +args:
     @uv run downloadinux batch "$@"
 
-# Attach to a running batch (Ctrl-b d detaches without killing it)
+# Follow a worker lane until idle: just watch [video|gallery] (Ctrl-C detaches)
 watch kind="video":
     @uv run downloadinux watch "$1"
 
@@ -128,7 +128,7 @@ check:
     shellcheck scripts/*.sh
     # shellcheck has no zsh support, so the zsh files get a syntax check only.
     step "2/7  zsh -n on the zsh sources"
-    for f in zsh/zshrc zsh/aliases.zsh zsh/batch.zsh zsh/functions.zsh scripts/root.zshrc; do
+    for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
     # --locked fails when uv.lock is stale rather than rewriting it.

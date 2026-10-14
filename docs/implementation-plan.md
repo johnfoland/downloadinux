@@ -21,8 +21,9 @@ Stage 2 is implemented. Stage 3 is settled
 worker runs in the image and answers the host, `doctor`, and the `jobs`
 commands. Reusable host submission and queue-import operations are implemented
 (DEC-56), as are multi-job/lane following and typed host events with status
-reduction (DEC-57; PR #94), while the download fronts still await the
-coordinated cutover.
+reduction (DEC-57; PR #94). The coordinated download fronts and retirement
+are implemented (DEC-44/56/57); D5's joined Stage 3 completion evidence
+remains pending.
 Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
@@ -41,8 +42,9 @@ Read [current state](current-state.md) for the migration baseline and
 
 Settled design: host application (DEC-7), configuration and locations
 (DEC-8), container contract (DEC-9), presets (DEC-10), VPN mode (DEC-11),
-health checks (DEC-12), and migration (DEC-13). Batch execution keeps tmux
-until Stage 3, and the gallery archive stays in place.
+health checks (DEC-12), and migration (DEC-13). History: Stage 1 batch
+execution retained tmux until the now-implemented Stage 3 cutover. The gallery
+archive stays in place.
 
 Acceptance criteria:
 
@@ -93,8 +95,9 @@ import-env`'s join to the first cookie operation), so Stage 2 is implemented.
 - Migrate the managed Stage 1 jar once into `legacy` without altering it; keep
   imports browser-independent and fresh/unattended setups anonymous by default.
 - Preserve host wrappers through the snapshot runner and retire container
-  download shortcuts; keep the non-interactive zsh batch loop, tmux, and existing
-  batch limits until Stage 3.
+  download shortcuts. History: Stage 2 retained the non-interactive zsh
+  batch loop, tmux, and existing batch limits; Stage 3's implemented cutover
+  retires those routes.
 - Clean abandoned snapshots through container-held leases, while retaining
   immutable canonical revisions until a later pruning design.
 
@@ -110,8 +113,9 @@ Acceptance criteria:
 - Inspection reports cookie presence/expiry without claiming unverified login
   validity or exposing values.
 - Cookie refresh does not dirty the checkout or alter the user-agent.
-- A detached batch keeps one snapshot until its loop finishes; cleanup does
-  not remove active foreground or batch cookies.
+- History for Stage 2: a detached batch kept one snapshot until its loop
+  finished. Stage 3's implemented cutover uses one private jar per job
+  attempt; cleanup never removes a leased active jar (DEC-31, DEC-44).
 - Migration preserves the previous account choice; explicit anonymous mode
   does not read even a damaged store.
 - Browser adapters are tested with fixtures on macOS and Linux; the gate
@@ -153,14 +157,15 @@ built image. PR #87 adds the worker's `list`, `cancel`, `retry`, and
 host's streaming call, its job operations (`downloadinux.host_jobs`), and
 the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
 (DEC-55) are implemented in PR #90, with smoke evidence against the worker
-in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
-`watch` do not use the worker yet.
+in the built image. The coordinated cutover (D4) is implemented: `dl`, `batch`, and `watch`
+use the worker, and tmux, the zsh loop, the runner batch route, and gallery
+batch quiet mode are retired. D5's joined completion evidence is pending.
 Target design §6's host submission and byte-preserving queue import
 operations (DEC-56) are implemented as additive preparation in PR #92;
-the coordinated command cutover still awaits implementation. Multi-job and
+the coordinated command cutover now uses them. Multi-job and
 lane following, its short-request client, shared host events, and status
 reduction are implemented additively in PR #94 (target design §1/§6, DEC-57).
-The later front output stays pinned for that cutover.
+The front output is now implemented with that cutover.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job
@@ -173,8 +178,9 @@ Ctrl-C, `batch` imports a queue file from any host path and removes what it
 queued, `watch` follows a lane, `jobs` manages history, and the cutover
 removes tmux and the zsh loop together (DEC-44). Job history retention is
 outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issues/65)).
-The worker ships additively first; `dl`, `batch`, and `watch` switch in one
-cutover pull request.
+The worker shipped additively first; the coordinated `dl`, `batch`, and
+`watch` cutover and retirement are now implemented. Stage 3 completion is
+not declared until D5's joined evidence is accepted.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -258,7 +264,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | --- | --- |
 | Configuration format and host installation method | Resolved for Stage 1: TOML at XDG locations (DEC-8), editable install from the checkout (DEC-7). A self-contained distribution is still open. |
 | Worker interface and job-store ownership | Resolved for Stage 3: the worker runs in the download container, reached through `compose exec` of its own client over a container-local socket, and is the job store's only writer (DEC-41). |
-| Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default and immutable revision pinned at submission; private copy at startup, one jar per invocation or whole batch (DEC-31, amended 2026-10-09). Stage 3 defines job persistence. |
+| Cookie revision pinned at submission or startup | Resolved for Stage 2: source identity/default and immutable revision pinned at submission; private copy at startup, one jar per invocation or whole batch (DEC-31, amended 2026-10-09). Stage 3's implemented cutover uses one jar per job attempt. |
 | Imported managed copies versus linked files | Resolved for Stage 2: immutable managed copies; refresh explicitly re-reads the stored origin, with no linked sources (DEC-28, DEC-29). |
 | Browser support for Stage 2 | Resolved: Firefox, Chrome, and Chromium through the locked host yt-dlp adapter; file imports require no browser (DEC-29). Other browsers remain outside this stage. |
 | Cancellation, retry, duplicates, and concurrency | Resolved for Stage 3: `SIGTERM` through the runner, deliberate retries that re-pin, active duplicates skipped, a throttled lane per preset and an immediate queue per `dl` (DEC-42, DEC-43). |
@@ -277,6 +283,6 @@ the coordinated download cutover, is implemented: PR #55 adds its
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-57);
 the worker is packaged into the image with its implemented job clients, and the host
-`jobs` commands reach it, while the cutover is not yet implemented
-(*Stage 3* above); TUI styling
+`jobs` commands and coordinated download fronts reach it. D5 completion
+evidence remains pending (*Stage 3* above); TUI styling
 and keybindings follow stable operations.

@@ -1,4 +1,4 @@
-"""`dl` and `batch` through the container runner (Named cookie sources §3,
+"""`dl` and `batch` submissions through the worker (Named cookie sources §3,
 "Host launch (DEC-39)"; §4; §5; DEC-40), driven through `cli.main` with a
 recording Compose runner: no test starts Docker. Every store is real, and so
 is every refresh, replacement, damage, and migration."""
@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from downloadinux import checkout, cli, compose, cookiejar, cookie_store as store, launch, operations
+from downloadinux import checkout, cli, compose, cookiejar, cookie_store as store, host_follow, operations, worker
 from test_container_commands import compose_args
 
 AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 'x'"
@@ -42,14 +42,25 @@ class Rig:
         self.statuses = []
         self.hook = None
 
+        self.invocations = []
         def run(argv, environ):
-            self.calls.append(list(argv))
+            pytest.fail('retired foreground route called')
+        def feed(argv, environ, text):
+            self.invocations.append(list(argv))
+            assert compose_args(argv) == ['exec', '-T', '-u', 'dl', 'downloadinux', 'downloadinux-worker', 'submit']
+            payload = json.loads(text)
+            self.calls.append(payload)
             if self.hook is not None:
                 self.hook()
-            return self.statuses.pop(0) if self.statuses else 0
-
-        monkeypatch.setattr(compose, "run_process", run)
-        monkeypatch.setattr(compose, "capture_process", lambda argv, environ: (0, ""))
+            status = self.statuses.pop(0) if self.statuses else 0
+            reply = dict(version=1, submission=1,
+                         created=[dict(id=n, url=url) for n, url in enumerate(dict.fromkeys(payload['urls']), 1)],
+                         duplicates=[]) if status == 0 else dict(version=1, error='synthetic refusal')
+            return status, worker.encode(reply).decode()
+        monkeypatch.setattr(compose, 'run_process', run)
+        monkeypatch.setattr(compose, 'capture_process', lambda argv, environ: (0, 'container\n'))
+        monkeypatch.setattr(compose, 'capture_with_input', feed)
+        monkeypatch.setattr(host_follow, 'follow_jobs', lambda *args, **kwargs: pytest.fail('detached submission followed'))
 
     @property
     def overrides(self):
@@ -71,14 +82,11 @@ class Rig:
 
     def queue(self, preset):
         (self.downloads / QUEUES[preset]).write_text("https://example.com/q\n")
-        return f"/downloads/{QUEUES[preset]}"
+        return str(self.downloads / QUEUES[preset])
 
     def program(self):
-        [argv] = self.calls
-        args = compose_args(argv)
-        assert args[:4] == EXEC
-        assert not any(STAGE1 in arg for arg in argv)
-        return args[4:]
+        [payload] = self.calls
+        return payload
 
 
 @pytest.fixture
@@ -87,8 +95,11 @@ def rig(tmp_path, monkeypatch):
 
 
 def run(capsys, *argv):
+    argv = list(argv)
+    if "dl" in argv:
+        argv.insert(argv.index("dl") + 1, "--detach")
     try:
-        status = cli.main(list(argv))
+        status = cli.main(argv)
     except SystemExit as exit_info:
         status = exit_info.code
     out, err = capsys.readouterr()
@@ -97,8 +108,12 @@ def run(capsys, *argv):
 
 
 def expected(command, selection, preset, operands, agent=AGENT):
-    args = launch.runner_argv(command, selection, agent, preset, operands)
-    return args if command == "download" else launch.batch_program(preset, args)
+    canonical = presets_name(preset)
+    named = isinstance(selection, store.Pinned)
+    return dict(preset=canonical, urls=operands if command == 'download' else ['https://example.com/q'],
+                lane=None if command == 'download' else canonical,
+                source=selection.source if named else None, revision=selection.revision if named else None,
+                user_agent=agent)
 
 
 def launch_argv(rig, command, preset, *options, agent=AGENT):
@@ -158,12 +173,12 @@ def test_explicit_anonymous_wins_over_a_named_default(rig, capsys, cli_command, 
     assert rig.program() == expected(command, store.ANONYMOUS, preset, operands)
 
 
-def test_the_batch_report_is_unchanged(rig, capsys):
+def test_the_batch_report_names_the_worker_lane(rig, capsys):
     rig.queue("gallery")
     status, out, err = run(capsys, *rig.sets(), "batch", "--anonymous", "gal")
     assert (status, err) == (0, "")
-    assert out == ("Queue: /downloads/dlgal_queue\n"
-                   "Running detached in tmux session batch-gallery. Watch it with: dlx watch gallery\n")
+    assert out == ('Queued 1 jobs; skipped 0 active duplicates in gallery lane.\n'
+                   'Follow with: dlx watch gallery\n')
 
 
 # --- a change after submission ----------------------------------------------
@@ -185,7 +200,7 @@ def replace(rig):
 
 @pytest.mark.parametrize("change", [refresh, switch_default, replace])
 @pytest.mark.parametrize("cli_command,command", COMMANDS)
-def test_a_change_before_the_runner_starts_keeps_the_pinned_revision(rig, capsys, change, cli_command, command):
+def test_a_change_after_pinning_keeps_the_submitted_revision(rig, capsys, change, cli_command, command):
     alpha = rig.register("alpha", "ALPHA")
     rig.register("beta", "BETA")
     operations.cookie_default("alpha", overrides=rig.overrides)
@@ -193,7 +208,7 @@ def test_a_change_before_the_runner_starts_keeps_the_pinned_revision(rig, capsys
     rig.hook = lambda: change(rig)
     argv, operands = launch_argv(rig, cli_command, "video")
     assert run(capsys, *argv)[0] == 0
-    # Compose received the first revision, and the store changed meanwhile.
+    # The worker submission received the first revision, and the store changed meanwhile.
     assert rig.program() == expected(command, store.Pinned("alpha", alpha), "video", operands)
     snapshot = store.read(rig.cookies)
     assert (snapshot.default, snapshot.sources["alpha"].revision) != ("alpha", alpha)
@@ -283,11 +298,11 @@ def test_a_bad_queue_refuses_before_migrating(rig, capsys, legacy_jar, queue):
     assert rig.calls == [] and not (rig.cookies / "sources.json").exists()
 
 
-def test_a_queue_outside_downloads_refuses_before_migrating(rig, capsys, tmp_path, legacy_jar):
+def test_an_empty_queue_outside_downloads_does_not_migrate(rig, capsys, tmp_path, legacy_jar):
     outside = tmp_path / "elsewhere.txt"
     outside.write_text("")
     status, _, err = run(capsys, *rig.sets(), "batch", "video", str(outside))
-    assert status == 1 and "is outside paths.downloads" in err
+    assert status == 0 and err == ""
     assert rig.calls == [] and not (rig.cookies / "sources.json").exists()
 
 
@@ -353,7 +368,7 @@ def test_anonymous_never_migrates_an_invalid_stage1_jar(rig, capsys, cli_command
     (rig.cookies / "cookies.txt").write_bytes(b"not a cookie jar\n")
     argv, operands = launch_argv(rig, cli_command, "video", "--anonymous")
     assert run(capsys, *argv)[0] == 0
-    assert "--anonymous" in rig.program()
+    assert rig.program()["source"] is None and rig.program()["revision"] is None
     assert (rig.cookies / "cookies.txt").read_bytes() == b"not a cookie jar\n"
     assert sorted(os.listdir(rig.cookies)) == ["cookies.txt"]
 
@@ -387,11 +402,11 @@ def test_a_dash_led_user_agent_needs_the_equals_spelling(rig, capsys, value):
     status, _, err = run(capsys, *rig.sets(), "dl", f"--user-agent={value}", "--anonymous", "video", URLS[0])
     assert (status, err) == (0, "")
     program = rig.program()
-    assert program[program.index("--user-agent") + 1] == value
+    assert program["user_agent"] == value
 
 
 @pytest.mark.parametrize("cli_command,command", COMMANDS)
-def test_an_empty_configured_user_agent_reaches_the_runner(rig, capsys, cli_command, command):
+def test_an_empty_configured_user_agent_reaches_submission(rig, capsys, cli_command, command):
     argv, operands = launch_argv(rig, cli_command, "gallery", "--anonymous", agent="")
     assert run(capsys, *argv)[0] == 0
     assert rig.program() == expected(command, store.ANONYMOUS, "gallery", operands, "")
@@ -433,21 +448,8 @@ def test_an_option_between_two_urls_is_a_usage_error(rig, capsys):
 
 # --- statuses ---------------------------------------------------------------
 
-@pytest.mark.parametrize("returned", [0, 3, 130])
-def test_dl_returns_the_runners_status(rig, capsys, returned):
-    rig.statuses.append(returned)
-    status, out, err = run(capsys, *rig.sets(), "dl", "--anonymous", "v", URLS[0])
-    assert (status, out, err) == (returned, "", "")
 
 
-@pytest.mark.parametrize("preset,session", [("video", "batch-video"), ("gallery", "batch-gallery")])
-def test_a_failing_batch_launch_keeps_the_tmux_message(rig, capsys, preset, session):
-    rig.queue(preset)
-    rig.statuses.append(1)
-    status, out, err = run(capsys, *rig.sets(), "batch", "--anonymous", preset)
-    assert (status, out) == (1, "")
-    assert err == (f"downloadinux: error: could not start tmux session {session}; "
-                   f"if one is already running, attach with dlx watch {preset}\n")
 
 
 # --- the recipes, through the real `just` -----------------------------------
@@ -494,3 +496,30 @@ def test_just_dl_forwards_each_word_unchanged(tmp_path, words):
 ])
 def test_just_batch_forwards_each_word_unchanged(tmp_path, words):
     assert just(tmp_path, "batch", *words) == ["run", "downloadinux", "batch", *words]
+
+@pytest.mark.parametrize('where', PLACEMENTS)
+def test_detach_placement_prints_distinct_reference_order_and_never_follows(rig, capsys, where):
+    assert cli.main([*rig.sets(), *PLACEMENTS[where](['--detach', '--anonymous'])]) == 0
+    assert capsys.readouterr() == ('Jobs: 1 2\n', '')
+    assert rig.program()['urls'] == URLS
+
+
+def test_detach_between_urls_is_a_usage_error(rig, capsys):
+    with pytest.raises(SystemExit) as caught:
+        cli.main([*rig.sets(), 'dl', 'video', URLS[0], '--detach', URLS[1]])
+    assert caught.value.code == 2
+    assert 'unrecognized arguments' in capsys.readouterr().err
+    assert rig.calls == []
+
+
+@pytest.mark.parametrize('command', ['dl', 'batch'])
+@pytest.mark.parametrize('status,reason', [(1, 'synthetic refusal'),
+    (3, 'the worker in the container is not answering; see dlx compose -- logs downloadinux'),
+    (127, 'the running container has no downloadinux-worker; rebuild and recreate it with dlx build and dlx restart'),
+    (130, 'downloadinux-worker submit failed in the container (exit 130)')])
+def test_submission_failure_reaches_main_without_consuming_a_queue(rig, capsys, command, status, reason):
+    rig.statuses.append(status)
+    argv, _ = launch_argv(rig, command, 'v', '--anonymous')
+    assert run(capsys, *argv) == (1, '', f'downloadinux: error: {reason}\n')
+    if command == 'batch':
+        assert (rig.downloads / 'dlmp4_queue').read_text() == 'https://example.com/q\n'

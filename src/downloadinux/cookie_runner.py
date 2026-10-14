@@ -21,7 +21,7 @@ from . import cookie_snapshot, cookie_store as store, presets
 from .errors import ConfigError, DownloadinuxError
 
 PROG = 'downloadinux'
-COMMANDS = ('download', 'batch', 'cleanup')
+COMMANDS = ('download', 'cleanup')
 VALUED = ('--cookies', '--state', '--source', '--revision', '--user-agent')
 # Handled while the runner lives, and forwarded to the child's group (DEC-36).
 HANDLED = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH)
@@ -54,10 +54,10 @@ def parse(argv: list) -> Request:
     PRESET (cleanup takes none), and every element after it is an operand.
     """
     if not argv:
-        raise ConfigError('a subcommand is required: download, batch, or cleanup')
+        raise ConfigError('a subcommand is required: download or cleanup')
     command, rest = argv[0], argv[1:]
     if command not in COMMANDS:
-        raise ConfigError(f'unknown subcommand {command!r}; use download, batch, or cleanup')
+        raise ConfigError(f'unknown subcommand {command!r}; use download or cleanup')
     allowed = ('--state',) if command == 'cleanup' else (*VALUED, '--anonymous')
     options, index = {}, 0
     while index < len(rest) and rest[index].startswith('-'):
@@ -93,8 +93,6 @@ def parse(argv: list) -> Request:
         raise ConfigError(f'{command}: unknown preset {operands[0]!r}; use video or gallery')
     if command == 'download' and len(operands) < 2:
         raise ConfigError('download: at least one URL is required')
-    if command == 'batch' and len(operands) != 2:
-        raise ConfigError('batch: exactly one queue path is required')
     if '' in operands[1:]:
         raise ConfigError(f'{command}: an empty URL or queue path is not allowed')
     return Request(command, options, operands)
@@ -119,18 +117,12 @@ def _validate_selection(command: str, options: dict) -> None:
 
 
 def child_argv(request: Request, jar: Path | None) -> list:
-    """The downloader or batch-loop list (§3, *Child argument lists*).
+    """The per-job downloader list (DEC-36, DEC-44).
 
-    Only the runner knows the private jar path (DEC-36). Anonymous lists carry
-    no cookie argument at all (DEC-20); gallery cookies stay Instagram-only
-    (DEC-6). The batch loop's pause is the caller's, after the runner exits.
+    Only the runner knows the private jar path; anonymous runs omit cookies.
     """
     cookies = None if jar is None else str(jar)
-    preset = request.preset
-    if request.command == 'download':
-        return [*presets.argv(preset.name, request.user_agent, cookies=cookies), *request.operands]
-    return ['zsh', '-f', '-c', presets.LOOP, 'zsh', request.operands[0], preset.log_prefix, preset.title,
-            preset.colour, *presets.argv(preset.name, request.user_agent, batch=True, cookies=cookies)]
+    return [*presets.argv(request.preset.name, request.user_agent, cookies=cookies), *request.operands]
 
 
 class _Signals:

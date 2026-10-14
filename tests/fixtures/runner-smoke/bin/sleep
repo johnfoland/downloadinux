@@ -1,3 +1,0 @@
-#!/bin/sh
-# Stub sleep: the batch loop's throttle (two to five minutes) returns at once.
-printf '%s\n' "$*" >>"$STUB_LOG/sleep"

@@ -1,245 +1,235 @@
-"""`batch`, `watch`, and the container's zsh helpers (P0001-C04-d; target
-design, *Host application*, "Downloads, pinned for P0001-C04", and *Container
-contract*), with fake runners: no test starts Docker. The batch's cookie
-selection, user-agent options and launch order are in `test_host_launch.py`
-(Named cookie sources §3, "Host launch (DEC-39)")."""
-
+"""Queue imports, lane watching, and shell retirement (worker §6/§7; DEC-44)."""
 import os
 import subprocess
+import sys
 
 import pytest
 
-from downloadinux import checkout, cookie_store, launch, presets
-from test_container_commands import calls, compose_args, run  # noqa: F401 (fixture)
-
-AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-EXEC = ["exec", "-u", "dl", "downloadinux"]
-ROWS = {
-    "video": ("batch-video", "dlmp4_queue", "dlmp4", "Batch Download", "blue"),
-    "gallery": ("batch-gallery", "dlgal_queue", "dlgal", "Gallery Batch Download", "magenta"),
-}
+from downloadinux import checkout, cli, compose, host_follow, presets
+from stream_support import reaped, spawn_process
+from test_host_launch import rig, run, URLS  # noqa: F401
+from test_host_jobs import record
+from test_host_follow import children, capture, event, sequence, step  # noqa: F401
 
 
-def tmux(preset, container_queue):
-    """An anonymous batch (the empty store's default): the runner in the
-    preset's session (Named cookie sources §3, DEC-39)."""
-    session = ROWS[preset][0]
-    runner = launch.runner_argv("batch", cookie_store.ANONYMOUS, AGENT, preset, [container_queue])
-    return [
-        *EXEC, "tmux", "new-session", "-d", "-s", session, "-c", "/downloads",
-        "zsh", "-f", "-c", launch.BATCH_RUNNER_SCRIPT, "zsh", *runner[1:],
-    ]
+REAL_FOLLOW = host_follow.follow_jobs
+
+def install_child(child, monkeypatch):
+    def spawn(argv, env):
+        with monkeypatch.context() as patches:
+            patches.setattr(compose, 'spawn_process', spawn_process)
+            return child(argv, env)
+    monkeypatch.setattr(compose, 'capture_process', capture)
+    monkeypatch.setattr(compose, 'spawn_process', spawn)
 
 
-def test_the_runner_keeps_the_shared_loop():
-    # The runner starts this loop text inside its lease (DEC-36).
-    assert presets.LOOP == 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
+@pytest.mark.parametrize('word', presets.ALIASES)
+def test_default_queue_imports_and_consumes_once_without_following(rig, capsys, word):
+    preset = presets.resolve(word)
+    path = rig.downloads / preset.queue
+    path.write_text('# retained\n' + URLS[0] + '\n' + URLS[0] + '\n\n')
+    status, out, err = run(capsys, *rig.sets(), 'batch', '--anonymous', word)
+    assert (status, out, err) == (0, f'Queued 1 jobs; skipped 0 active duplicates in {preset.name} lane.\n'
+                                f'Follow with: dlx watch {preset.name}\n', '')
+    assert rig.program()['urls'] == [URLS[0], URLS[0]]
+    assert rig.program()['lane'] == preset.name
+    assert path.read_bytes() == b'# retained\n\n'
 
 
-@pytest.fixture
-def downloads(tmp_path):
-    path = tmp_path / "My Downloads"
-    path.mkdir()
-    return path
+@pytest.mark.parametrize('location', ['outside', 'relative', 'tilde', 'symlink'])
+def test_any_host_path_is_allowed_and_empty_queues_touch_no_worker(rig, home, tmp_path, monkeypatch, capsys, location):
+    target = home / 'queue with space'
+    target.write_text('# comment\n\n')
+    if location == 'relative':
+        monkeypatch.chdir(home)
+        given = target.name
+    elif location == 'tilde':
+        given = '~/queue with space'
+    elif location == 'symlink':
+        link = tmp_path / 'symlink queue'
+        link.symlink_to(target)
+        given = str(link)
+    else:
+        given = str(target)
+    display = os.path.abspath(os.path.expanduser(given))
+    assert run(capsys, *rig.sets(), 'batch', 'video', given) == (0, f'No URLs in queue: {display}\n', '')
+    assert rig.calls == [] and target.read_bytes() == b'# comment\n\n'
+    if location == 'symlink':
+        assert link.is_symlink()
 
 
-def batch(capsys, downloads, *argv):
-    return run(capsys, "--set", f"paths.downloads={downloads}",
-               "--set", f"downloads.user_agent={AGENT}", "batch", *argv)
+@pytest.mark.parametrize('given', [None, 'missing', '.'])
+def test_missing_or_nonregular_queue_is_an_operation_error(rig, capsys, monkeypatch, given):
+    monkeypatch.chdir(rig.downloads)
+    path = rig.downloads / ('dlmp4_queue' if given is None else given)
+    status, out, err = run(capsys, *rig.sets(), 'batch', 'v', *([] if given is None else [given]))
+    assert (status, out, err) == (1, '', f'downloadinux: error: no such queue file: {os.path.abspath(path)}\n')
+    assert rig.calls == []
 
 
-@pytest.mark.parametrize("preset,word", [
-    ("video", "video"), ("video", "v"), ("gallery", "gallery"), ("gallery", "gal"), ("gallery", "g"),
-])
-def test_default_queue_builds_the_pinned_tmux_argv(calls, capsys, downloads, preset, word):
-    queue = ROWS[preset][1]
-    (downloads / queue).write_text("https://example.com/1\n")
-    status, out, err = batch(capsys, downloads, word)
-    assert (status, err) == (0, "")
-    assert out == (
-        f"Queue: /downloads/{queue}\n"
-        f"Running detached in tmux session {ROWS[preset][0]}. Watch it with: dlx watch {preset}\n"
-    )
-    [(kind, argv, _)] = calls
-    assert kind == "run"  # uncaptured: no -T
-    assert compose_args(argv) == tmux(preset, f"/downloads/{queue}")
+@pytest.mark.parametrize('word', [None, *presets.ALIASES])
+def test_watch_follows_a_canonical_lane_and_prints_idle(children, monkeypatch, capsys, word):
+    child = children(step(event('done')))
+    install_child(child, monkeypatch)
+    lane = presets.resolve(word or 'video').name
+    assert cli.main(['watch', *([] if word is None else [word])]) == 0
+    assert capsys.readouterr() == (f'No queued or running jobs in {lane} lane.\n', '')
+    args = child.calls[0][0]
+    assert args[-3:] == ['follow', '--lane', lane]
+    reaped(child.process)
 
 
-@pytest.mark.parametrize("preset", ["video", "gallery"])
-def test_a_given_queue_with_spaces_maps_to_its_container_path(calls, capsys, downloads, preset):
-    queue = downloads / "lists dir" / "my queue.txt"
-    queue.parent.mkdir()
-    queue.write_text("")
-    status, out, _ = batch(capsys, downloads, preset, str(queue))
-    assert status == 0
-    assert out.splitlines()[0] == "Queue: /downloads/lists dir/my queue.txt"
-    assert compose_args(calls[0][1]) == tmux(preset, "/downloads/lists dir/my queue.txt")
+def test_watch_failure_does_not_use_a_downloader_status(children, monkeypatch, capsys):
+    job = record(4, lane='gallery', preset='gallery', state='running')
+    child = children(*(step(reply) for reply in sequence(job)))
+    install_child(child, monkeypatch)
+    assert cli.main(['watch', 'g']) == 0
+    assert capsys.readouterr() == ('', f"Job 4: {job['url']}\n")
+    reaped(child.process)
 
 
-def test_a_relative_queue_resolves_against_the_working_directory(calls, capsys, downloads, monkeypatch):
-    (downloads / "sub").mkdir()
-    (downloads / "sub" / "q.txt").write_text("")
-    monkeypatch.chdir(downloads / "sub")
-    status, out, _ = batch(capsys, downloads, "video", "q.txt")
-    assert status == 0
-    assert compose_args(calls[0][1]) == tmux("video", "/downloads/sub/q.txt")
+@pytest.mark.parametrize('command,operands', [('watch', ['my-session']), ('batch', ['audio']),
+                                             ('batch', ['video', '--detach']), ('watch', ['--detach'])])
+def test_usage_errors_precede_settings(capsys, tmp_path, command, operands):
+    broken = tmp_path / 'broken.toml'
+    broken.write_text('[broken')
+    with pytest.raises(SystemExit) as caught:
+        cli.main(['--config', str(broken), command, *operands])
+    assert caught.value.code == 2
+    out, err = capsys.readouterr()
+    assert out == '' and 'usage: downloadinux' in err and str(broken) not in err
 
 
-def test_a_tilde_queue_expands_home(calls, capsys, home):
-    downloads = home / "Down loads"
-    downloads.mkdir()
-    (downloads / "q.txt").write_text("")
-    status, _, _ = batch(capsys, "~/Down loads", "v", "~/Down loads/q.txt")
-    assert status == 0
-    assert compose_args(calls[0][1]) == tmux("video", "/downloads/q.txt")
+@pytest.mark.parametrize('command', ['dl', 'batch', 'watch'])
+def test_absent_docker_is_an_operation_error(tmp_path, monkeypatch, capsys, command):
+    monkeypatch.setenv('PATH', '')
+    queue = tmp_path / 'queue'
+    queue.write_text(URLS[0] + '\n')
+    args = {'dl': ['--anonymous', 'v', URLS[0]], 'batch': ['--anonymous', 'g', str(queue)], 'watch': ['v']}[command]
+    assert cli.main([command, *args]) == 1
+    assert capsys.readouterr() == ('', 'downloadinux: error: docker: No such file or directory\n')
 
 
-def test_a_symlinked_downloads_path_is_compared_as_written(calls, capsys, tmp_path):
-    drive = tmp_path / "drive"
-    drive.mkdir()
-    (drive / "q.txt").write_text("")
-    link = tmp_path / "link"
-    link.symlink_to(drive)
-    # Under the link as written: accepted.
-    assert batch(capsys, link, "v", str(link / "q.txt"))[0] == 0
-    assert compose_args(calls[0][1]) == tmux("video", "/downloads/q.txt")
-    # The same file through its resolved path is not under paths.downloads.
-    status, _, err = batch(capsys, link, "v", str(drive / "q.txt"))
-    assert status == 1
-    assert "is outside paths.downloads" in err
-
-
-@pytest.mark.parametrize("given", [None, "missing.txt", "."])
-def test_a_missing_queue_exits_1_and_runs_nothing(calls, capsys, downloads, monkeypatch, given):
-    monkeypatch.chdir(downloads)
-    argv = ["video"] if given is None else ["video", given]
-    status, out, err = batch(capsys, downloads, *argv)
-    expected = downloads / ("dlmp4_queue" if given is None else given)
-    assert (status, out) == (1, "")
-    assert err == f"downloadinux: error: no such queue file: {os.path.abspath(expected)}\n"
-    assert calls == []
-
-
-@pytest.mark.parametrize("where", ["sibling", "prefix"])
-def test_a_queue_outside_downloads_exits_1_and_runs_nothing(calls, capsys, downloads, where):
-    # "prefix": a sibling whose name starts with the downloads directory's.
-    outside = downloads.parent / ("elsewhere" if where == "sibling" else downloads.name + "2")
-    outside.mkdir()
-    queue = outside / "q.txt"
-    queue.write_text("")
-    status, out, err = batch(capsys, downloads, "gallery", str(queue))
-    assert (status, out) == (1, "")
-    assert err == (
-        f"downloadinux: error: {queue} is outside paths.downloads ({downloads}); "
-        "the container cannot see it\n"
-    )
-    assert calls == []
-
-
-@pytest.mark.parametrize("preset", ["video", "gallery"])
-def test_compose_failing_exits_1_with_the_pinned_message(calls, capsys, downloads, preset):
-    (downloads / ROWS[preset][1]).write_text("")
-    calls.statuses.append(1)
-    status, out, err = batch(capsys, downloads, preset)
-    assert (status, out) == (1, "")
-    assert err == (
-        f"downloadinux: error: could not start tmux session {ROWS[preset][0]}; "
-        f"if one is already running, attach with dlx watch {preset}\n"
-    )
-
-
-def test_batch_never_starts_interactive_zsh(calls, capsys, downloads):
-    # D3 Done when: no `zsh -i` and no `.zshrc`.
-    for preset in ROWS:
-        (downloads / ROWS[preset][1]).write_text("")
-        batch(capsys, downloads, preset)
-    for _, argv, _ in calls:
-        assert "-i" not in argv
-        assert not any(".zshrc" in arg for arg in argv)
-        assert not any("-ic" == arg or arg.startswith("zsh -i") for arg in argv)
-
-
-def test_batch_reaches_the_configured_project(calls, capsys, downloads):
-    (downloads / "dlmp4_queue").write_text("")
-    batch(capsys, downloads, "v", "--set", "container.project=second")
-    argv = calls[0][1]
-    assert argv[argv.index("--project-name") + 1] == "second"
-
-
-def test_an_unknown_batch_preset_is_a_usage_error(calls, capsys, downloads):
-    with pytest.raises(SystemExit) as exit_info:
-        batch(capsys, downloads, "audio")
-    assert exit_info.value.code == 2
-    assert calls == []
-
-
-def test_missing_docker_on_batch_is_cli_error(tmp_path, monkeypatch, capsys, downloads):
-    (downloads / "dlmp4_queue").write_text("")
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    monkeypatch.setenv("PATH", str(empty))
-    status, _, err = batch(capsys, downloads, "video")
-    assert status == 1
-    assert err == "downloadinux: error: docker: No such file or directory\n"
-
-
-# --- watch ---------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("argv,session", [
-    ([], "batch-video"), (["video"], "batch-video"), (["v"], "batch-video"),
-    (["gallery"], "batch-gallery"), (["gal"], "batch-gallery"), (["g"], "batch-gallery"),
-    (["my-session"], "my-session"),
-])
-def test_watch_attaches_uncaptured_and_returns_the_status(calls, capsys, argv, session):
-    calls.statuses.append(4)
-    status, out, err = run(capsys, "watch", *argv)
-    assert (status, out, err) == (4, "", "")
-    [(kind, call, _)] = calls
-    assert kind == "run"
-    assert compose_args(call) == [*EXEC, "tmux", "attach", "-t", session]
-
-
-# --- the container's zsh helpers ----------------------------------------------
-
-ZSH = """
+ZSH = '''
 for f in "$ZSH_HELPERS"/*.zsh; do source "$f"; done
-for name in dlmp4 dlgal dlmp4_batch dlgal_batch _preset_video _preset_gallery \\
-    _batch_downloader_core exifmod; do
+for name in dlmp4 dlgal dlmp4_batch dlgal_batch _preset_video _preset_gallery _batch_downloader_core exifmod; do
   whence -w "$name" || true
 done
-"""
+'''
 
 
-def test_the_download_shortcuts_are_retired(tmp_path):
-    # Named cookie sources §5 (DEC-33): downloads start on the host; the
-    # batch loop and exifmod stay. Real zsh without startup files.
-    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
-           "ZSH_HELPERS": str(checkout.asset_path("zsh"))}
-    result = subprocess.run(["zsh", "-f", "-c", ZSH], env=env, capture_output=True,
-                            text=True, check=False)
+def test_shell_has_utilities_and_no_download_or_loop_route(tmp_path):
+    result = subprocess.run(['zsh', '-f', '-c', ZSH], capture_output=True, text=True, check=False,
+                            env={'PATH': os.environ['PATH'], 'HOME': str(tmp_path),
+                                 'ZSH_HELPERS': str(checkout.asset_path('zsh'))})
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "dlmp4: none", "dlgal: none", "dlmp4_batch: none", "dlgal_batch: none",
-        "_preset_video: none", "_preset_gallery: none",
-        "_batch_downloader_core: function", "exifmod: function",
-    ]
-    for name in ("functions.zsh", "aliases.zsh", "zshrc"):
-        assert "DL_USER_AGENT" not in checkout.asset_path(f"zsh/{name}").read_text()
+        'dlmp4: none', 'dlgal: none', 'dlmp4_batch: none', 'dlgal_batch: none',
+        '_preset_video: none', '_preset_gallery: none', '_batch_downloader_core: none', 'exifmod: function']
+    assert not (checkout.checkout_root() / 'zsh/batch.zsh').exists()
+    assert 'cd /downloads' in checkout.asset_path('zsh/zshrc').read_text()
+    for name in ('functions.zsh', 'aliases.zsh', 'zshrc'):
+        text = checkout.asset_path(f'zsh/{name}').read_text()
+        assert 'DL_USER_AGENT' not in text and 'HOME/Downloads' not in text and '--config-location ' not in text
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_attached_dl_submits_then_follows_each_reference_through_real_streams(
+    rig, children, monkeypatch, capsys, failed,
+):
+    from test_host_jobs import record
+    # Rig's forbid-follow hook is only for its detached submission tests.
+    # Restore the implementation captured before the fixture patched it.
+    monkeypatch.setattr(host_follow, 'follow_jobs', REAL_FOLLOW)
+    spawned = []
+    def spawn(argv, env):
+        job_id = int(argv[-1])
+        replies = sequence(record(job_id, url=URLS[job_id - 1]), data=b'raw')
+        replies[-2]['job'].update(state='failed' if failed and job_id == 1 else 'succeeded',
+                                 exit_status=7 if failed and job_id == 1 else 0)
+        child = children(*(step(reply) for reply in replies))
+        spawned.append(child)
+        with monkeypatch.context() as patches:
+            patches.setattr(compose, 'spawn_process', spawn_process)
+            return child(argv, env)
+    monkeypatch.setattr(compose, 'spawn_process', spawn)
+    assert cli.main([*rig.sets(), 'dl', '--anonymous', 'v', *URLS]) == (1 if failed else 0)
+    assert capsys.readouterr() == ('rawraw', f'Job 1: {URLS[0]}\nJob 2: {URLS[1]}\n')
+    assert [child.calls[0][0][-1] for child in spawned] == ['1', '2']
+    for child in spawned:
+        reaped(child.process)
+        assert child.process.stdin.closed and child.process.stdout.closed
+
+CLOSED_OUTPUT = r'''
+import json, os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from downloadinux import cli, compose, worker
+fixture, steps, report, words = sys.argv[2:]
+children = []
+real_spawn = compose.spawn_process
+compose.capture_process = lambda *args: (0, 'container\n')
+def feed(argv, env, text):
+    url = json.loads(text)['urls'][0]
+    return 0, worker.encode(dict(version=1, submission=1, created=[dict(id=4, url=url)], duplicates=[])).decode()
+def spawn(argv, env):
+    child = real_spawn([sys.executable, '-I', fixture, steps], env)
+    children.append(child)
+    return child
+compose.capture_with_input, compose.spawn_process = feed, spawn
+try:
+    status = cli.main(json.loads(words))
+    states = []
+    for child in children:
+        try:
+            os.waitpid(child.pid, os.WNOHANG)
+            reaped = False
+        except ChildProcessError:
+            reaped = True
+        states.append([child.returncode, child.stdin.closed, child.stdout.closed, reaped])
+    Path(report).write_text(json.dumps(dict(status=status, children=states)))
+finally:
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+        child.stdin.close()
+        child.stdout.close()
+sys.exit(status)
+'''
 
 
-def test_the_shell_starts_in_downloads_and_names_no_old_path():
-    zshrc = checkout.asset_path("zsh/zshrc").read_text()
-    assert "cd /downloads" in zshrc
-    for name in ("zshrc", "aliases.zsh", "batch.zsh", "functions.zsh"):
-        text = checkout.asset_path(f"zsh/{name}").read_text()
-        assert "HOME/Downloads" not in text and "--config-location " not in text, name
-
-
-def test_batch_zsh_holds_only_the_loop():
-    # `dlx batch` sources it alone, so it defines the loop and nothing else.
-    text = checkout.asset_path("zsh/batch.zsh").read_text()
-    code = [line for line in text.splitlines() if line and not line.lstrip().startswith("#")]
-    assert code[0] == "_batch_downloader_core() {"
-    assert code[-1] == "}"
-    assert "_batch_downloader_core()" not in checkout.asset_path("zsh/functions.zsh").read_text()
+@pytest.mark.parametrize('command', ['dl', 'watch', 'logs'])
+@pytest.mark.parametrize('broken', ['stdout', 'stderr'])
+def test_real_closed_output_pipe_exits_1_after_reaping_not_120(tmp_path, command, broken):
+    import json
+    from stream_support import FIXTURE, chunk, error_line
+    marker, report = tmp_path / 'eof', tmp_path / 'report.json'
+    if command == 'logs' and broken == 'stderr':
+        steps = [['line', error_line('synthetic refusal')], ['exit', 1]]
+    elif command == 'logs':
+        steps = [['ignore-term', None], ['line', chunk(b'x', offset=1)], ['eof', str(marker)]]
+    else:
+        steps = [['ignore-term', None], step(event('job', job=record(4, state='running', lane='video'))),
+                 step(event('log', id=4, attempt=1, offset=1, data='eA==')), ['eof', str(marker)]]
+    words = {'dl': ['dl', '--anonymous', 'v', record()['url']],
+             'watch': ['watch', 'v'], 'logs': ['jobs', 'logs', '--follow', '4']}[command]
+    reader, writer = os.pipe()
+    os.close(reader)
+    try:
+        result = subprocess.run(
+            [sys.executable, '-I', '-c', CLOSED_OUTPUT, str(checkout.checkout_root() / 'src'),
+             str(FIXTURE), json.dumps(steps), str(report), json.dumps(words)],
+            stdout=writer if broken == 'stdout' else subprocess.PIPE,
+            stderr=writer if broken == 'stderr' else subprocess.PIPE, timeout=20,
+        )
+    finally:
+        os.close(writer)
+    assert result.returncode == 1
+    assert b'Traceback' not in (result.stdout or b'') + (result.stderr or b'')
+    state = json.loads(report.read_text())
+    assert state == dict(status=1, children=[[1 if command == 'logs' and broken == 'stderr' else 0,
+                                            True, True, True]])
+    if not (command == 'logs' and broken == 'stderr'):
+        assert marker.exists()
+    if broken == 'stdout':
+        assert b'downloadinux: error: <stdin/stdout>: Broken pipe\n' in result.stderr

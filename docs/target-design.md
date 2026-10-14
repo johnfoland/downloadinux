@@ -30,8 +30,9 @@ with their reply bounds (DEC-54). The host's streaming call, job
 operations, and `jobs` commands (DEC-55) are implemented in PR #90. PR #92
 adds reusable host submissions and byte-preserving queue imports (DEC-56). PR #94
 adds the following client, shared record predicates, typed host following events,
-and download status reduction (DEC-57). The cutover
-remains unimplemented, so `dl` and batches still run as Stage 2 left them. Stage 4 remains
+and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
+`watch` fronts and retirement are implemented (DEC-44, DEC-56, DEC-57).
+D5's joined Stage 3 completion evidence remains pending. Stage 4 remains
 proposed.
 
 ## Agreed decisions
@@ -262,14 +263,12 @@ Commands in the container, pinned for P0001-C03:
 
 Downloads, pinned for P0001-C04:
 
-*History, superseded at the Stage 2 cutover (PR #62):* `dl` no longer runs the preset's argument list itself, and
-`batch`'s tmux program is no longer the `<script>`/`<argv…>` form below; both
-launch `downloadinux-runner` with a pinned cookie selection and the effective
-user-agent (*Named cookie sources* §3, "Host launch (DEC-39)"). The preset
-and URL rules, the queue checks and container path, the report, the session
-table, the failure message, and `watch` below still hold. The Stage 3 cutover
-(settled, not yet implemented) replaces `batch`'s tmux launch and queue rules
-and `watch` (*Persistent worker and jobs* §6, §7).
+*History:* Stage 2's cutover (PR #62) replaced the direct preset launch
+below with the pinned runner (*Named cookie sources* §3, DEC-39). The
+implemented Stage 3 cutover now replaces those foreground/tmux routes,
+queue containment and reports, session columns, and `watch` session names
+with *Persistent worker and jobs* §6/§7 (DEC-44). Preset aliases and URL
+argument validation remain; `config user-agent` below remains current.
 
 - `dl <preset> <url>…` takes at least one URL; `preset` is `video` (`v`)
   or `gallery` (`gal`, `g`), anything else a usage error, exit 2. It runs
@@ -348,8 +347,8 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 
 `video` (alias `v`) and `gallery` (aliases `gal`, `g`) name the presets.
 
-Stage 3 (settled, not yet implemented) submits `dl` and `batch` to the
-persistent worker, makes `watch` follow a batch lane, and adds `jobs`
+Stage 3's implemented cutover submits `dl` and `batch` to the persistent
+worker, makes `watch` follow a batch lane, and includes `jobs`
 (*Persistent worker and jobs* §6, DEC-44).
 
 ## Configuration and paths
@@ -474,14 +473,15 @@ Implemented in P0001-C04 (D3): `DL_USER_AGENT`, the shell helpers on the
 presets, the batch loop's own file, and the end of DEC-15's interval (the
 `/legacy/` binds and the links are gone). *History, superseded at the Stage 2 cutover (PR #62):* `DL_USER_AGENT`, the
 shell download helpers, and the placeholder jar are retired (*Named cookie
-sources* §5); the batch loop's file and `exifmod` remain.
+sources* §5). Stage 3's implemented cutover retires the batch loop's file
+and tmux; `exifmod` and the diagnostic shell remain (§7, DEC-44).
 
 | Container location | Host source | Access | Purpose |
 | --- | --- | --- | --- |
-| `/downloads` | `paths.downloads` | read-write | Download output, queues, batch logs, gallery archive |
+| `/downloads` | `paths.downloads` | read-write | Download output, queue import files, retained URL logs, gallery archive |
 | `/config` | the checkout's `presets/` | read-only | Shipped presets |
-| `/state` | `paths.state` | read-write | Generated per-invocation files; later jobs and logs |
-| `/cookies` | `paths.cookies` | read-write | Managed cookie jar (`cookies.txt` in Stage 1) |
+| `/state` | `paths.state` | read-write | Private attempt cookie snapshots, jobs and logs |
+| `/cookies` | `paths.cookies` | read-write | Managed named sources (`cookies.txt` in Stage 1) |
 
 Binds use Compose's long volume syntax, so host paths may contain spaces or
 colons. The NordVPN login and shell history keep their named volumes.
@@ -572,7 +572,8 @@ Pinned for P0001-C04, the end of DEC-15's interval:
   History: Stage 2's *Named cookie sources / Compatibility and migration*
   retired the four download shortcuts and their user-agent environment
   channel at the cutover (DEC-33, amended 2026-10-09; PR #62); the
-  non-interactive batch loop and `exifmod` remain.
+  non-interactive batch loop remained through Stage 2. Stage 3's implemented
+  cutover retires it; `exifmod` remains (DEC-44).
 - Entrypoint messages (issue #18): without a token, `NORDVPN_TOKEN not set.
   Store one on the host with: just token <token>`; the last line, `Ready.
   Shell in with: just shell (or dlx shell)`.
@@ -880,8 +881,9 @@ Import details, pinned for P0001-C01:
 - `--env PATH` resolves like `--config`; the default is `.env` in the
   checkout root.
 
-The `just` recipes keep their names and run `uv run downloadinux …`. `just
-batch` and `just watch` keep tmux until Stage 3: the CLI starts the existing
+The `just` recipes keep their names and run `uv run downloadinux …`.
+*History, superseded at Stage 3's implemented cutover (DEC-44):* `just
+batch` and `just watch` kept tmux until Stage 3: the CLI starts the existing
 zsh loop non-interactively, sourcing only the loop's own file, with the
 argument list the `dl` operation would use (plus gallery-dl's `-q`, as
 today's gallery batch has). The queue file must still be under the
@@ -1213,7 +1215,8 @@ Stage 3 owns persistence and failure states, but must use this timing rule
 Do not allocate a mutable working jar while work waits in a queue: keep the
 pinned canonical revision available, then make the private copy at startup.
 
-Stage 2 has invocations, not persisted jobs: the host resolves and pins the
+*History, superseded at Stage 3's implemented cutover (DEC-44):*
+Stage 2 had invocations, not persisted jobs: the host resolves and pins the
 source identity/revision once for each `dl` or `batch` request, after its normal
 preset/URL-argument or queue-path validation and before launching Compose/tmux.
 It passes that exact pair to
@@ -1228,7 +1231,9 @@ cutover, the unit is a job: one URL, and one private jar per attempt, made at
 its startup from the revision pinned when it was submitted (DEC-31, amended;
 *Persistent worker and jobs* §4).
 
-Host launch (DEC-39). A malformed `--cookie-source` name, both selectors
+Host launch (DEC-39). Selection/usage rules below remain current. The direct
+runner and tmux launch paragraphs record Stage 2 history, superseded by the
+implemented worker submission in §6/§7 (DEC-44). A malformed `--cookie-source` name, both selectors
 together, or an invalid `--user-agent` (§4) is a usage error, exit 2, before
 settings are loaded. The three options may precede `PRESET`, follow it, or
 follow the last URL; one placed between two URLs leaves the rest unrecognized,
@@ -1262,7 +1267,8 @@ worker and jobs* §4, §7; DEC-39, amended).
 
 A container-side runner, using the same parser and revision-path validation as
 the host, creates a private copy of the submitted revision immediately before
-starting the downloader or batch loop. Ship that reusable module and a thin
+starting the downloader. The Stage 2 batch loop used the same rule before
+its retirement (DEC-44). Ship that reusable module and a thin
 runner entry point into the image ("Runner interface and process lifetime"
 below, DEC-36); the container path
 accepts `/cookies` and `/state` explicitly and never loads host settings or
@@ -1271,8 +1277,9 @@ before Compose. The runner validates the supplied identifiers and parses the
 exact immutable file at execution; it does not resolve the default or current
 registry revision again. Missing or invalid pinned material fails, never falls
 back to newer cookies. A replaced current source record does not invalidate an
-older pinned revision that remains available. For detached batches a startup
-failure is visible through `watch`; no job-reporting API is implied.
+older pinned revision that remains available. *Stage 2 history:* a detached
+batch startup failure was visible through `watch` without a job-reporting API.
+The implemented worker now records that failure on the job (§5, DEC-48).
 
 Each working directory is `/state/cookie-invocations/<random-id>/` (0700),
 with `cookies.txt` (0600), `metadata.json` (0600: version 1, invocation ID,
@@ -1284,19 +1291,20 @@ cleanup eligibility and removal. Under that lock, the runner creates a hidden
 staging directory, locks its lease, writes the complete copy and metadata,
 and renames the directory into visibility. This prevents cleanup acquiring a
 new lease before its producer can lock it. It holds that lease through the
-entire process tree/loop. The lease descriptor is inherited by the downloader
-or batch loop and every process that can access the working jar, so a hard
+entire process tree. The lease descriptor is inherited by the downloader
+and every process that can access the working jar, so a hard
 kill of the supervising runner cannot unlock a still-active consumer. Test
-that inheritance against the actual Python/zsh launch boundary.
+that inheritance against the actual runner/downloader launch boundary.
+The former zsh loop used the same lifetime rule before retirement (DEC-44).
 Only the private jar path is passed as downloader arguments (DEC-20); yt-dlp
 writeback stays there. Anonymous execution allocates no cookie material and
 passes no cookie option. Gallery cookies remain Instagram-only (DEC-6).
 
 On normal completion, failure, or handled termination, the runner waits for
 its child process tree to finish and removes its own working directory before
-releasing the lease. For batches, cleanup happens after the loop, before the
-existing "done, press a key" pause; the host never cleans up on detached-launch
-return. Hard kill or container interruption can leave a working directory.
+releasing the lease. *Stage 2 history:* batch cleanup followed the loop,
+before the "done, press a key" pause. The host never cleans snapshots on
+submission or detach return. Hard kill or container interruption can leave a working directory.
 `cookies cleanup` invokes the runner in the configured running container:
 it removes only well-formed invocation directories whose lease it can lock
 non-blockingly, holding that lock during removal; busy directories are skipped.
@@ -1309,7 +1317,7 @@ snapshot producers and cleanup execute in the same Docker Linux environment,
 not through a host/container advisory-lock assumption, and take their locks on
 reopened descriptors (DEC-35), which Docker Desktop's bind mounts enforce
 across containers. The runner starts the
-downloader/loop in a process group, forwards handled termination signals to
+downloader in a process group, forwards handled termination signals to
 that group, and waits for every process that inherited its lease before
 deleting cookies ("Runner interface and process lifetime", DEC-36).
 Normal child exit returns the downloader status; a signalled child returns
@@ -1418,9 +1426,10 @@ and cleanup would remove an active snapshot.
 #### Runner interface and process lifetime
 
 These details pin the container runner (DEC-36). The runner shipped and was
-tested before D4 activated it; since the cutover (PR #62) `dl` and `batch`
-run its `download` and `batch`, and the host `cookies cleanup` front (PR #52)
-its `cleanup`. Implemented
+tested before Stage 2 D4 activated it: that cutover (PR #62) had `dl` and
+`batch` run its `download` and `batch`. Stage 3's implemented cutover retires
+`batch`; the worker runs `download` per job, and the host `cookies cleanup`
+front (PR #52) still runs `cleanup`. Implemented
 in PR #49 (`src/downloadinux/cookie_runner.py`, `scripts/downloadinux-runner`,
 and the gate's smoke test).
 
@@ -1434,8 +1443,10 @@ browser support, `tomlkit`, yt-dlp, or the `/opt/venv` interpreter. Its
 children inherit the container environment unchanged, so `yt-dlp` and
 `gallery-dl` resolve through `PATH` as they do today.
 
-*Interface.* It is a container-internal boundary; host operations build its
-argument lists, each item one list element:
+*Interface.* It is a container-internal boundary; the worker builds its
+`download` list, and the host cleanup front its `cleanup` list, each item
+one element. The `batch` line below is Stage 2 history, retired at the
+implemented Stage 3 cutover (DEC-44):
 
 ```
 downloadinux-runner download --cookies DIR --state DIR SELECTION --user-agent UA PRESET URL...
@@ -1443,9 +1454,10 @@ downloadinux-runner batch --cookies DIR --state DIR SELECTION --user-agent UA PR
 downloadinux-runner cleanup --state DIR
 ```
 
-The `batch` subcommand, and the batch loop it runs, retire at the Stage 3
-cutover (*Persistent worker and jobs* §7; DEC-36, amended); the worker runs
-`download` once per job.
+The `batch` subcommand, and the batch loop it ran, are retired at the
+implemented Stage 3 cutover (*Persistent worker and jobs* §7; DEC-36, amended); the worker runs
+`download` once per job. The remaining batch operand and pause rules below
+record Stage 2 history; current usage lists only `download` and `cleanup`.
 
 `SELECTION` is `--source NAME --revision REVISION` (both, using §1's identifier
 rules) or `--anonymous`, exactly one form. Every option is required: there are
@@ -1463,7 +1475,8 @@ Errors use the host's `downloadinux: error: <message>` form on stderr, naming
 paths and never cookie contents.
 
 *Child argument lists.* `download` runs the preset's argument list (*Presets*)
-with the URLs after it. `batch` runs the shared non-interactive loop:
+with the URLs after it. *Stage 2 history, retired at the implemented Stage 3
+cutover (DEC-44):* `batch` ran the shared non-interactive loop:
 `zsh -f -c 'source /home/dl/.zsh-custom/batch.zsh && _batch_downloader_core "$@"'
 zsh QUEUE LOG_PREFIX TITLE COLOUR` followed by the preset's batch argument
 list, with the preset table's fields (*Host application*). For a named
@@ -1628,8 +1641,9 @@ Retire the container's interactive download shortcuts `dlmp4`, `dlgal`,
 managed downloads from the host: `just dl video ...` / `dlx dl video ...`,
 `just dl gallery ...` / `dlx dl gallery ...`, and `just batch ...` / `dlx batch
 ...`. Do not add interactive container-side replacements, new shell flags, or a shell
-source/default selector. Preserve `just shell` for diagnostics and utilities,
-and keep the shared non-interactive zsh batch loop until Stage 3 replaces it.
+source/default selector. Preserve `just shell` for diagnostics and utilities.
+Stage 2 retained the shared non-interactive zsh batch loop; Stage 3's
+implemented cutover retires it (DEC-44).
 The downloaders remain installed for the runner.
 
 The helper-specific `DL_USER_AGENT` / `DOWNLOADINUX_USER_AGENT` environment
@@ -1726,11 +1740,10 @@ test drives them against the worker in the built image. PR #92 implements
 (DEC-56), tested against the real worker and client. PR #94 implements the
 additive following client and lane read, `job_protocol` shared validation, and
 `host_follow` typed events and status reduction (DEC-57), with real client,
-service, and cleanup-signal tests. The cutover (§7) remains
-unimplemented: the download fronts do not submit jobs yet. Until the
-cutover, batches run
-in tmux as *Named cookie sources* §3 describes, and `dl` runs the runner in
-the foreground. Do not mark this design implemented merely because its
+service, and cleanup-signal tests. The coordinated fronts and retirement
+in §7 are now implemented: `dl` and `batch` submit to the worker, `watch`
+follows a lane, and the foreground/tmux routes are retired (DEC-44).
+D5's joined Stage 3 completion evidence remains pending. Do not mark this design implemented merely because its
 planning pull request merged. Client request and reply shapes and human
 output texts that this section does not give are pinned here, with a
 decision-log entry where they leave a choice, before the chunk that builds
@@ -2453,7 +2466,7 @@ Jobs run in queues (DEC-43). Each preset has one batch lane, `video` and
 queue of its own. A queue runs one job at a time, in the order its jobs
 entered `queued`, so a retry goes to the back. Different queues run at the
 same time: both lanes and any number of immediate submissions, as tmux
-sessions and foreground `dl` runs do today. A multi-URL `dl` downloads its
+sessions and foreground `dl` runs did before the implemented cutover. A multi-URL `dl` downloads its
 URLs one after another, as its single yt-dlp did.
 
 *Throttle.* Batch lanes keep today's spacing (DEC-6): whenever a lane's job
@@ -2855,13 +2868,13 @@ The `just` recipes stay wrappers: `dl` and `batch` keep forwarding every word
 
 #### Host submission and queue import (DEC-56)
 
-Implemented as additive preparation for §7's cutover in PR #92. The reusable host
+Implemented as additive preparation in PR #92; the coordinated fronts now
+call these operations at §7's implemented cutover (DEC-44). The reusable host
 module is `downloadinux.host_downloads`, with `submit_download` and
 `import_batch` operations. They return data for the CLI and Stage 4 TUI;
-they print nothing and do not follow jobs. They ship additively before the
-cutover: until §7 switches the commands together, `dl`, `batch`, and `watch`
-keep their existing routes. Following and its remaining texts are pinned
-in DEC-57 below before their implementation.
+they print nothing and do not follow jobs. Their additive preparation
+switched no command; the coordinated fronts now use them, with following
+and rendering under DEC-57 below.
 
 *Submission.* Both operations take the existing configuration, overrides,
 host, and selection arguments; `submit_download` takes a preset and URLs,
@@ -2967,8 +2980,8 @@ produce no output; the batch front renders their result at the cutover.
 
 #### Host following operations and later front output (DEC-57)
 
-Implemented in PR #94 as additive preparation; the front output below
-remains pinned for the later cutover. `downloadinux.host_follow`
+Implemented in PR #94 as additive preparation; the front output below is
+now implemented at §7's coordinated cutover (DEC-44). `downloadinux.host_follow`
 exposes `follow_jobs(ids, config=None, overrides=(), host=Host(), *,
 capture=None, spawn=None)` and `follow_lane(preset="video", config=None,
 overrides=(), host=Host(), *, capture=None, spawn=None)`. Each loads settings
@@ -3017,8 +3030,8 @@ did not, its non-null nonzero exit status, otherwise 1. A recorded zero on
 a nonsuccess state still returns 1. Multi-job nonsuccess returns 1, regardless
 of any one runner's code. An empty list returns 1, avoiding false success.
 
-*Output at the coordinated cutover.* These texts are pinned now and rendered
-only when §7 switches the fronts. `dl` uses DEC-56's reference order, and
+*Output at the coordinated cutover.* These texts are implemented with
+§7's coordinated front switch. `dl` uses DEC-56's reference order, and
 `--detach` prints `Jobs: I J …` on standard output, the distinct IDs in that
 order, then exits 0 without opening a follow stream. `--detach` is a boolean
 option allowed before or after the positionals, under DEC-40's placement
@@ -3049,16 +3062,16 @@ No worker query or mutation is attempted after the signal. These observations
 may be stale by the time the user reads them. Preserve inherited Compose
 stderr alongside the required messages (§1 *Streaming*); do not assert that
 the application owns that entire stream. A failed output write is the usual
-operation error, exit 1, after closing the follow generator. No front is
-switched by the additive following preparation.
+operation error, exit 1, after closing the follow generator. The earlier additive following preparation switched no front; §7's
+coordinated cutover now uses this renderer.
 
 #### Job operations, output, and exit statuses (DEC-55)
 
 Implemented in PR #90: the host operations are the module
 `downloadinux.host_jobs`, which the `jobs` fronts call and the Stage 4 TUI will; their tests drive
 every text and exit status below through the CLI, and the gate's smoke test
-runs the commands against the worker in the built image. No command submits
-until the cutover (§7); the additive host operations above prepare that route.
+runs the commands against the worker in the built image. The coordinated `dl` and `batch` fronts now submit through the host
+operations above (§7, DEC-44).
 Each loads the effective settings and
 credentials as every command does and reaches the worker only through §1's
 host call or its streaming call (DEC-53, DEC-55), so the running check and
@@ -3191,13 +3204,15 @@ errors (DEC-39, DEC-40). The `just jobs *args` recipe's menu line is
 
 ### 7. Compatibility and retirement
 
-`dl`, `batch`, and `watch` switch to the worker together in one cutover pull
-request, as Stage 2's routes did (DEC-44). The worker ships first, additively:
-its executable, the image command, `init`, and the `jobs` commands, while tmux
-batches still work. At the cutover:
+`dl`, `batch`, and `watch` now use the worker together (DEC-44). The
+coordinated fronts and every retirement below are implemented. D5's joined
+Stage 3 completion evidence remains pending. The worker and `jobs` commands
+shipped first, additively, while the earlier tmux batches still worked.
+The implemented cutover:
 
-- The image no longer installs tmux, and no recipe, command, or document
-  names it. `zsh/batch.zsh` and its sourcing by the interactive shell go, as
+- The image no longer installs tmux, and no current recipe, command, or
+  operating instruction uses it; history, upgrade notes, and negative tests
+  can name it. `zsh/batch.zsh` and its sourcing by the interactive shell go, as
   do the runner's `batch` subcommand (DEC-36, amended), the batch tmux script
   (*Named cookie sources* §3, DEC-39, amended), the preset table's session,
   log prefix, title, and colour columns, and the gallery batch's `-q`.

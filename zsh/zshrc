@@ -24,7 +24,7 @@ setopt APPEND_HISTORY INC_APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_ALL_DUPS
 export PATH="/opt/venv/bin:$PATH"
 export EDITOR="nano"
 
-# --- Custom aliases, functions, and the batch loop --------------------------
+# --- Custom aliases and functions --------------------------
 for _f in "$HOME"/.zsh-custom/*.zsh(N); do
   source "$_f"
 done

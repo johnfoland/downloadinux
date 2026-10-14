@@ -61,12 +61,6 @@ if 'extra' in words:
     open(os.path.join(os.path.dirname(jar), 'extra'), 'w').close()
 if 'grandchild' in words:
     subprocess.Popen([sys.argv[0], 'grandchild'], close_fds=False, env=dict(os.environ, STUB_ROLE='grandchild'))
-if 'loop' in words:
-    # The batch loop's shape: zsh -f -c LOOP zsh QUEUE PREFIX TITLE COLOUR CMD...
-    queue, command = sys.argv[5], sys.argv[9:]
-    for line in open(queue).read().splitlines():
-        if line.strip() and not line.startswith('#'):
-            subprocess.run(command + [line], close_fds=False)
 if 'wait' in words:
     release = os.path.join(log, 'release-gc' if role == 'grandchild' else 'release')
     while not os.path.exists(release):
