@@ -24,7 +24,8 @@ host events, and status reduction
 (DEC-57) are implemented as additive preparation in
 [PR #94](https://github.com/johnfoland/downloadinux/pull/94); front output
 and the coordinated command cutover and retirement are now implemented
-(DEC-44/56/57). D5's joined Stage 3 completion evidence remains pending.
+(DEC-44/56/57). [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3 completion
+evidence: Stage 3 is implemented.
 Implemented so far: the
 `downloadinux.job_store` library (private versioned SQLite ownership, atomic
 pinned submissions, exact active duplicates, typed record reads, and the
@@ -40,8 +41,10 @@ command under Docker's init, with the
 host's worker calls (`downloadinux.host_worker`), doctor's
 `worker.running`, and the host's job operations (`downloadinux.host_jobs`)
 behind the `jobs` commands (DEC-55). The coordinated cutover now uses the worker for `dl`, `batch`, and `watch`,
-and retires tmux and the zsh loop. Stage 3's final completion evidence is
-pending. Stage 4,
+and retires tmux and the zsh loop. Stage 3 is implemented, with joined
+credential-free evidence for disconnect/reconnect, throttled lanes, process-tree
+cancellation, refreshed retry, restart reconciliation, and doctor (PR #97).
+Stage 4,
 the Python + Textual TUI, remains a proposal.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,

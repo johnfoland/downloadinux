@@ -1,6 +1,7 @@
 # Target design
 
-Status: Stage 1 is implemented. P0002's portable writes and cookie/setup refresh
+Status: Stages 1–3 are implemented; Stage 4 remains proposed.
+P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
 safe summaries, immutable registry reader, and locked atomic host writer;
@@ -32,8 +33,8 @@ adds reusable host submissions and byte-preserving queue imports (DEC-56). PR #9
 adds the following client, shared record predicates, typed host following events,
 and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 `watch` fronts and retirement are implemented (DEC-44, DEC-56, DEC-57).
-D5's joined Stage 3 completion evidence remains pending. Stage 4 remains
-proposed.
+[PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined
+Stage 3 completion evidence. Stage 4 remains proposed.
 
 ## Agreed decisions
 
@@ -1715,8 +1716,10 @@ mark this design implemented merely because its planning PR merged.
 
 ## Persistent worker and jobs
 
-Settled for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64))
-(DEC-41 to DEC-57). Implemented: the job store, with §2's foundation (private versioned storage
+Implemented for Stage 3 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)),
+with joined completion evidence in
+[PR #97](https://github.com/johnfoland/downloadinux/pull/97) (DEC-41 to DEC-57).
+The implementation includes the job store, with §2's foundation (private versioned storage
 under worker ownership, atomic pinned submissions, active duplicates, and
 typed record reads) and §5's store lifecycle operations (queue heads, start,
 waits, ends and lane deadlines, cancel, retry, and interrupted marks),
@@ -1743,8 +1746,10 @@ additive following client and lane read, `job_protocol` shared validation, and
 service, and cleanup-signal tests. The coordinated fronts and retirement
 in §7 are now implemented: `dl` and `batch` submit to the worker, `watch`
 follows a lane, and the foreground/tmux routes are retired (DEC-44).
-D5's joined Stage 3 completion evidence remains pending. Do not mark this design implemented merely because its
-planning pull request merged. Client request and reply shapes and human
+PR #97 adds D5's joined completion evidence through the real host commands,
+worker, runner, private jars, and restart reconciliation in the credential-free
+gate. Stage 3 is implemented; its planning merge alone was not implementation
+evidence. Client request and reply shapes and human
 output texts that this section does not give are pinned here, with a
 decision-log entry where they leave a choice, before the chunk that builds
 them.
@@ -3205,8 +3210,10 @@ errors (DEC-39, DEC-40). The `just jobs *args` recipe's menu line is
 ### 7. Compatibility and retirement
 
 `dl`, `batch`, and `watch` now use the worker together (DEC-44). The
-coordinated fronts and every retirement below are implemented. D5's joined
-Stage 3 completion evidence remains pending. The worker and `jobs` commands
+coordinated fronts and every retirement below are implemented. PR #97 joins
+the Stage 3 completion evidence, including retained archive/old-log bytes and
+recovery across detach, cancel, explicit retry, and container interruption.
+The worker and `jobs` commands
 shipped first, additively, while the earlier tmux batches still worked.
 The implemented cutover:
 
