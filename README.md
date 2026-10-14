@@ -20,9 +20,10 @@ and the proposed Python + Textual TUI (Stage 4). This README covers current
 behavior.
 
 Your existing download configs live on as the `video` and `gallery`
-presets, run from the host with `just dl` and `just batch`. The one thing that had to
-change is cookie handling, which [Step 3](#step-3--cookie-source)
-walks you through.
+presets, run from the host with `just dl` and `just batch`.
+[Step 3](#step-3--cookie-source) explains cookie handling;
+[Batch queues](#batch-queues) and [Inside the container](#inside-the-container)
+explain the worker commands and the upgrade from tmux batches.
 
 ```sh
 cd ~/Code/downloadinux
@@ -1071,6 +1072,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── worker.py                 # container worker: job service and its clients
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 │   └── fixtures/runner-smoke/    # stub downloaders and the in-image runner check
+├── tools/                        # review aids, outside the gate and image build
+│   └── front_output_evidence.py  # closed-pipe final exit checks for command reports
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # old jar, retained only for migration
 ```
