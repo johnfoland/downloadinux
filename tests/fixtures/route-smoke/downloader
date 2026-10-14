@@ -1,27 +1,33 @@
 #!/usr/bin/python3 -I
-"""Stub yt-dlp / gallery-dl for the gate's host-route smoke test (Named
-cookie sources §3, "Host launch (DEC-39)"). scripts/smoke.sh installs it as
-root into the disposable check container's /opt/venv/bin, which leads PATH.
+"""Disposable downloader for the credential-free gate.
 
-Exec cannot set environment through dlx, so it logs to the fixed directory
-/downloads/route-smoke: per call, its argv NUL-separated, then a JSON record
-naming its cookie argument, that file's SHA-256, and the source and revision
-in the metadata.json beside it. It never records or prints cookie contents.
-Then it prints the line `route-smoke stub ran` (no argument or cookie
-material), so a worker job's log shows it ran (Persistent worker and jobs
-§1). When a URL ends in /hold it then polls every 0.1 s until the fixture release file exists, keeping the
-default SIGTERM disposition, so a signal kills it. Otherwise it exits 7 when
-a URL ends in /exit7, else 0.
+Records argv and private-jar hashes/metadata without cookie contents. The
+final URL selects fixture controls; Stage 3 holds have independent markers.
+The detach case forks a real child inheriting the runner's lifetime/lease
+file descriptors. Only the external process-group signal terminates both.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import time
 
-LOG = Path('/downloads/route-smoke')
+LOG = Path(os.environ.get('ROUTE_SMOKE_ROOT', '/downloads/route-smoke'))
 args = sys.argv[1:]
+if args == ['--version']:
+    print('route-smoke synthetic 1')
+    sys.exit(0)
+url = args[-1] if args else ''
+CASES = {
+    'https://example.com/stage3/detach/hold': 'detach',
+    'https://example.com/stage3/lane-first/hold': 'lane-first',
+    'https://example.com/stage3/lane-next/hold': 'lane-next',
+    'https://example.com/stage3/lane-last': 'lane-last',
+}
+case = CASES.get(url)
 jar = None
 for previous, argument in zip([None, *args], args):
     if previous == '--cookies':
@@ -32,14 +38,88 @@ record = {'program': Path(sys.argv[0]).name, 'jar': jar}
 if jar is not None:
     record['sha256'] = hashlib.sha256(Path(jar).read_bytes()).hexdigest()
     metadata = json.loads((Path(jar).parent / 'metadata.json').read_text())
-    record.update(source=metadata['source'], revision=metadata['revision'])
+    record.update(source=metadata['source'], revision=metadata['revision'],
+                  user_agent=metadata['user_agent'])
 stem = LOG / f'call-{time.time_ns()}-{os.getpid()}'
 stem.with_suffix('.argv').write_bytes(b''.join(arg.encode() + b'\0' for arg in args))
 staged = stem.with_suffix('.tmp')
 staged.write_text(json.dumps(record))
 staged.rename(stem.with_suffix('.json'))
 print('route-smoke stub ran', flush=True)
-if any(arg.endswith('/hold') for arg in args):
+
+
+def identity():
+    pid = os.getpid()
+    if Path('/proc/self/stat').exists():
+        # Field 22, after the parenthesized comm (which can contain spaces).
+        start = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()[19]
+    else:
+        start = subprocess.check_output(['ps', '-p', str(pid), '-o', 'lstart=']).decode().strip()
+    return {'pid': pid, 'pgid': os.getpgrp(), 'start': start}
+
+
+def publish(path, value):
+    staged = path.with_suffix('.tmp')
+    staged.write_text(json.dumps(value))
+    staged.rename(path)
+
+
+if case:
+    release = LOG / f'release-{case}'
+    parent_pid = os.getpid()
+    ready = LOG / f'{case}-{parent_pid}.ready.json'
+    child = None
+    stopped = False
+
+    def term(number, frame):
+        global stopped
+        stopped = True
+        (LOG / f'{case}-{parent_pid}.parent.term').write_text(str(number))
+
+    signal.signal(signal.SIGTERM, term)
+    if case == 'detach':
+        read_child, write_child = os.pipe()
+        read_go, write_go = os.pipe()
+        child = os.fork()
+        if child == 0:
+            os.close(read_child)
+            os.close(write_go)
+
+            def child_term(number, frame):
+                (LOG / f'{case}-{parent_pid}.child.term').write_text(str(number))
+                os._exit(128 + number)
+
+            signal.signal(signal.SIGTERM, child_term)
+            os.write(write_child, json.dumps(identity()).encode())
+            os.close(write_child)
+            os.read(read_go, 1)
+            os.close(read_go)
+            while not ready.exists():
+                time.sleep(0.01)
+            while not release.exists():
+                time.sleep(0.05)
+            os._exit(0)
+        os.close(write_child)
+        os.close(read_go)
+        child_identity = json.loads(os.read(read_child, 4096))
+        os.close(read_child)
+        os.write(write_go, b'1')
+        os.close(write_go)
+        publish(ready, {'parent': identity(), 'child': child_identity, 'jar': jar})
+    else:
+        publish(ready, {'parent': identity(), 'child': None, 'jar': jar})
+    print('stage3 downloader ready', flush=True)
+    if case != 'lane-last':
+        while not stopped and not release.exists():
+            time.sleep(0.05)
+    if child is not None:
+        # Never signal the child here: cancellation must reach its group.
+        _, child_status = os.waitpid(child, 0)
+        if not stopped and os.waitstatus_to_exitcode(child_status) != 0:
+            sys.exit(1)
+    sys.exit(143 if stopped else 0)
+
+if url.endswith('/hold'):
     while not (LOG / 'release').exists():
         time.sleep(0.1)
-sys.exit(7 if any(arg.endswith('/exit7') for arg in args) else 0)
+sys.exit(7 if url.endswith('/exit7') else 0)

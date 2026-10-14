@@ -12,11 +12,14 @@ cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}"
 export DOWNLOADINUX_IMAGE=downloadinux:check
 # A background `jobs logs --follow` (the jobs smoke) until it is reaped.
 follower_pid=
+second=downloadinux-check-second-worker
 cleanup() {
   if [[ -n $follower_pid ]]; then
     kill "$follower_pid" 2>/dev/null || true
     wait "$follower_pid" 2>/dev/null || true
   fi
+  # compose down does not own this named one-off (#85).
+  docker rm -f "$second" >/dev/null 2>&1 || true
   "${cli[@]}" compose -- down -v >/dev/null 2>&1 || true
   rm -rf "$smoke_dir"
 }
@@ -438,7 +441,6 @@ rm -f "$route_log"/call-*
 
 # 4. A second worker on the same state root waits for the lock without a
 # socket, stops cleanly, and the first still answers.
-second=downloadinux-check-second-worker
 "${cli[@]}" compose -- run -d --name "$second" downloadinux >/dev/null
 wait_for "the second worker's waiting line" container_log_has "$second" \
   'downloadinux-worker: another worker holds /state/jobs/.worker.lock; waiting'
