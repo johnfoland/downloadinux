@@ -304,9 +304,9 @@ def inprocess(rig, monkeypatch, quiet_signals):
 # Usage (DEC-51 *Exit status and output*).
 
 USAGE = [
-    ([], 'a subcommand is required: serve, status, submit, show, list, cancel, retry, or logs'),
-    (['nope'], "unknown subcommand 'nope'; use serve, status, submit, show, list, cancel, retry, or logs"),
-    (['--state'], "unknown subcommand '--state'; use serve, status, submit, show, list, cancel, retry, or logs"),
+    ([], 'a subcommand is required: serve, status, submit, show, list, cancel, retry, logs, or follow'),
+    (['nope'], "unknown subcommand 'nope'; use serve, status, submit, show, list, cancel, retry, logs, or follow"),
+    (['--state'], "unknown subcommand '--state'; use serve, status, submit, show, list, cancel, retry, logs, or follow"),
     (['status', 'extra'], "status: unexpected operand 'extra'"),
     (['status', '--json'], "status: unexpected operand '--json'"),
     (['serve'], 'serve: --cookies is required'),
@@ -2168,7 +2168,7 @@ BOUNDARY = r'''
 import importlib.abc, sys
 ALLOWED = ('downloadinux', 'downloadinux.worker', 'downloadinux.worker_execution',
            'downloadinux.worker_scheduler', 'downloadinux.nordvpn_output', 'downloadinux.job_store',
-           'downloadinux.errors', 'downloadinux.cookie_store', 'downloadinux.cookiejar')
+           'downloadinux.job_protocol', 'downloadinux.errors', 'downloadinux.cookie_store', 'downloadinux.cookiejar')
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path=None, target=None):
         top = name.split('.')[0]

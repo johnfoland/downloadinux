@@ -20,8 +20,11 @@ settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
 (DEC-41 to DEC-57). Host submission and byte-preserving queue import are
 implemented as additive preparation (DEC-56) in
 [PR #92](https://github.com/johnfoland/downloadinux/pull/92); the command
-cutover still awaits implementation. Multi-job and lane following and the
-later front output are settled (DEC-57), pending additive implementation.
+cutover still awaits implementation. Multi-job and lane following, shared
+host events, and status reduction
+(DEC-57) are implemented as additive preparation in
+[PR #94](https://github.com/johnfoland/downloadinux/pull/94); front output
+and the coordinated command cutover remain unimplemented.
 Implemented so far: the
 `downloadinux.job_store` library (private versioned SQLite ownership, atomic
 pinned submissions, exact active duplicates, typed record reads, and the
@@ -32,7 +35,8 @@ the throttle test seam helper), and the `downloadinux.worker_execution`
 library (runner launch, attempt logs, exit polls, cancel signals, and the
 shutdown wait), and the `downloadinux.worker` module (the `serve` service
 and its `status`, `submit`, `show`, `list`, `cancel`, `retry`, and `logs`
-clients), packaged as the image's command under Docker's init, with the
+clients, plus `follow` with the internal lane read), packaged as the image's
+command under Docker's init, with the
 host's worker calls (`downloadinux.host_worker`), doctor's
 `worker.running`, and the host's job operations (`downloadinux.host_jobs`)
 behind the `jobs` commands (DEC-55). The cutover remains unimplemented:

@@ -20,7 +20,9 @@ Stage 2 is implemented. Stage 3 is settled
 ([issue #64](https://github.com/johnfoland/downloadinux/issues/64)); its
 worker runs in the image and answers the host, `doctor`, and the `jobs`
 commands. Reusable host submission and queue-import operations are implemented
-(DEC-56), while the download fronts still await the coordinated cutover.
+(DEC-56), as are multi-job/lane following and typed host events with status
+reduction (DEC-57; PR #94), while the download fronts still await the
+coordinated cutover.
 Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
@@ -156,9 +158,9 @@ in the built image. The cutover (D4) remains unimplemented: `dl`, `batch`, and
 Target design §6's host submission and byte-preserving queue import
 operations (DEC-56) are implemented as additive preparation in PR #92;
 the coordinated command cutover still awaits implementation. Multi-job and
-lane following, its short-request client, shared host events, and later
-front output are settled in target design §1/§6 (DEC-57), pending additive
-implementation before that cutover.
+lane following, its short-request client, shared host events, and status
+reduction are implemented additively in PR #94 (target design §1/§6, DEC-57).
+The later front output stays pinned for that cutover.
 The worker design is a standard-library program running as the
 download container's main process, reached from the host only through
 `docker compose exec` of its own client, and the only writer of a SQLite job

@@ -28,12 +28,12 @@ import time
 import traceback
 from typing import Callable
 
-from . import job_store, worker_execution, worker_scheduler
+from . import job_protocol, job_store, worker_execution, worker_scheduler
 from .errors import ConfigError, DownloadinuxError
 
 PROG = 'downloadinux'
 LOG_PREFIX = 'downloadinux-worker: '
-SUBCOMMANDS = ('serve', 'status', 'submit', 'show', 'list', 'cancel', 'retry', 'logs')
+SUBCOMMANDS = ('serve', 'status', 'submit', 'show', 'list', 'cancel', 'retry', 'logs', 'follow')
 SOCKET = Path('/run/downloadinux/worker.sock')
 DOWNLOADS = Path('/downloads')
 VERSION = 1
@@ -84,7 +84,9 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
         elif command == 'cancel':
             args = {'ids': parse_cancel(rest)}
         elif command == 'logs':
-            job_id, attempt, follow = parse_logs(rest)
+            job_id, attempt, logs_follow = parse_logs(rest)
+        elif command == 'follow':
+            ids, lane = parse_follow(rest)
         elif rest:
             raise ConfigError(f'{command}: unexpected operand {rest[0]!r}')
         elif command in STDIN_SUBCOMMANDS:
@@ -97,15 +99,17 @@ def run(argv: list[str], *, socket_path: Path = SOCKET, timeout: float = CLIENT_
     if command == 'serve':
         return serve(cookies, state, socket_path=socket_path, **service)
     if command == 'logs':
-        return logs(socket_path, job_id, attempt, follow, timeout=timeout)
+        return logs(socket_path, job_id, attempt, logs_follow, timeout=timeout)
+    if command == 'follow':
+        return follow(socket_path, ids, lane, timeout=timeout)
     return request(socket_path, command, args, timeout=timeout)
 
 
 def _subcommand(argv: list[str]) -> tuple[str, list[str]]:
     if not argv:
-        raise ConfigError('a subcommand is required: serve, status, submit, show, list, cancel, retry, or logs')
+        raise ConfigError('a subcommand is required: serve, status, submit, show, list, cancel, retry, logs, or follow')
     if argv[0] not in SUBCOMMANDS:
-        raise ConfigError(f'unknown subcommand {argv[0]!r}; use serve, status, submit, show, list, cancel, retry, or logs')
+        raise ConfigError(f'unknown subcommand {argv[0]!r}; use serve, status, submit, show, list, cancel, retry, logs, or follow')
     return argv[0], argv[1:]
 
 
@@ -182,6 +186,34 @@ def parse_logs(rest: list[str]) -> tuple[int, int | None, bool]:
     job_id = parse_id(operands[0], 'logs: job ID must be a positive integer')
     attempt = None if value is None else parse_id(value, 'logs: --attempt must be a positive integer')
     return job_id, attempt, follow
+
+
+def parse_follow(rest: list[str]) -> tuple[list[int], str | None]:
+    """Fixed IDs or one canonical lane; scan-order errors precede value checks (DEC-57)."""
+    operands, lane, index = [], None, 0
+    while index < len(rest):
+        word = rest[index]
+        index += 1
+        if not word.startswith('-'):
+            operands.append(word)
+        elif word == '--lane':
+            if lane is not None:
+                raise ConfigError('follow: --lane given more than once')
+            if index == len(rest):
+                raise ConfigError('follow: --lane needs a value')
+            lane, index = rest[index], index + 1
+        else:
+            raise ConfigError(f'follow: unknown option {word!r}')
+    if lane is not None:
+        if operands:
+            raise ConfigError('follow: --lane cannot be combined with job IDs')
+        if lane not in job_store.PRESETS:
+            raise ConfigError('follow: lane must be video or gallery')
+        return [], lane
+    if not operands:
+        raise ConfigError('follow: at least one job ID is required')
+    return list(dict.fromkeys(parse_id(word, 'follow: job ID must be a positive integer')
+                              for word in operands)), None
 
 
 def parse_id(word: str, reason: str) -> int:
@@ -346,6 +378,91 @@ def logs(socket_path: Path, job_id: int, attempt: int | None, follow: bool, *,
             return 0
         if empty and _input_ended(TICK):
             return 0
+
+
+class _FollowExit(Exception):
+    """A follower detached, printed a refusal, or could not write an event."""
+
+    def __init__(self, status: int):
+        self.status = status
+
+
+def follow(socket_path: Path, ids: list[int], lane: str | None, *,
+           timeout: float = CLIENT_TIMEOUT) -> int:
+    """Poll short requests, draining one captured attempt before selecting another.
+
+    A terminal observation must precede the empty ended read, so a runner's
+    final append is never skipped (§1, Multi-job and lane following; DEC-57).
+    Only the service opens logs and state. EOF owns the client's lifetime.
+    """
+    def ask(op, args):
+        if _input_ended(0):
+            raise _FollowExit(0)
+        reply = _ask(socket_path, op, args, timeout)
+        if 'error' in reply:
+            _print(reply)
+            raise _FollowExit(1)
+        return reply
+
+    def emit(event, **fields):
+        if not _print({'version': VERSION, 'event': event, **fields}):
+            raise _FollowExit(1)
+
+    def checked(reply, job_id=None):
+        record = reply.get('job')
+        if (set(reply) != {'version', 'job'} or not job_protocol.record(record)
+                or not _is_id(record['id']) or not _is_id(record['attempt'])
+                or job_id is not None and record['id'] != job_id):
+            raise _NotAnswering('unexpected reply')
+        return record
+
+    pending = iter(ids)
+    try:
+        while True:
+            if lane is None:
+                job_id = next(pending, None)
+                if job_id is None:
+                    break
+                record = checked(ask('show', {'id': job_id}), job_id)
+            else:
+                reply = ask('lane', {'preset': lane})
+                if set(reply) == {'version', 'job'} and reply['job'] is None:
+                    break
+                record = checked(reply)
+                if record['lane'] != lane or record['state'] not in ('queued', 'running'):
+                    raise _NotAnswering('unexpected reply')
+                job_id = record['id']
+            attempt, offset, previous_wait = record['attempt'], 0, None
+            emit('job', job=record)
+            while True:
+                if record['attempt'] != attempt:
+                    _print({'version': VERSION, 'error':
+                            f'job {job_id} was retried while following; inspect with dlx jobs show {job_id}'})
+                    return 1
+                wait = record['wait'] if record['state'] == 'queued' else None
+                if wait != previous_wait:
+                    emit('wait', id=job_id, wait=wait)
+                    previous_wait = wait
+                chunk = ask('logs', {'id': job_id, 'attempt': attempt, 'offset': offset})
+                data = job_protocol.strict_base64(chunk.get('data'))
+                if (not _is_log_chunk(chunk) or chunk['attempt'] != attempt or data is None
+                        or len(data) > CHUNK or chunk['offset'] != offset + len(data)):
+                    raise _NotAnswering('unexpected reply')
+                offset = chunk['offset']
+                if data:
+                    emit('log', id=job_id, attempt=attempt, offset=offset, data=chunk['data'])
+                elif record['state'] in ENDED and chunk['ended']:
+                    emit('end', job=record)
+                    break
+                elif _input_ended(TICK):
+                    return 0
+                record = checked(ask('show', {'id': job_id}), job_id)
+        emit('done')
+        return 0
+    except _FollowExit as ending:
+        return ending.status
+    except _NotAnswering as failure:
+        return _not_answering(str(failure))
 
 
 def _is_log_chunk(reply: dict) -> bool:
@@ -824,7 +941,7 @@ class _Service:
 
     def _operations(self) -> dict[str, Callable[[dict], dict]]:
         return {'status': self._status, 'submit': self._submit, 'show': self._show, 'list': self._list,
-                'cancel': self._cancel, 'retry': self._retry, 'logs': self._logs}
+                'cancel': self._cancel, 'retry': self._retry, 'logs': self._logs, 'lane': self._lane}
 
     def _status(self, args: dict) -> dict:
         if args:
@@ -851,6 +968,19 @@ class _Service:
         if set(args) != {'id'} or not _is_id(args['id']):
             raise _Refused(INVALID)
         return {'job': _record(self._known(args['id']))}
+
+    def _lane(self, args: dict) -> dict:
+        """Read the true lane head without changing jobs or deadlines (§1, DEC-57)."""
+        if set(args) != {'preset'} or not _is_name(args['preset'], job_store.PRESETS):
+            raise _Refused(INVALID)
+        preset = args['preset']
+        for record in self.store.list(state='running', preset=preset):
+            if record.lane == preset:
+                return {'job': _record(record)}
+        for queue in self.store.queue_heads():
+            if queue.lane == preset:
+                return {'job': _record(queue.head)}
+        return {'job': None}
 
     def _known(self, job_id: int) -> job_store.JobRecord:
         """The job's record; an unknown ID is refused as `unknown job ID <id>` (DEC-51, DEC-54)."""

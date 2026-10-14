@@ -49,12 +49,19 @@ def _unexpected(subcommand: str) -> DownloadinuxError:
     return DownloadinuxError(f"{PROGRAM} {subcommand} printed unexpected output")
 
 
+def _connectivity(reason: str) -> DownloadinuxError:
+    """Keep transport failures distinct from a worker refusal with the same text."""
+    error = DownloadinuxError(reason)
+    error.worker_connectivity = True
+    return error
+
+
 def _status_failure(subcommand: str, status: int) -> DownloadinuxError:
     """§1's mapping of a client status other than 0 or 1, shared by both calls."""
     if status in (126, 127):  # Compose's "cannot run" and "not found"
-        return DownloadinuxError(NO_WORKER)
+        return _connectivity(NO_WORKER)
     if status == NOT_ANSWERING_STATUS:
-        return DownloadinuxError(NOT_ANSWERING)
+        return _connectivity(NOT_ANSWERING)
     return DownloadinuxError(f"{PROGRAM} {subcommand} failed in the container (exit {status})")
 
 
@@ -66,7 +73,7 @@ def _running_invocation(
         effective, credentials.load(effective.credentials_file), host.environ
     )
     if not invocation.running(capture):
-        raise DownloadinuxError(NOT_RUNNING)
+        raise _connectivity(NOT_RUNNING)
     return invocation
 
 
@@ -108,6 +115,7 @@ def stream(
     *,
     capture: compose.Capture | None = None,
     spawn: compose.Spawn | None = None,
+    allow_empty: bool = False,
 ) -> Iterator[dict]:
     """Run `downloadinux-worker ARGS…` as `call` does, and yield each success
     reply as its line arrives (§1 *Streaming*; DEC-55).
@@ -124,7 +132,9 @@ def stream(
     it, or an exception raised inside it (a detach signal), the stream
     closes Compose's standard input, then sends SIGTERM if Compose still
     runs, waits up to STOP_WAIT seconds, and kills it if need be. An OS
-    error starting Compose propagates, as `call`'s does."""
+    error starting Compose propagates, as `call`'s does. `allow_empty`
+    lets a caller with its own completion event classify successful EOF
+    without replies; other statuses and the default acceptance stay the same."""
     invocation = _running_invocation(effective, host, capture)
     process = invocation.spawn(compose.exec_args([PROGRAM, *args], captured=True), spawn)
     subcommand = args[0]
@@ -147,7 +157,7 @@ def stream(
             raise DownloadinuxError(WENT_AWAY) if accepted_any else _status_failure(subcommand, status)
         if status == 1 and error is not None:
             raise DownloadinuxError(error)
-        if status == 1 or error is not None or not accepted_any:
+        if status == 1 or error is not None or not accepted_any and not allow_empty:
             raise _unexpected(subcommand)
     finally:
         _end(process)
