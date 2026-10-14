@@ -530,7 +530,7 @@ def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
                                             **_launch_options(args))
     ids = tuple(reference.id for reference in result.references)
     if args.detach:
-        print('Jobs: ' + ' '.join(map(str, ids)))
+        _write_text('Jobs: ' + ' '.join(map(str, ids)))
         return 0
     return _render_follow(host_follow.follow_jobs(ids, options.config, options.overrides), ids=ids)
 
@@ -540,12 +540,12 @@ def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
     result = host_downloads.import_batch(args.preset, args.queue, options.config, options.overrides,
                                          **_launch_options(args))
     if result.submission is None:
-        print(f"No URLs in queue: {escape(str(result.queue))}")
+        _write_text(f"No URLs in queue: {escape(str(result.queue))}")
     else:
         skipped = sum(reference.duplicate for reference in result.references)
-        print(f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
-              f"in {result.preset} lane.")
-        print(f"Follow with: dlx watch {result.preset}")
+        _write_text(f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
+                    f"in {result.preset} lane.")
+        _write_text(f"Follow with: dlx watch {result.preset}")
     return 0
 
 
@@ -718,6 +718,15 @@ def _notice(text: str) -> None:
         raise
 
 
+def _write_text(text: str) -> None:
+    """Finish DEC-56/57's stdout reports inside the operation error boundary."""
+    try:
+        print(text, flush=True)
+    except OSError:
+        _discard_output(sys.stdout)
+        raise
+
+
 def _write_bytes(data: bytes) -> None:
     try:
         sys.stdout.buffer.write(data)
@@ -773,7 +782,7 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
             return 128 + detached.number
     if lane is not None:
         if not selected:
-            print(f"No queued or running jobs in {escape(lane)} lane.")
+            _write_text(f"No queued or running jobs in {escape(lane)} lane.")
         return 0
     return host_follow.download_status(records)
 

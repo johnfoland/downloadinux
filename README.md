@@ -975,6 +975,10 @@ status; `dl` and `watch` use the job/follow rules above; otherwise the status is
 success, 1 when an operation fails, and 2 for a usage error or invalid
 settings, with errors on standard error as `downloadinux: error: …`.
 
+If stdout closes while `dl --detach`, `batch`, or an idle `watch` prints its
+report, the command exits 1. Submitted jobs keep running and consumed queue
+lines stay consumed; inspect with `dlx jobs list` before submitting again.
+
 Every recipe reaches the configured container through the CLI. The
 lifecycle, `token`, `cookies`, `useragent`, `dl`, `batch`, `watch`, `jobs`, `shell`,
 `vpn`, `servers`, `status`, and `doctor` recipes are wrappers (`status` runs

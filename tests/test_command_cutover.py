@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import signal
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -377,3 +379,115 @@ def test_actual_front_forwards_global_overrides_on_either_side(front, capfdbinar
     argv = front.invocations[0]
     assert argv[argv.index('--project-name') + 1] == 'second-instance'
     assert not (front.rig.tmp / 'absent.toml').exists()
+
+
+TEXT_OUTPUT_PROCESS = r'''
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from downloadinux import cli, compose
+spec = json.loads(Path(sys.argv[2]).read_text())
+children, calls, output_states = [], [], []
+real_feed, real_spawn = compose.capture_with_input, compose.spawn_process
+compose.capture_process = lambda *args: (0, 'synthetic-container\n')
+def command(argv):
+    words = argv[argv.index('downloadinux-worker') + 1:]
+    calls.append(words)
+    return spec['client'] + words
+def feed(argv, environ, text):
+    return real_feed(command(argv), environ, text)
+def spawn(argv, environ):
+    child = real_spawn(command(argv), environ)
+    children.append(child)
+    return child
+compose.capture_with_input, compose.spawn_process = feed, spawn
+def states():
+    values = []
+    for child in children:
+        try:
+            os.waitpid(child.pid, os.WNOHANG)
+            reaped = False
+        except ChildProcessError:
+            reaped = True
+        values.append([child.returncode, child.stdin.closed, child.stdout.closed, reaped])
+    return values
+original = sys.stdout
+class ObservedOutput:
+    # Delegate to normal buffered stdout: small writes defer failure to flush.
+    def write(self, text):
+        output_states.append(states())
+        return original.write(text)
+    def flush(self):
+        return original.flush()
+    def fileno(self):
+        return original.fileno()
+sys.stdout = ObservedOutput()
+try:
+    status = cli.main(spec['words'])
+    Path(spec['report']).write_text(json.dumps(dict(
+        status=status, calls=calls, children=states(), output_states=output_states)))
+finally:
+    sys.stdout = original
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+        child.stdin.close()
+        child.stdout.close()
+sys.exit(status)
+'''
+
+
+@pytest.mark.parametrize('closed', [True, False])
+@pytest.mark.parametrize('case', ['dl-detach', 'dl-detach-large', 'batch-empty', 'batch-imported', 'watch-idle'])
+def test_text_reports_finish_before_process_exit_and_preserve_work(front, tmp_path, closed, case):
+    """Real buffered processes, service/store, queue IO, and idle follow cleanup."""
+    rig = front.rig
+    rig.start(env=rig.env(DL_VPN='off')).listening()
+    count = 10000 if case == 'dl-detach-large' else 1
+    urls = [f'wait=closed-output,item={n}' for n in range(count)]
+    queue = tmp_path / 'queue'
+    retained = b'# retained\r\n\n'
+    queue.write_bytes(retained + (urls[0] + '\r\n').encode() * (2 if case == 'batch-imported' else 0))
+    if case.startswith('dl-detach'):
+        words = ['dl', '--detach', '--anonymous', 'video', *urls]
+        expected = 'Jobs: ' + ' '.join(str(n) for n in range(1, count + 1)) + '\n'
+    elif case.startswith('batch'):
+        words = ['batch', '--anonymous', 'video', str(queue)]
+        expected = (f'No URLs in queue: {queue}\n' if case == 'batch-empty' else
+                    'Queued 1 jobs; skipped 0 active duplicates in video lane.\nFollow with: dlx watch video\n')
+    else:
+        words = ['watch', 'video']
+        expected = 'No queued or running jobs in video lane.\n'
+    sets = [word for value in front.cp.options['overrides'] for word in ('--set', value)]
+    spec, report = tmp_path / 'process.json', tmp_path / 'report.json'
+    # Store large inputs in a file; they must not exceed the process argv limit.
+    spec.write_text(json.dumps(dict(client=front.cp.command(['downloadinux-worker']),
+                                   words=['--config', str(tmp_path / 'absent.toml'), *sets, *words],
+                                   report=str(report))))
+    reader, writer = os.pipe()
+    os.close(reader)
+    try:
+        result = subprocess.run([sys.executable, '-I', '-c', TEXT_OUTPUT_PROCESS,
+                                 str(Path(__file__).parents[1] / 'src'), str(spec)],
+                                stdout=writer if closed else subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=40)
+    finally:
+        os.close(writer)
+    assert result.returncode == (1 if closed else 0), result.stderr
+    assert result.stderr == (b'downloadinux: error: <stdin/stdout>: Broken pipe\n' if closed else b'')
+    if not closed:
+        assert result.stdout == expected.encode()
+    state = json.loads(report.read_text())
+    assert state['status'] == result.returncode
+    expected_children = [[0, True, True, True]] if case == 'watch-idle' else []
+    assert state['children'] == expected_children
+    assert state['output_states'] and all(value == expected_children for value in state['output_states'])
+    assert state['calls'] == ([['follow', '--lane', 'video']] if case == 'watch-idle' else
+                              [['submit']] if case != 'batch-empty' else [])
+    jobs = front.jobs()
+    submitted = case.startswith('dl-detach') or case == 'batch-imported'
+    assert len(jobs) == (count if submitted else 0)
+    assert all(job['state'] in ('queued', 'running') and not job['cancel_requested'] for job in jobs)
+    assert [job['url'] for job in jobs] == (urls if submitted else [])
+    assert queue.read_bytes() == retained
