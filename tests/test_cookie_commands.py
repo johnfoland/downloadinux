@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from downloadinux import cli, compose, cookiejar, cookie_store as store, cookie_writer as writer, credentials, operations, settings, useragent
+from downloadinux import cli, compose, cookiejar, cookie_store as store, cookie_writer as writer, credentials, operations, settings, useragent, worker
 from downloadinux.errors import ConfigError
 from test_cookie_migration import DATA, NOW, REVISION, legacy
 
@@ -289,7 +289,7 @@ def test_config_show_never_reads_or_migrates_registry(capsys, root, monkeypatch,
 def test_downloads_follow_the_registry_default_and_migrate_once(capsys, root, tmp_path, monkeypatch, command, existing):
     """Named cookie sources §3, §5 (DEC-33, DEC-39): without a registry a
     download migrates the Stage 1 jar to `legacy` and pins it; an existing
-    anonymous default launches anonymously and leaves the registry alone.
+    anonymous default submits anonymously and leaves the registry alone.
     Neither names the Stage 1 jar, whose bytes stay unchanged."""
     old = legacy(root)
     if existing:
@@ -297,23 +297,30 @@ def test_downloads_follow_the_registry_default_and_migrate_once(capsys, root, tm
         writer.set_default(root, None)
     before = (root / 'sources.json').read_bytes() if existing else None
     calls = []
-    monkeypatch.setattr(compose, 'run_process', lambda argv, env: calls.append(argv) or 0)
+    def feed(argv, env, text):
+        payload = json.loads(text)
+        calls.append(payload)
+        return 0, worker.encode(dict(version=1, submission=1,
+                                    created=[dict(id=1, url=payload['urls'][0])], duplicates=[])).decode()
+    monkeypatch.setattr(compose, 'run_process', lambda *args: pytest.fail('foreground route called'))
+    monkeypatch.setattr(compose, 'capture_process', lambda argv, env: (0, 'container\n'))
+    monkeypatch.setattr(compose, 'capture_with_input', feed)
     downloads = tmp_path / 'downloads'
     downloads.mkdir()
     (downloads / 'dlmp4_queue').write_text('https://example.invalid/v\n')
     argv = ['--set', f'paths.cookies={root}', '--set', f'paths.downloads={downloads}', command, 'video']
-    argv += ['https://example.invalid/v'] if command == 'dl' else []
+    argv += ['https://example.invalid/v', '--detach'] if command == 'dl' else []
     assert cli.main(argv) == 0
     capsys.readouterr()
     [launched] = calls
-    assert not any('/cookies/cookies.txt' in arg for arg in launched)
+    assert launched['urls'] == ['https://example.invalid/v']
+    assert launched['lane'] == (None if command == 'dl' else 'video')
     if existing:
         assert (root / 'sources.json').read_bytes() == before
-        assert '--anonymous' in launched
+        assert launched['source'] is None and launched['revision'] is None
     else:
         source = store.read(root).sources['legacy']
-        assert launched[launched.index('--source'):launched.index('--source') + 4] == [
-            '--source', 'legacy', '--revision', source.revision]
+        assert (launched['source'], launched['revision']) == ('legacy', source.revision)
     assert old.read_bytes() == DATA
 
 

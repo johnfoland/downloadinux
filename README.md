@@ -4,27 +4,26 @@ A headless Debian 13 "Trixie" container that runs the `video` (yt-dlp) and
 `gallery` (gallery-dl) download presets behind NordVPN against the host
 `~/Downloads` folder.
 
-It is driven from the host by a small CLI, `dlx`, and the `just` recipes that
-wrap it, with its settings in a file of their own outside the checkout. That
-is Stage 1 of a refactor toward a portable application. Stage 2, named cookie
-sources, has cut over: downloads, batches, `just cookies`, setup, and doctor
-all use named sources with a default, each download or batch runs through the
-container's `downloadinux-runner` on its own private copy of the pinned
-source revision (or anonymously), and `--user-agent` overrides the setting
-for one run. Stage 2 is implemented, with its completion evidence in
-[PR #63](https://github.com/johnfoland/downloadinux/pull/63). Stage 3's
-persistent worker now runs as the container's main process, with `dlx jobs`
-to list, inspect, follow, cancel, retry, and export its jobs
-([The worker](#the-worker)), but nothing hands it downloads yet: `dl` still
-runs in the foreground and batches still use tmux. The
-[planning documents](docs/README.md) describe the rest of the worker (the
-cutover of `dl`, `batch`, and `watch`) and the Python + Textual TUI
-(Stages 3–4). This README covers what is implemented.
+The host CLI, `dlx`, and its `just` wrappers submit downloads to a persistent
+worker in the container. `dl` follows per-URL jobs; Ctrl-C detaches while they
+keep running, and `--detach` returns their IDs immediately. `batch` imports
+and consumes a text queue into a throttled lane; `watch` follows that lane.
+Jobs retain their state and attempt logs, with explicit cancel and retry.
+
+Settings live outside the checkout. Named cookie sources are pinned when
+submitted; each job attempt gets its own private copy at startup, or runs
+anonymously. `--user-agent` overrides the setting for a submission. Stage 1
+and Stage 2 are implemented. Stage 3's command cutover and batch retirement
+are implemented; its final joined completion evidence remains pending.
+The [planning documents](docs/README.md) describe that remaining evidence
+and the proposed Python + Textual TUI (Stage 4). This README covers current
+behavior.
 
 Your existing download configs live on as the `video` and `gallery`
-presets, run from the host with `just dl` and `just batch`. The one thing that had to
-change is cookie handling, which [Step 3](#step-3--cookie-source)
-walks you through.
+presets, run from the host with `just dl` and `just batch`.
+[Step 3](#step-3--cookie-source) explains cookie handling;
+[Batch queues](#batch-queues) and [Inside the container](#inside-the-container)
+explain the worker commands and the upgrade from tmux batches.
 
 ```sh
 cd ~/Code/downloadinux
@@ -472,7 +471,7 @@ access, or explicitly replace the origin with `cookies import` / `add-browser`
 
 Private cookie snapshots are the per-download working copies the container
 runner makes under `paths.state/cookie-invocations/` and removes when the
-download or batch ends. A hard kill or a stopped container can leave one behind;
+job attempt ends. A hard kill or a stopped container can leave one behind;
 `dlx cookies cleanup` asks the running container's `downloadinux-runner` to
 remove those:
 
@@ -501,8 +500,8 @@ just dl video 'https://youtube.com/watch?v=...'   # one or more URLs
 just dl gallery 'https://instagram.com/p/...'
 just dl --cookie-source work video '<url>'       # a named cookie source
 just dl --anonymous video '<url>'                # no cookies at all
-just batch video                                 # queue, detached tmux
-just watch video                                 # attach to it
+just batch video                                 # import into the worker lane
+just watch video                                 # follow the lane; Ctrl-C detaches
 
 just vpn on us8649                               # a specific server
 just vpn on New_York                             # ...or city / country / group
@@ -515,13 +514,27 @@ just shell                                       # zsh inside the box
 `dl` and `batch` both take a preset as their first word: `video` runs yt-dlp
 with the `video` preset (your old `dlmp4` config), `gallery` runs gallery-dl
 with the `gallery` preset (`dlgal`'s). `v`, `gal`, and `g` work as shorthands;
-anything else is a usage error. `just dl` runs `dlx dl`, which hands the
-container's `downloadinux-runner` the preset, the URLs, the cookie selection,
-and the user-agent; the runner gives the downloader its output root, a private
-cookie jar, and that user-agent as arguments, and `dlx dl` exits with the
-downloader's status. Video lands in `dlmp4/<site>/<uploader>/` under your
-downloads folder; Instagram galleries in `dlgal/`, other galleries in
-`gallery-dl/`.
+anything else is a usage error. `just dl` runs `dlx dl`, which submits one
+immediate job per distinct URL in one request and follows the returned job
+IDs in input order, including active duplicates. Jobs within a submission
+run sequentially; separate submissions and the two batch lanes can run
+alongside one another. The worker launches `downloadinux-runner download`
+for each job, using its pinned selection and user-agent. Video lands in
+`dlmp4/<site>/<uploader>/` under your downloads folder; Instagram galleries
+in `dlgal/`, other galleries in `gallery-dl/`.
+
+Log bytes go unchanged to stdout; job headers and observed VPN/throttle wait
+changes go to stderr, with control characters escaped. `dl` exits 0 when all
+jobs succeed; one nonsuccessful job returns its nonzero runner status, or 1
+when no such status exists. Multiple jobs with any nonsuccess return 1.
+Ctrl-C, SIGHUP, and SIGTERM while following detach with exit 128 plus the
+signal number, naming unfinished jobs and their follow/cancel commands.
+Detaching leaves work running; use `dlx jobs cancel ID` to stop it.
+
+`just dl --detach video URL…` prints `Jobs: I J …` and returns 0 without
+following. Reconnect with `dlx jobs logs --follow ID` or inspect retained
+work with `dlx jobs list` and `dlx jobs show ID`. An interrupted follow
+reports that the worker went away and points at `dlx jobs list`.
 
 Three options choose the cookies and the user-agent for one `dl` or `batch`:
 
@@ -538,8 +551,8 @@ Three options choose the cookies and the user-agent for one `dl` or `batch`:
 The options go before the preset, after it, or after the last URL, but not
 between two URLs (`just dl video URL --anonymous URL2` is a usage error). The
 host resolves the source to its current revision when you run the command.
-Each `dl` call, however many URLs, gets one private copy of that revision, and
-a batch gets one for its whole run, deleted when it ends. A refresh, a
+Each URL is a job, and each attempt gets its own private copy of that
+revision at startup, deleted when its downloader process tree ends. A refresh, a
 replacement, or a new default after you submit never changes a run already
 started or queued; the next command picks it up. `gallery` passes the
 cookies to Instagram only. Settings with a multi-line `downloads.user_agent`
@@ -581,47 +594,50 @@ city that doesn't exist and it prints the valid ones.
 
 ## Batch queues
 
-The `video` batch throttles a couple of minutes between URLs and can run for
-hours, so `just batch` (`dlx batch`) launches the batch loop in a detached tmux session
-inside the container — it survives your terminal closing, your laptop
-sleeping, and `just shell` exiting.
+`just batch` (`dlx batch`) imports a queue file into the preset's worker
+lane and returns immediately. Each lane runs one job at a time with a
+120–289 second delay after each job that ran ends. Immediate `dl` jobs are
+unthrottled. With the VPN enabled, queued work waits for a connected VPN;
+`watch` and `jobs list` expose observed waits.
 
 ```sh
-just batch video               # defaults to <paths.downloads>/dlmp4_queue
-just watch video               # attach; Ctrl-b d to detach without killing it
-
-just batch gallery             # defaults to <paths.downloads>/dlgal_queue
-just watch gallery
+just batch video                    # <paths.downloads>/dlmp4_queue
+just watch video                    # follow until idle; Ctrl-C detaches
+just batch gallery                  # <paths.downloads>/dlgal_queue
+just batch --cookie-source work gallery ~/lists/queue.txt
 ```
 
-Pass a path to use a different queue file, and `dl`'s options to choose the
-cookies or the user-agent:
+The queue may live anywhere on the host. Paths expand `~` and become
+absolute against the current directory (`just` runs in the checkout).
+A symlink is followed to its target, with the supplied path kept in reports.
+The file must be regular and strict UTF-8. Whitespace is stripped for URL
+selection; comments beginning `#` and blank lines are skipped. An empty
+queue prints `No URLs in queue: PATH`, with no cookie pinning or worker call.
 
-```sh
-just batch video ~/Downloads/some-other-queue.txt
-just batch --cookie-source work gallery
-```
+All URLs are submitted together, or none are recorded. Repeated lines count
+once; an exact preset/URL already queued or running is an active duplicate,
+keeping its original queue and selection. Terminal jobs do not block a new
+submission. A successful import rereads the file and removes every created
+or duplicate URL line, preserving other bytes and line endings, comments,
+blanks, and newly appended URLs. It reports `Queued N jobs; skipped M active
+duplicates in PRESET lane.` and `Follow with: dlx watch PRESET`. It never
+follows. Append more URLs and run `batch` again to import them.
 
-The queue file must live under `paths.downloads` — that's the output directory
-the container can see. `dlx batch` translates the host path to the container's
-view for you (`/downloads/…`) and refuses a missing file or one outside the
-volume rather than failing confusingly later. Paths are compared as written,
-without resolving symlinks. `dlx batch` takes a relative path against your
-working directory; `just batch` runs in the checkout, so give it an absolute
-or `~` path.
+Consumption uses a synced same-directory temporary and atomic replacement,
+preserving the reread file's mode. An append during replacement can still
+be lost. A failed submission leaves the queue unchanged; a lost or invalid
+reply may mean the worker committed, so inspect jobs before deciding to retry.
+A consumption failure exits 1, names the queue, and says `jobs were queued;
+inspect with dlx jobs list`; it does not cancel committed work. A cleanup
+failure can leave its temporary file and reports that failure.
 
-The tmux session runs `downloadinux-runner`, which copies the pinned cookie
-revision into one private jar for the whole batch and starts the loop under
-`zsh -f`, which reads none of the shell's startup files: it sources only
-`zsh/batch.zsh` and is handed the preset's argument list, the one `dlx dl`
-uses (plus `-q` for gallery-dl: the `gallery` batch runs quiet). The runner
-deletes the jar when the loop ends, before the `[done — press a key]` pause.
-If a session of that name is already running, `dlx batch` exits 1 and
-tells you to attach with `dlx watch`. `dlx watch` takes `video` (the default),
-`gallery`, their shorthands, or any other tmux session name.
-
-Same behavior as your Mac: successful URLs are deleted from the queue file as
-they complete, and timestamped success/fail logs are written alongside.
+`watch [PRESET]` defaults to `video`, accepts the preset aliases, and follows
+current and newly observed lane work until idle. It prints an idle message
+when no work was selected, otherwise no closing summary, and exits 0 after
+completion even if a job failed. Old session names are usage errors. Ctrl-C
+leaves the lane running. Failures stay in job history, and `dlx jobs export
+PRESET >queue.txt` exports failed, cancelled, and interrupted URLs for import.
+Existing URL-only success/fail logs stay untouched; no new ones are written.
 
 ## Inside the container
 
@@ -639,13 +655,19 @@ private jar:
 | `dlmp4_batch <file>` | `just batch video [file]` or `dlx batch video [file]` |
 | `dlgal_batch <file>` | `just batch gallery [file]` or `dlx batch gallery [file]` |
 
-The batch loop itself (`zsh/batch.zsh`) stays, run by `downloadinux-runner`.
+**Upgrading from a tmux batch image:** finish or stop every old tmux batch
+**before rebuilding** (use the old image's session tools before updating the
+checkout). Then run `just build` and `just restart`. The loop already removed
+finished URLs; import the remaining queue from any host path with `just
+batch PRESET PATH`. The rebuilt image has no tmux, batch loop, or runner
+`batch` command. Existing URL logs and the gallery archive stay in place.
+The commands need an image with `downloadinux-worker`; an older image gives
+a rebuild/recreate hint. No job state needs migration.
 
-**Upgrading from an image with the shortcuts:** finish or stop any running
-batch (`just watch video` / `just watch gallery`), then `just build` and
-`just restart`. The new `dl` and `batch` need the rebuilt image's
-`downloadinux-runner`; the image also no longer writes a placeholder
-`/cookies/cookies.txt`, and anonymous downloads need none.
+Recreating the container (`dlx restart`, `dlx update`, or an `up` that
+changes it) interrupts running jobs, leaving them explicit for deliberate
+retry. Queued jobs carry on after the next start. Downloads survive a host
+follower closing, but running processes do not survive container recreation.
 
 ---
 
@@ -667,7 +689,7 @@ without pinning to an Ubuntu codename. No desktop, no GUI packages.
 | Downloaders | yt-dlp (with `curl-cffi` impersonation), gallery-dl — both in `/opt/venv` |
 | Media | ffmpeg, AtomicParsley, exiftool |
 | VPN | NordVPN CLI + daemon |
-| Extras | tmux, fzf, ripgrep, bat, jq, rich-cli (the batch functions need `rich`) |
+| Extras | fzf, ripgrep, bat, jq, rich-cli (used by `exifmod`) |
 
 ## The shared volume
 
@@ -683,7 +705,7 @@ directory must exist before starting. The CLI never creates it.
 
 The image uses user `dl`, with UID/GID applied at container start. `/config`
 holds the shipped presets read-only, `/state` holds mutable state, and
-`/cookies` holds the managed cookie jar. VPN-off mode has
+`/cookies` holds the managed named-source store. VPN-off mode has
 no VPN capabilities or daemon. `just check` builds a separate check image
 and smoke-tests these mounts and identities with temporary directories.
 
@@ -704,11 +726,12 @@ socket inside the container, never on a mount or a port. Only one worker
 uses a state directory at a time: a second one, say from another
 configuration sharing `paths.state`, waits for it and says so in its log.
 
-Nothing submits jobs to it yet apart from its own clients inside the
-container: `dl` and `batch` work as described under
-[Daily use](#daily-use) until they switch to the worker. The `jobs`
-commands below act on whatever jobs it holds. What it already changes is
-stopping. `docker stop` and `dlx down` stop it
+`dl` and `batch` submit to this worker; `watch` and the `jobs` commands
+inspect and follow its work. Jobs and logs are retained indefinitely (history
+retention is a future feature), under `paths.state/jobs/`. The gallery archive
+remains `/downloads/dlgal/gallery-dl-archive.sqlite3`.
+
+`docker stop` and `dlx down` stop it
 gracefully: it stops starting jobs, signals running downloads, waits up to
 20 seconds for them, and records any still running as interrupted, all
 within Compose's 30-second grace period. A job queued at the time runs
@@ -761,8 +784,8 @@ a preset apply to the next download:
   user-agent, and gallery archive as arguments ([`presets/README.md`](presets/README.md))
 
 The `zsh/` files are copied into the image; rebuild after editing them.
-`zsh/batch.zsh` holds the batch loop alone, for `dlx batch`; the interactive
-shell sources it with the others.
+The interactive shell sources the remaining aliases and utility functions;
+the former batch loop is retired.
 
 `~/.zshrc` in the image is a one-line stub that sources `zsh/zshrc`.
 
@@ -808,7 +831,8 @@ means the container boots with no internet, every time, until you remember to
 
 **Blocked traffic hangs; it does not error.** The killswitch *drops* packets
 rather than rejecting them, so yt-dlp sits through its entire retry schedule
-instead of failing fast — a stalled batch looks exactly like a slow one. The
+instead of failing fast. The worker gates new jobs on VPN readiness and
+shows them waiting; an already-running downloader can still stall. The
 entrypoint prints a loud warning at boot when the killswitch is up but the
 tunnel isn't, and `just doctor` says so explicitly instead of showing an empty
 exit IP.
@@ -915,14 +939,14 @@ dlx build / up / down        Build, start in the background, or stop the configu
 dlx restart                 Recreate with current settings (up -d --force-recreate)
 dlx update                  Build --no-cache, then up -d; stops if the build fails
 dlx compose -- <args>        Run Compose with the computed project, files, and environment
-dlx dl <preset> <url>...     Download with a preset: video (v) or gallery (gal, g); exits
-                               with the downloader's status. --cookie-source NAME or
-                               --anonymous (else the cookie default), --user-agent VALUE
-dlx batch <preset> [queue]   Run a queue file under paths.downloads in a detached tmux
-                               session (default <paths.downloads>/dlmp4_queue or
-                               dlgal_queue); exit 1 if it is missing or outside; dl's options
-dlx watch [preset|session]   Attach to a batch session (default video); exits with
-                               tmux's status
+dlx dl <preset> <url>...     Submit and follow per-URL jobs; --detach prints IDs;
+                               --cookie-source NAME | --anonymous, --user-agent VALUE
+                               Ctrl-C detaches; single/multiple exit rules above
+dlx batch <preset> [queue]   Import and consume any host queue into the preset's lane;
+                               defaults to <paths.downloads>/dlmp4_queue or dlgal_queue;
+                               selection/user-agent options as on dl; never follows
+dlx watch [preset]          Follow a lane to idle (default video); Ctrl-C detaches;
+                               exit 0 after done, including failed jobs
 dlx jobs list [--all] [--json]
                              The worker's queued, running, failed, and interrupted jobs
                                (--all: every job)
@@ -946,10 +970,14 @@ dlx doctor [--json]          Structured settings, cookies, Docker, mount, tool, 
 
 `--config PATH` and `--set table.key=value` work on every command, before,
 between, or after nested subcommands ([The settings file](#the-settings-file)). `dlx` with no command
-prints help. A command that runs a program (`dl`, `shell`, `watch`, `vpn`,
-`compose --`) exits with that program's status; otherwise the status is 0 on
+prints help. `shell`, `vpn`, and `compose --` exit with the invoked program's
+status; `dl` and `watch` use the job/follow rules above; otherwise the status is 0 on
 success, 1 when an operation fails, and 2 for a usage error or invalid
 settings, with errors on standard error as `downloadinux: error: …`.
+
+If stdout closes while `dl --detach`, `batch`, or an idle `watch` prints its
+report, the command exits 1. Submitted jobs keep running and consumed queue
+lines stay consumed; inspect with `dlx jobs list` before submitting again.
 
 Every recipe reaches the configured container through the CLI. The
 lifecycle, `token`, `cookies`, `useragent`, `dl`, `batch`, `watch`, `jobs`, `shell`,
@@ -980,13 +1008,13 @@ just useragent [ua]  Set downloads.user_agent to a literal (quote it), or
 
 just dl video <url>...      Download video(s)
 just dl gallery <url>...    Download gallery/galleries
-                              (both take --cookie-source NAME | --anonymous,
+                              (dl also takes --detach; both take --cookie-source NAME | --anonymous,
                               --user-agent=UA)
-just batch video [file]     Run a queue in detached tmux
+just batch video [file]     Import a queue into the worker
                               (defaults to <paths.downloads>/dlmp4_queue)
 just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
                               (dl's options too)
-just watch video|gallery    Attach to a running batch session
+just watch video|gallery    Follow a worker lane until idle
 just jobs <subcommand> ...  The worker's jobs: list, show, logs, cancel,
                               retry, export (dlx jobs)
 just shell           zsh inside the container
@@ -1020,13 +1048,12 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── zsh/
 │   ├── zshrc
 │   ├── aliases.zsh               # container extras (myip, vpns, dlupdate, ...)
-│   ├── batch.zsh                 # the batch loop, sourced alone by `dlx batch`
 │   └── functions.zsh             # exifmod (the download shortcuts are retired)
 ├── scripts/
 │   ├── entrypoint.sh             # dirs, timezone, nordvpnd, drop to user
 │   ├── root.zshrc                # the "you're root, you don't want to be" notice
 │   ├── config-value.sh           # recipes read config show --json
-│   ├── downloadinux-runner       # the image's cookie runner entry point (not yet called)
+│   ├── downloadinux-runner       # the worker's cookie runner entry point
 │   ├── downloadinux-worker       # the image's worker entry point: its command and clients
 │   ├── setup.sh                  # `just setup`'s settings and token steps
 │   ├── smoke.sh                  # credential-free container contract test
@@ -1034,11 +1061,14 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 ├── pyproject.toml, uv.lock       # the downloadinux host CLI package (uv)
 ├── src/downloadinux/             # host CLI: settings, Compose, lifecycle, container commands
 │   ├── cookie_browser.py         # lazy direct host browser extraction, no site probe
-│   ├── cookie_runner.py          # container runner: private jar around one download or batch
+│   ├── cookie_runner.py          # container runner: private jar around one job attempt
 │   ├── cookie_selectors.py       # supported capabilities and selector normalization
 │   ├── cookiejar.py              # strict Netscape parsing and safe summaries
 │   ├── cookie_store.py           # mutation-free immutable registry/revision reader
 │   ├── cookie_writer.py          # atomic publication and locked legacy migration
+│   ├── host_downloads.py         # submission and byte-preserving queue imports
+│   ├── host_follow.py            # typed following events and job status reduction
+│   ├── queue_file.py             # host queue reading and consumption
 │   ├── host_jobs.py              # the host's job operations behind `dlx jobs`
 │   ├── host_worker.py            # the host's calls to the worker's clients
 │   ├── presets.py                # the presets' argument lists for `dl` and `batch`
@@ -1046,6 +1076,8 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 │   └── worker.py                 # container worker: job service and its clients
 ├── tests/                        # pytest suite for the host CLI (run by `just check`)
 │   └── fixtures/runner-smoke/    # stub downloaders and the in-image runner check
+├── tools/                        # review aids, outside the gate and image build
+│   └── front_output_evidence.py  # closed-pipe final exit checks for command reports
 ├── docs/                         # refactor planning docs; docs/README.md gives the order
 └── cookies/                      # old jar, retained only for migration
 ```

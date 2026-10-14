@@ -189,33 +189,18 @@ def downloads():
     print('Runner downloads: private byte-equal copies, pinned before refresh, missing and anonymous.')
 
 
-def batches():
-    scenario = Scenario('batch')
-    queue = scenario.log / 'queue'
-    queue.write_text(''.join(url + '\n' for url in URLS))
-    code, _, err = scenario.run(*named('batch', 'video', 'alpha', ALPHA, str(queue)))
-    check((code, err) == (0, ''), f'batch gave {code}: {err.strip()}')
-    records = scenario.records()
-    check(sorted(record.argv[-1] for record in records) == URLS, 'batch did not run both URLs')
-    jars = {private_jar(record) for record in records}
-    check(len(jars) == 1, 'batch URLs saw different jars')
-    check(all(record.same_bytes(revision('alpha', ALPHA)) for record in records), 'batch jar bytes differ')
-    check(Path(scenario.log / 'sleep').read_text().count('\n') == 1, 'batch loop did not throttle once')
-    check(only_lock(), 'snapshot left after batch')
-    print('Runner batch: one jar and the inherited lease across the zsh loop.')
-
+def signals():
+    # Direct download retains the lifetime and lease evidence after batch retirement.
     killed = Scenario('sigkill')
-    queue = killed.log / 'queue'
-    queue.write_text(''.join(url + '\n' for url in URLS))
-    runner = killed.start(*named('batch', 'video', 'alpha', ALPHA, str(queue)), mode='wait')
-    wait_for(lambda: len(killed.records()) == 1, 'the first batch download')
+    runner = killed.start(*named('download', 'video', 'alpha', ALPHA, URLS[0]), mode='wait')
+    wait_for(lambda: len(killed.records()) == 1, 'the download')
     lease = Path(killed.records()[0].jar).parent / 'lease'
     runner.kill()
     check(runner.wait(60) == -signal.SIGKILL, 'runner did not die by SIGKILL')
-    check(not lease_free(lease), 'lease released while the loop lives')
+    check(not lease_free(lease), 'lease released while the downloader lives')
     check(cleanup() == '{"removed": 0, "skipped": 1}\n', 'cleanup did not skip the busy snapshot')
     killed.release()
-    wait_for(lambda: lease_free(lease), 'the orphaned loop to finish')
+    wait_for(lambda: lease_free(lease), 'the orphaned downloader to finish')
     check(cleanup() == '{"removed": 1, "skipped": 0}\n', 'cleanup did not remove the abandoned snapshot')
     check(only_lock(), 'snapshot left after cleanup')
     print('Runner SIGKILL: busy lease skipped, then cleaned up.')
@@ -232,7 +217,7 @@ def batches():
 def main():
     packaging()
     downloads()
-    batches()
+    signals()
     print(json.dumps({'runner_smoke': 'passed'}))
 
 

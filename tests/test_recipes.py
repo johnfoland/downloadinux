@@ -130,13 +130,13 @@ def test_doctor_is_only_the_cli_wrapper():
 def test_dl_and_batch_forward_every_word():
     # Named cookie sources §5, "Cutover recipes (DEC-40)": the CLI validates.
     assert recipe("dl") == [
-        "# Download with a preset: just dl [--cookie-source NAME | --anonymous] "
+        "# Submit and follow downloads: just dl [--detach] [--cookie-source NAME | --anonymous] "
         "[--user-agent=UA] video|gallery <url>...",
         "dl +args:",
         '    @uv run downloadinux dl "$@"',
     ]
     assert recipe("batch") == [
-        "# Queue in detached tmux: just batch [dl's options] video|gallery [file]",
+        "# Import a queue into the worker: just batch [dl's selection options] video|gallery [file]",
         "batch +args:",
         '    @uv run downloadinux batch "$@"',
     ]
@@ -177,24 +177,20 @@ def test_smoke_runs_doctor_on_a_fresh_init_config():
     assert 'assert checks["config.file"]["status"] == "ok", checks["config.file"]' in lines
 
 
-def test_smoke_drives_the_host_route_and_checks_the_retirements():
-    # Named cookie sources §3, "Host launch (DEC-39)", and §5 (DEC-33).
+def test_smoke_drives_the_worker_fronts_and_checks_retirements():
     body = smoke()
-    lines = [line.strip() for line in body.splitlines()]
-    assert 'assert "DL_USER_AGENT" not in service["environment"], "DL_USER_AGENT is retired (DEC-33)"' in lines
-    assert "test ! -e /cookies/cookies.txt" in lines
-    assert "test -f /cookies/cookies.txt" not in lines
-    route = body.index("# Named cookie sources §3, \"Host launch (DEC-39)\"")
-    runner = body.index("/runner-smoke/check.py")
-    cleanup = body.index("# Named cookie sources §3, the host front (DEC-37)")
-    assert runner < route < cleanup
-    block = body[route:cleanup]
-    for step in ("route_check named-download", "route_check anonymous-download",
-                 "route_check batch", "cookies cleanup", "cookies refresh beta",
-                 "tmux kill-session -t batch-gallery"):
+    runner = body.index('/runner-smoke/check.py')
+    fronts = body.index('# Persistent worker and jobs §6/§7 (DEC-44/56/57): switched fronts')
+    cleanup = body.index('# Named cookie sources §3, the host front (DEC-37)')
+    assert runner < fronts < cleanup
+    block = body[fronts:cleanup]
+    for step in ('route_check named-download', 'route_check anonymous-download', 'route_check batch',
+                 'cookies cleanup', 'cookies refresh beta', 'watch gallery',
+                 'DOWNLOADINUX_TEST_THROTTLE_SECONDS', 'command -v tmux'):
         assert step in block, step
-    assert '"${route[@]}" dl video https://example.com/one "https://example.com/two words"' in block
-    assert '"--user-agent=-smoke agent" gallery' in block
+    assert 'tmux kill-session' not in body and 'sleep:sleep' not in body
+    assert 'test ! -e /cookies/cookies.txt' in body
+    assert 'assert "DL_USER_AGENT" not in service["environment"]' in body
 
 
 def test_smoke_drives_the_jobs_commands_after_the_worker_smoke():
@@ -271,8 +267,11 @@ def test_no_recipe_names_the_old_home():
     assert not any("/home/dl" in line for line in lines)
 
 
-def test_the_gate_syntax_checks_the_batch_loop():
-    assert any("zsh/batch.zsh" in line for line in recipe("check"))
+def test_the_gate_syntax_checks_only_surviving_sources():
+    body = '\n'.join(recipe('check'))
+    assert 'zsh/batch.zsh' not in body
+    for name in ('zsh/zshrc', 'zsh/aliases.zsh', 'zsh/functions.zsh', 'scripts/root.zshrc'):
+        assert name in body
 
 
 def test_setup_runs_its_settings_and_token_steps_and_never_writes_env():

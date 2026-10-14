@@ -19,12 +19,12 @@ is implemented. Stage 3, a persistent worker and jobs in place of tmux, is
 settled under [issue #64](https://github.com/johnfoland/downloadinux/issues/64)
 (DEC-41 to DEC-57). Host submission and byte-preserving queue import are
 implemented as additive preparation (DEC-56) in
-[PR #92](https://github.com/johnfoland/downloadinux/pull/92); the command
-cutover still awaits implementation. Multi-job and lane following, shared
+[PR #92](https://github.com/johnfoland/downloadinux/pull/92); the coordinated command cutover now uses those operations. Multi-job and lane following, shared
 host events, and status reduction
 (DEC-57) are implemented as additive preparation in
 [PR #94](https://github.com/johnfoland/downloadinux/pull/94); front output
-and the coordinated command cutover remain unimplemented.
+and the coordinated command cutover and retirement are now implemented
+(DEC-44/56/57). D5's joined Stage 3 completion evidence remains pending.
 Implemented so far: the
 `downloadinux.job_store` library (private versioned SQLite ownership, atomic
 pinned submissions, exact active duplicates, typed record reads, and the
@@ -39,8 +39,9 @@ clients, plus `follow` with the internal lane read), packaged as the image's
 command under Docker's init, with the
 host's worker calls (`downloadinux.host_worker`), doctor's
 `worker.running`, and the host's job operations (`downloadinux.host_jobs`)
-behind the `jobs` commands (DEC-55). The cutover remains unimplemented:
-`dl` still runs in the foreground and batch runs still use tmux. Stage 4,
+behind the `jobs` commands (DEC-55). The coordinated cutover now uses the worker for `dl`, `batch`, and `watch`,
+and retires tmux and the zsh loop. Stage 3's final completion evidence is
+pending. Stage 4,
 the Python + Textual TUI, remains a proposal.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,

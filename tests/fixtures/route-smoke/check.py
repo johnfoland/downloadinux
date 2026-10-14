@@ -47,11 +47,16 @@ def pinned(record, cookies, source, revision):
 
 
 def named_download(log, cookies, source, revision, agent, *urls):
-    [record] = calls(log, 1)
-    check(record['program'] == 'yt-dlp', 'video ran another program')
-    check(record['argv'][-len(urls):] == list(urls), 'URLs did not arrive as separate arguments')
-    check(adjacent(record['argv'], '--add-headers', f'User-Agent:{agent}'), 'configured user-agent missing')
-    pinned(record, cookies, source, revision)
+    records = calls(log, len(urls))
+    by_url = {record['argv'][-1]: record for record in records}
+    check(set(by_url) == set(urls), 'each job must carry exactly its own URL')
+    check(len({record['jar'] for record in records}) == len(urls), 'jobs shared a private jar')
+    for url in urls:
+        record = by_url[url]
+        check(record['program'] == 'yt-dlp', 'video ran another program')
+        check(adjacent(record['argv'], '--paths', '/downloads/dlmp4'), 'video output path moved')
+        check(adjacent(record['argv'], '--add-headers', f'User-Agent:{agent}'), 'configured user-agent missing')
+        pinned(record, cookies, source, revision)
 
 
 def anonymous_download(log, cookies, agent):
@@ -63,10 +68,15 @@ def anonymous_download(log, cookies, agent):
 
 def batch(log, cookies, source, revision, agent, *urls):
     records = calls(log, len(urls))
-    check(len({record['jar'] for record in records}) == 1, 'the batch used more than one private jar')
-    for record, url in zip(records, urls):
+    check(len({record['jar'] for record in records}) == len(urls), 'lane jobs shared a private jar')
+    by_url = {record['argv'][-1]: record for record in records}
+    check(set(by_url) == set(urls), 'lane URLs differ')
+    for url in urls:
+        record = by_url[url]
         check(record['program'] == 'gallery-dl', 'gallery ran another program')
-        check(record['argv'][:1] == ['-q'], 'batch gallery-dl is not quiet')
+        check('-q' not in record['argv'], 'retired gallery quiet argument')
+        check(adjacent(record['argv'], '-o', 'extractor.archive=/downloads/dlgal/gallery-dl-archive.sqlite3'), 'archive path moved')
+        check(adjacent(record['argv'], '-o', 'extractor.instagram.base-directory=/downloads/dlgal'), 'gallery output path moved')
         check(record['argv'][-1] == url, 'batch URL out of order')
         check(adjacent(record['argv'], '-o', f'extractor.user-agent={agent}'), 'explicit user-agent missing')
         pinned(record, cookies, source, revision)

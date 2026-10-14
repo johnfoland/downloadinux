@@ -1,14 +1,14 @@
-"""The presets and `dl` (P0001-C04-c; target design, *Presets* and *Host
-application*, "pinned for P0001-C04"; DEC-10, DEC-20), with fake runners: no
-test starts Docker. `dl`'s cookie selection, user-agent options and launch
-order are in `test_host_launch.py` (Named cookie sources §3, DEC-39)."""
+"""Presets and downloader lists after worker cutover (DEC-6, DEC-10, DEC-44).
+
+Submission option and pinning coverage is in test_host_launch.py.
+"""
 
 import json
 import re
 
 import pytest
 
-from downloadinux import checkout, cookie_store, launch, presets
+from downloadinux import checkout, presets
 from test_container_commands import calls, compose_args, run  # noqa: F401 (fixture)
 
 # Spaces and parentheses, as a real user-agent has, plus a quote.
@@ -33,43 +33,14 @@ GALLERY = [
 EXEC = ["exec", "-u", "dl", "downloadinux"]
 
 
-def runner(word, urls, agent=AGENT):
-    """An anonymous `dl` (the empty store's default): the runner's list."""
-    return [*EXEC, *launch.runner_argv("download", cookie_store.ANONYMOUS, agent, word, urls)]
 
 
-@pytest.mark.parametrize("word", ["video", "v", "gallery", "gal", "g"])
-@pytest.mark.parametrize("set_before", [True, False])
-def test_dl_runs_the_runner_uncaptured(calls, capsys, word, set_before):
-    option = ["--set", f"downloads.user_agent={AGENT}"]
-    argv = [*option, "dl", word, *URLS] if set_before else ["dl", word, *URLS, *option]
-    status, out, err = run(capsys, *argv)
-    assert (status, out, err) == (0, "", "")
-    [(kind, argv, _)] = calls
-    # Uncaptured, so no -T: the downloaders draw progress on the terminal.
-    assert kind == "run"
-    assert compose_args(argv) == runner(word, URLS)
 
 
-def test_dl_uses_the_settings_file_user_agent(calls, capsys, tmp_path):
-    config = tmp_path / "config.toml"
-    config.write_text(f"[downloads]\nuser_agent = {json.dumps(AGENT)}\n")
-    assert run(capsys, "--config", str(config), "dl", "v", URLS[0])[0] == 0
-    assert compose_args(calls[0][1]) == runner("v", URLS[:1])
 
 
-def test_dl_reaches_the_configured_project_and_returns_the_status(calls, capsys):
-    calls.statuses.append(3)
-    status, _, _ = run(capsys, "dl", "gallery", URLS[0], "--set", "container.project=second")
-    assert status == 3
-    argv = calls[0][1]
-    assert argv[argv.index("--project-name") + 1] == "second"
 
 
-def test_dl_needs_no_vpn_and_checks_nothing_first(calls, capsys):
-    assert run(capsys, "--set", "vpn.enabled=false", "dl", "v", URLS[0])[0] == 0
-    # One command: no running check, no VPN refusal.
-    assert [kind for kind, _, _ in calls] == ["run"]
 
 
 @pytest.mark.parametrize("argv", [["dl", "audio", URLS[0]], ["dl", "video"], ["dl"]])
@@ -95,24 +66,19 @@ def test_missing_docker_on_dl_is_cli_error(tmp_path, monkeypatch, capsys):
 # runner names its private jar, or passes no cookie argument when anonymous.
 
 
-@pytest.mark.parametrize("batch", [False, True])
-def test_the_lists_name_the_given_jar(batch):
-    # The batch variant adds -q to gallery-dl only (Host application, `batch`).
-    assert presets.argv("video", AGENT, batch=batch, cookies=JAR) == VIDEO
-    quiet = ["-q"] if batch else []
-    assert presets.argv("gallery", AGENT, batch=batch, cookies=JAR) == [GALLERY[0], *quiet, *GALLERY[1:]]
+def test_the_lists_name_the_given_jar():
+    assert presets.argv("video", AGENT, cookies=JAR) == VIDEO
+    assert presets.argv("gallery", AGENT, cookies=JAR) == GALLERY
     # Gallery cookies stay Instagram-only (DEC-6).
-    gallery = presets.argv("gallery", AGENT, batch=batch, cookies=JAR)
+    gallery = presets.argv("gallery", AGENT, cookies=JAR)
     assert [item for item in gallery if JAR in item] == [f"extractor.instagram.cookies={JAR}"]
 
 
-@pytest.mark.parametrize("batch", [False, True])
-def test_anonymous_lists_have_no_cookie_argument(batch):
-    video = presets.argv("video", AGENT, batch=batch, cookies=None)
+def test_anonymous_lists_have_no_cookie_argument():
+    video = presets.argv("video", AGENT, cookies=None)
     assert video == [item for item in VIDEO if item not in ("--cookies", JAR)]
-    gallery = presets.argv("gallery", AGENT, batch=batch, cookies=None)
-    quiet = ["-q"] if batch else []
-    assert gallery == [GALLERY[0], *quiet, *GALLERY[1:-2]]
+    gallery = presets.argv("gallery", AGENT, cookies=None)
+    assert gallery == GALLERY[:-2]
     assert GALLERY[-2:] == ["-o", f"extractor.instagram.cookies={JAR}"]
     for listed in (video, gallery):
         assert not [item for item in listed if "cookie" in item.lower()]
@@ -130,13 +96,12 @@ def test_aliases_and_the_batch_table():
     assert {word: presets.resolve(word).name for word in presets.ALIASES} == {
         "video": "video", "v": "video", "gallery": "gallery", "gal": "gallery", "g": "gallery",
     }
-    assert [
-        (p.session, p.queue, p.log_prefix, p.title, p.colour)
-        for p in (presets.resolve("video"), presets.resolve("gallery"))
-    ] == [
-        ("batch-video", "dlmp4_queue", "dlmp4", "Batch Download", "blue"),
-        ("batch-gallery", "dlgal_queue", "dlgal", "Gallery Batch Download", "magenta"),
-    ]
+    assert [(p.name, p.queue) for p in presets.PRESETS.values()] == [
+        ('video', 'dlmp4_queue'), ('gallery', 'dlgal_queue')]
+    assert set(presets.Preset.__dataclass_fields__) == {'name', 'queue'}
+    assert not hasattr(presets, 'LOOP')
+    assert '-q' not in presets.argv('gallery', AGENT, cookies=JAR)
+
 
 
 # --- the preset files ---------------------------------------------------------

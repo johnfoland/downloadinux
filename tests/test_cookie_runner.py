@@ -1,7 +1,7 @@
 """The container runner (Named cookie sources §3, "Runner interface and process
 lifetime"; DEC-36), driven as a real process.
 
-Downloaders, the zsh loop, signals, pipes and descriptors are all real: stub
+Downloaders, signals, pipes and descriptors are all real: stub
 executables first on ``PATH`` record their argv, the private jar's bytes and
 the descriptors they inherited, then wait on files the test creates. No stub
 or test sleeps for a fixed time.
@@ -38,7 +38,7 @@ class Rig:
         self.work = tmp_path / 'runner cwd'
         for directory in (self.log, self.bin, self.work):
             directory.mkdir()
-        for name in ('yt-dlp', 'gallery-dl', 'zsh'):
+        for name in ('yt-dlp', 'gallery-dl'):
             path = self.bin / name
             path.write_text(STUB.replace('{python}', sys.executable))
             path.chmod(0o755)
@@ -175,36 +175,8 @@ def test_user_agent_is_one_element_and_may_be_empty(rig, user_agent):
     assert f'User-Agent:{user_agent}' in record['argv']
 
 
-@pytest.mark.parametrize('preset', ['video', 'gallery'])
-def test_batch_runs_the_shared_loop_with_one_jar(rig, preset):
-    queue = rig.tmp / 'queue with space'
-    queue.write_text(f'# comment\n{URLS[0]}\n\n{URLS[1]}\n')
-    code, out, err = rig.run(rig.argv('batch', preset, str(queue)), stub_mode_zsh='loop')
-    assert (code, out, err) == (0, '', '')
-    [loop] = rig.records('zsh')
-    jar = assert_private(rig, loop)
-    row = presets.PRESETS[preset]
-    assert loop['argv'] == ['-f', '-c', presets.LOOP, 'zsh', str(queue), row.log_prefix, row.title, row.colour,
-                            *presets.argv(preset, UA, batch=True, cookies=str(jar))]
-    downloads = rig.records(presets.argv(preset, UA, cookies=None)[0])
-    assert [record['argv'][-1] for record in downloads] in (URLS, URLS[::-1])
-    for record in downloads:
-        assert assert_private(rig, record) == jar
-        assert record['fds'] == loop['fds']
-        assert record['pgid'] == loop['pid']
-    assert rig.invocations() == {'.lock': None}
 
 
-def test_anonymous_batch(rig):
-    queue = rig.tmp / 'queue'
-    queue.write_text(URLS[0] + '\n')
-    code, _, err = rig.run(rig.argv('batch', 'gallery', str(queue), anonymous=True), stub_mode_zsh='loop')
-    assert (code, err) == (0, '')
-    [loop] = rig.records('zsh')
-    assert loop['argv'][8:] == presets.argv('gallery', UA, batch=True, cookies=None)
-    assert loop['argv'][8:10] == ['gallery-dl', '-q']
-    assert not [item for item in loop['argv'] if 'cookie' in item.lower()]
-    assert os.listdir(rig.state) == []
 
 
 # Isolation and pinning -----------------------------------------------------------------
@@ -536,12 +508,17 @@ sys.exit(code)
 
 
 def test_plain_python_runs_every_subcommand_without_host_modules(rig):
-    queue = rig.tmp / 'queue'
-    queue.write_text(URLS[0] + '\n')
     (rig.cookies / 'sources.json').write_text('CANARY_VALUE')
     for argv in (rig.argv('download', 'video', URLS[0]), rig.argv('download', 'gallery', URLS[0], anonymous=True),
-                 rig.argv('batch', 'video', str(queue))):
-        assert rig.run(argv, script=ISOLATED, stub_mode_zsh='loop') == (0, '', '')
+                 rig.argv('download', 'video', URLS[1])):
+        assert rig.run(argv, script=ISOLATED) == (0, '', '')
     assert rig.run(['cleanup', '--state', str(rig.state)], script=ISOLATED) == (
         0, '{"removed": 0, "skipped": 0}\n', '')
     assert len(rig.records()) == 2 and len(rig.records('gallery-dl')) == 1
+
+
+def test_retired_batch_is_rejected_with_the_surviving_commands_before_io(no_io, capsys):
+    assert cookie_runner.main(valid('batch')) == 2
+    assert capsys.readouterr() == ('', "downloadinux: error: unknown subcommand 'batch'; use download or cleanup\n")
+    assert cookie_runner.main([]) == 2
+    assert capsys.readouterr() == ('', 'downloadinux: error: a subcommand is required: download or cleanup\n')

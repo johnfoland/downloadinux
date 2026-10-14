@@ -7,6 +7,7 @@ sets while an operation runs with fake runners. A write-mode open under
 `presets/` is recorded and refused before it happens.
 """
 
+import json
 import os
 import plistlib
 import sys
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from conftest import FAKE_TOKEN
-from downloadinux import checkout, cli, compose, useragent
+from downloadinux import checkout, cli, compose, useragent, worker
 
 PRESETS = os.path.realpath(checkout.checkout_root() / "presets")
 WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
@@ -77,8 +78,36 @@ def guard():
 def fake_docker(monkeypatch):
     """Every Compose call succeeds; `ps --quiet` reports a running
     container, so set-token goes on to log in."""
+    from stream_support import Spawner
+    from test_host_follow import event, sequence, step
+    from test_host_jobs import record
+    children = []
+    def feed(argv, env, text):
+        urls = list(dict.fromkeys(json.loads(text)['urls']))
+        return 0, worker.encode(dict(version=1, submission=1,
+                                    created=[dict(id=n, url=url) for n, url in enumerate(urls, 4)],
+                                    duplicates=[])).decode()
+    def spawn(argv, env):
+        if '--lane' in argv:
+            replies = [event('done')]
+        else:
+            replies = sequence(record(int(argv[-1])))
+            replies[-2]['job'].update(state='succeeded', exit_status=0)
+        child = Spawner(*(step(reply) for reply in replies))
+        children.append(child)
+        return child(argv, env)
+    monkeypatch.setattr(compose, 'capture_with_input', feed)
+    monkeypatch.setattr(compose, 'spawn_process', spawn)
     monkeypatch.setattr(compose, "run_process", lambda argv, env: 0)
     monkeypatch.setattr(compose, "capture_process", lambda argv, env: (0, "3f2a1b9c\n"))
+    yield
+    for child in children:
+        for process in child.processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            process.stdin.close()
+            process.stdout.close()
 
 
 @pytest.fixture
