@@ -669,6 +669,20 @@ done
 cmp -s "$smoke_dir/downloads with space/dlgal/gallery-dl-archive.sqlite3" "$smoke_dir/archive.copy"
 printf 'Host-route smoke passed (worker dl named/default/anonymous, per-job jars, consumed batch, watch, retired image route).\n'
 
+# Persistent worker and jobs §1–§8: joined Stage 3 completion evidence.
+# Keep the earlier 2-second scenario intact; this one needs an observable
+# 20-second wait, configured only by a disposable container overlay (DEC-47).
+cat >"$smoke_dir/stage3.yaml" <<'YAML'
+services:
+  downloadinux:
+    environment:
+      DOWNLOADINUX_TEST_THROTTLE_SECONDS: "20"
+YAML
+"${cli[@]}" compose -- --file "$smoke_dir/stage3.yaml" up -d --force-recreate
+wait_for "the Stage 3 worker to answer" worker_answers
+install_downloaders
+python3 -I "$route_fixture/stage3.py" "$smoke_dir" "$route_agent" "${cli[@]}"
+
 # Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
 # against the running `up` container. A one-off container allocates a
 # snapshot of beta and exits with os._exit, so no teardown runs and its
