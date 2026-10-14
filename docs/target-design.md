@@ -2251,8 +2251,7 @@ end of output it waits for the exit status. Status 0 after one or more
 lines, all success replies, ends the stream normally; status 1 whose last
 line was an error reply fails with its reason; any other pairing of 0 or 1
 with the lines, none included, is unexpected output. For following, the caller
-classifies
-status-0 EOF without any replies as missing `done` (DEC-57), while all other
+classifies status-0 EOF without any replies as missing `done` (DEC-57), while all other
 exit and reply handling stays the same. Any other status maps
 as `call` maps it (126 or 127, 3, and the rest) when no line was accepted,
 and once a line was accepted is `the worker went away; see dlx jobs list`:
@@ -2983,8 +2982,8 @@ the process argument-size limit without changing its ordering or splitting
 its committed submission. Fixed IDs must be a nonempty ordered sequence
 of integers in DEC-51's range, booleans excluded; invalid input is the
 operation error `follow IDs must be a nonempty ordered sequence of positive
-integers`, before invoking Compose. They submit, pin, cancel, retry, and
-open no host state or log, and print nothing. Closing either generator closes its inner stream, under
+integers`, before invoking Compose. They never submit, pin, cancel, retry, or
+open host state or logs, and print nothing. Closing either generator closes its inner stream, under
 DEC-55's complete cleanup, including a first signal during cleanup entered
 for bad output, a consumer's write failure, or early close. No new signal
 handlers are installed by these operations.
