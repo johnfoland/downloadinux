@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from downloadinux import (
-    cookie_selectors, cookie_store, health, host_jobs, launch, migrate, operations, presets, servers, worker,
+    cookie_selectors, cookie_store, health, host_follow, host_jobs, launch, migrate, operations, presets, servers, worker,
 )
 from downloadinux.errors import DownloadinuxError, _Detached
 
@@ -666,6 +666,76 @@ def _detach(number, frame) -> None:
     raise _Detached(number)
 
 
+@contextlib.contextmanager
+def _following_signals():
+    """Scope DEC-55's detach handlers to following, including its cleanup."""
+    previous = {number: signal.getsignal(number) for number in DETACH_SIGNALS}
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            if handler is not None:  # None: a handler Python did not install
+                signal.signal(number, handler)
+
+
+def _detached_job(job_id: int) -> str:
+    return (f"detached from job {job_id}, which carries on in the worker; follow it with "
+            f"dlx jobs logs --follow {job_id} or cancel it with dlx jobs cancel {job_id}")
+
+
+def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
+    """Render DEC-57's typed events; exhaustion includes the child's exit check.
+
+    The generator owns stream cleanup even when a notice or byte write fails.
+    Fixed-job detach reports all references minus observed ends, in input order.
+    """
+    remaining = dict.fromkeys(ids)
+    records, selected, done = [], False, False
+    with _following_signals():
+        try:
+            for number in DETACH_SIGNALS:
+                signal.signal(number, _detach)
+            with contextlib.closing(events):
+                for event in events:
+                    if isinstance(event, host_follow.FollowJob):
+                        selected = True
+                        job = event.job
+                        print(f"Job {job['id']}: {escape(job['url'])}", file=sys.stderr)
+                    elif isinstance(event, host_follow.FollowWait):
+                        wait = event.wait
+                        reason = ('resumed' if wait is None else 'waiting for VPN'
+                                  if wait['reason'] == 'vpn' else
+                                  f"waiting for throttle until {escape(wait['until'])}")
+                        print(f"job {event.id} {reason}", file=sys.stderr)
+                    elif isinstance(event, host_follow.FollowLog):
+                        sys.stdout.buffer.write(event.data)
+                        sys.stdout.buffer.flush()
+                    elif isinstance(event, host_follow.FollowEnd):
+                        records.append(event.job)
+                        remaining.pop(event.job['id'], None)
+                    elif isinstance(event, host_follow.FollowDone):
+                        done = True
+                if not done:
+                    raise DownloadinuxError('the worker went away; see dlx jobs list')
+        except _Detached as detached:
+            if lane is not None:
+                print(f"detached from {escape(lane)} lane, which carries on in the worker; "
+                      f"follow it with dlx watch {escape(lane)} or inspect and cancel jobs with "
+                      "dlx jobs list and dlx jobs cancel ID", file=sys.stderr)
+            elif remaining:
+                for job_id in remaining:
+                    print(_detached_job(job_id), file=sys.stderr)
+            else:
+                print('detached; all followed jobs have ended; inspect with dlx jobs list',
+                      file=sys.stderr)
+            return 128 + detached.number
+    if lane is not None:
+        if not selected:
+            print(f"No queued or running jobs in {escape(lane)} lane.")
+        return 0
+    return host_follow.download_status(records)
+
+
 def _write(chunks) -> None:
     """Each chunk to standard output's byte stream as it arrives. Closing
     the generator, however this ends, ends the stream and Compose."""
@@ -682,19 +752,14 @@ def _jobs_logs(args: argparse.Namespace, options: GlobalOptions) -> int:
     if not args.follow:
         _write(chunks)
         return 0
-    previous = {number: signal.getsignal(number) for number in DETACH_SIGNALS}
-    try:
-        for number in DETACH_SIGNALS:
-            signal.signal(number, _detach)
-        _write(chunks)
-    except _Detached as detached:
-        print(f"detached from job {args.id}, which carries on in the worker; follow it with "
-              f"dlx jobs logs --follow {args.id} or cancel it with dlx jobs cancel {args.id}", file=sys.stderr)
-        return 128 + detached.number
-    finally:
-        for number, handler in previous.items():
-            if handler is not None:  # None: a handler Python did not install
-                signal.signal(number, handler)
+    with _following_signals():
+        try:
+            for number in DETACH_SIGNALS:
+                signal.signal(number, _detach)
+            _write(chunks)
+        except _Detached as detached:
+            print(_detached_job(args.id), file=sys.stderr)
+            return 128 + detached.number
     return 0
 
 
