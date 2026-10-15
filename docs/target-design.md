@@ -3775,9 +3775,11 @@ every operation does and runs its container commands captured, with `-T`
   checks no jobs: it can only bring their traffic back onto the VPN. The
   result is a frozen `VpnChange(status: int, output: str)`, the command's
   exit status and captured standard output; a nonzero status is not raised.
-  Each operation loads the settings once and builds one invocation; the
-  refusals and the state read in `connect` and `disconnect` are `state`'s
-  own steps, not a second call to it. The VPN-off text is `vpn`'s, shared as
+  Each operation loads the settings once and builds one invocation for its
+  own steps; the job listing, when read, is `host_jobs.list_jobs` with the
+  caller's `config` and `overrides`, which loads them again as every
+  operation does. The refusals and the state read in `connect` and
+  `disconnect` are `state`'s own steps, not a second call to it. The VPN-off text is `vpn`'s, shared as
   one constant, and the not-running text is the worker calls' (*Persistent
   worker and jobs* §1). A job counts as running when its listed `state` is
   `running`, so one being cancelled counts.
