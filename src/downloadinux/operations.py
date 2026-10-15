@@ -601,7 +601,7 @@ def refresh_user_agent(
     major = useragent.major(version) if version is not None else None
     if major is None:
         return result
-    written = _write_user_agent(effective, overrides, host, useragent.user_agent(major))
+    written = _write_setting(effective, overrides, host, USER_AGENT_KEY, useragent.user_agent(major))
     return UserAgentResult(plist, effective.file, version, major, written=written)
 
 
@@ -626,31 +626,90 @@ def set_user_agent(
             "config user-agent: VALUE must be nonempty and contain no CR or LF"
         )
     effective = settings.load(config, overrides, host)  # rejects a bad file or --set
-    written = _write_user_agent(effective, overrides, host, value)
+    written = _write_setting(effective, overrides, host, USER_AGENT_KEY, value)
     return UserAgentWrite(effective.file, written)
 
 
-def _write_user_agent(
-    effective: settings.Settings, overrides: Sequence[str], host: Host, value: str
+@dataclass(frozen=True)
+class SettingWrite:
+    """A settings edit's raw TOML value, or None when removing the key."""
+
+    settings_file: Path
+    key: str
+    value: Any
+    written: bool
+
+
+def set_setting(
+    key: str, value: str, config: str | None = None,
+    overrides: Sequence[str] = (), host: Host = Host(),
+) -> SettingWrite:
+    """Validate KEY, then VALUE, then the settings before writing the raw
+    TOML value (Configuration and paths, Settings writes; DEC-61)."""
+    setting = settings.BY_KEY.get(key)
+    if setting is None:
+        raise ConfigError(f"config set: {key}: unknown setting")
+    raw = settings.override_value(setting, value)
+    settings.validate(setting, raw, "config set")
+    if setting.type in (settings.STRING, settings.PATH):
+        if any(ch in raw for ch in ("\r", "\n", "\x00")) or (key == USER_AGENT_KEY and not raw):
+            rule = "be nonempty and contain" if key == USER_AGENT_KEY else "contain"
+            raise ConfigError(f"config set: {key}: VALUE must {rule} no CR, LF, or NUL")
+    effective = settings.load(config, overrides, host)
+    written = _write_setting(effective, overrides, host, key, raw)
+    return SettingWrite(effective.file, key, raw, written)
+
+
+def unset_setting(
+    key: str, config: str | None = None, overrides: Sequence[str] = (),
+    host: Host = Host(),
+) -> SettingWrite:
+    """Remove a setting so it falls back to its default (DEC-61).
+
+    Configuration and paths, Settings writes: absent keys and files are
+    no-ops; an existing file keeps its comments and permission bits.
+    """
+    if key not in settings.BY_KEY:
+        raise ConfigError(f"config unset: {key}: unknown setting")
+    effective = settings.load(config, overrides, host)
+    path = effective.file
+    written = False
+    if effective.file_exists:
+        text = files.unset_text(path.read_text(encoding="utf-8"), key)
+        if text is not None:
+            files.write_atomic(path, text, stat.S_IMODE(path.stat().st_mode))
+            written = True
+    return SettingWrite(path, key, None, written)
+
+
+def _write_setting(
+    effective: settings.Settings, overrides: Sequence[str], host: Host,
+    key: str, value: Any,
 ) -> bool:
-    """Set `downloads.user_agent` to `value`: edit an existing file in place
+    """Set `key` to `value`: edit an existing file in place
     (comments and permission bits kept) unless it already holds the value, or
     write `init`'s starter file, `--set` values included and `value` winning.
     Returns whether the file was written."""
     path = effective.file
     if effective.file_exists:
         text = path.read_text(encoding="utf-8")
-        if tomllib.loads(text).get("downloads", {}).get("user_agent") == value:
+        table, _, name = key.partition(".")
+        if tomllib.loads(text).get(table, {}).get(name) == value:
             return False
         files.write_atomic(
             path,
-            files.setting_text(text, USER_AGENT_KEY, value),
+            files.setting_text(text, key, value),
             stat.S_IMODE(path.stat().st_mode),
         )
     else:
-        values = {**settings.parse_overrides(overrides), USER_AGENT_KEY: value}
-        files.write_atomic(
-            path, files.starter_text(values, host), files.default_file_mode(),
-            replace=False,
-        )
+        values = {**settings.parse_overrides(overrides), key: value}
+        try:
+            files.write_atomic(
+                path, files.starter_text(values, host), files.default_file_mode(),
+                replace=False,
+            )
+        except FileExistsError:
+            # Configuration and paths, Settings writes (DEC-61): the
+            # starter write has init's no-clobber refusal, also for user-agent.
+            raise DownloadinuxError(f"{path} already exists; not overwriting it") from None
     return True

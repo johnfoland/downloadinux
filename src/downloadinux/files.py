@@ -185,6 +185,17 @@ def setting_text(existing: str, key: str, value: Any) -> str:
     return tomlkit.dumps(document)
 
 
+def unset_text(existing: str, key: str) -> str | None:
+    """Remove one setting, keeping other lines and an emptied table
+    (Configuration and paths, Settings writes; DEC-61)."""
+    table, _, name = key.partition(".")
+    document = tomlkit.parse(existing)
+    if table not in document or name not in document[table]:
+        return None
+    del document[table][name]
+    return tomlkit.dumps(document)
+
+
 def credentials_text(token: str, existing: str | None = None) -> str:
     """The credentials file with `[nordvpn] token` set, editing `existing`
     so its comments survive."""
