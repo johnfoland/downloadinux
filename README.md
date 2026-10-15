@@ -17,8 +17,8 @@ are implemented. [PR #97](https://github.com/johnfoland/downloadinux/pull/97)
 adds the joined Stage 3 completion evidence for detachment, cancellation,
 retry, and recovery.
 The [planning documents](docs/README.md) describe the implemented contracts
-and the proposed Python + Textual TUI (Stage 4). This README covers current
-behavior.
+and the settled, not yet implemented Python + Textual TUI (Stage 4). This
+README covers current behavior.
 
 Your existing download configs live on as the `video` and `gallery`
 presets, run from the host with `just dl` and `just batch`.

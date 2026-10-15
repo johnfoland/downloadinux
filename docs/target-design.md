@@ -1,6 +1,6 @@
 # Target design
 
-Status: Stages 1–3 are implemented; Stage 4 remains proposed.
+Status: Stages 1–3 are implemented; Stage 4 is settled, not implemented.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -34,7 +34,9 @@ adds the following client, shared record predicates, typed host following events
 and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 `watch` fronts and retirement are implemented (DEC-44, DEC-56, DEC-57).
 [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined
-Stage 3 completion evidence. Stage 4 remains proposed.
+Stage 3 completion evidence. Stage 4, the Python + Textual TUI and its
+`config set`/`config unset` settings writes, is settled (*Python + Textual
+TUI*, DEC-58 to DEC-61, issue #98) and not implemented.
 
 ## Agreed decisions
 
@@ -119,8 +121,9 @@ The shared operations, the CLI, and later the TUI are one Python package,
 `downloadinux`, under `src/downloadinux/`, managed with uv and installed with
 `uv tool install --editable .` from the checkout. Two entry points,
 `downloadinux` and `dlx`, run the same function. Subcommands are the CLI; bare
-invocation is reserved for the TUI and prints help until Stage 4. The CLI is
-built on `argparse`.
+invocation is reserved for the TUI and prints help until Stage 4, which opens
+the TUI there on a terminal and keeps help elsewhere (*Python + Textual TUI*
+§1, DEC-58). The CLI is built on `argparse`.
 
 Install assets (Dockerfile, Compose files, presets, container scripts) are
 read from the checkout that holds the installed package; the CLI fails with an
@@ -338,6 +341,7 @@ Stage 1 subcommands, each a thin front for an operation the TUI will call:
 | `config import-env` | Migrate an existing `.env` (DEC-13) |
 | `config set-token` | Validate and store the NordVPN token; log in if the container runs |
 | `config user-agent [VALUE]` | Write an explicit user-agent literal, or refresh it from the host Chrome (DEC-10; *Named cookie sources* §4) |
+| `config set KEY VALUE`, `config unset KEY` | Write or remove one setting in the settings file (Stage 4, DEC-61; *Configuration and paths*) |
 | `build`, `up`, `down`, `restart`, `update` | Image and container lifecycle |
 | `compose -- <args>` | Pass-through to `docker compose` with the computed project, files, and environment |
 | `shell` | Interactive zsh in the container as `dl` (a convenience, not an execution path) |
@@ -465,6 +469,56 @@ Further rules, pinned for P0001-C01:
   without echo on a terminal, else reads one line from standard input. A
   malformed token is refused, exit 1, with its length but never its value.
   It writes the credentials file at mode 0600, creating the directory.
+
+Settings writes, settled for Stage 4 (DEC-61; not implemented):
+
+- `config set KEY VALUE` and `config unset KEY` are the shared settings
+  writes, `operations.set_setting(key, value, config=None, overrides=(),
+  host=Host())` and `operations.unset_setting(key, config=None,
+  overrides=(), host=Host())`, each returning a frozen
+  `SettingWrite(settings_file: Path, key: str, value: Any, written: bool)`
+  (`value` the TOML value written, or null for an unset). The TUI's settings
+  editor calls them (*Python + Textual TUI* §7). They take the global
+  options like every command, and a `VALUE` beginning with `-` goes after
+  `--`, as for `config user-agent`.
+- `KEY` must be one of the settings above; any other is a configuration
+  error, exit 2, `config set: KEY: unknown setting` (likewise `config
+  unset`). Both first load the effective settings, so a bad settings file or
+  `--set` is refused before anything is written.
+- `VALUE` is parsed as a `--set` value is (a string or path setting takes
+  the text as given unless it is a quoted TOML string; an integer or boolean
+  setting parses it as TOML) and validated as a file value is, with `config
+  set` as the error's place: `config set: KEY: PROBLEM`, exit 2. A string
+  or path must also contain no CR, LF, or NUL, and `downloads.user_agent`
+  must be nonempty, `config set: KEY: VALUE must be nonempty and contain no
+  CR, LF, or NUL` (the second clause alone for other keys). The value
+  written is the parsed TOML value before typing, so a path keeps the `~`
+  the user wrote and is expanded on load, as any file value is.
+- `config set` edits an existing settings file with `tomlkit`, as `config
+  user-agent` does: comments and layout survive, a missing table is added at
+  the end, and the file is replaced atomically with its current permission
+  bits. When the file already holds an equal TOML value for the key, nothing
+  is written. A missing settings file is written as `init`'s starter file,
+  with the invocation's `--set` values and this value winning, through a
+  no-clobber write. `config user-agent VALUE` stays, with its own texts.
+- `config unset` removes the key from an existing file with `tomlkit`,
+  keeping every comment and other key, and an emptied table; the setting
+  then takes its default. With no settings file, or a file without the key,
+  it writes nothing. A computed setting's commented-out starter line is a
+  comment, not a value, and stays.
+- Output, on standard output, exit 0: `Set KEY = VALUE in PATH.`, `KEY is
+  already VALUE in PATH; nothing written.`, `Unset KEY in PATH; it now uses
+  its default.`, or `KEY is not set in PATH; nothing written.`, with
+  `VALUE` as TOML writes it (`"~/Downloads"`, `true`, `501`) and the
+  interpolated strings escaped as DEC-55's human output is. When `--set`
+  names `KEY` on the same invocation, standard error also gets
+  `downloadinux: warning: --set KEY overrides the settings file for this
+  command`.
+- Neither touches the credentials file (the token stays `config
+  set-token`'s), the container, or anything else. A changed `paths.*`,
+  `container.*`, or `vpn.*` setting reaches the container at the next
+  `dlx restart` (or an `up` that recreates it); a changed
+  `container.project` points every later command at that Compose project.
 
 ## Container contract
 
@@ -3263,21 +3317,397 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 ## Python + Textual TUI
 
-Initial views:
+Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
+DEC-58 to DEC-61); not implemented. Its settings writes, `config set` and
+`config unset`, are under *Configuration and paths* (DEC-61).
 
-- **Jobs:** queue and history, with selected-job details and logs.
-- **Submit:** URLs, downloader/preset, destination, and named cookie source or
-  anonymous mode.
-- **Cookies:** add/import, inspect non-secret metadata, refresh, and select defaults.
-- **Status/settings:** container, worker, VPN, mounts, paths, and tool versions.
+The TUI is a second front, beside the CLI, for the host operations Stages 1–3
+built. It adds no worker client, socket request, store access, or host state
+of its own: every job it shows and every log byte it renders comes from the
+worker through `host_jobs` and `host_follow` (DEC-55, DEC-57), and every
+change it makes is an existing operation. It does not implement a terminal
+emulator or a tmux attachment view (DEC-4). Closing it leaves the worker and
+every job running; reopening it shows the same history and active work,
+because both live in the worker.
 
-Expose retry and cancellation with the worker's semantics (*Persistent worker
-and jobs* §3, §5), through the same host operations as the CLI. Show downloading,
-throttling, waiting for VPN, and failure as distinct conditions. Authentication
-errors should only be labeled as such when supported by evidence.
+### 1. Placement, launch, and dependency (DEC-58)
 
-Do not implement a terminal emulator or tmux attachment view. The UI consumes job
-state and logs from the worker. Closing it must leave jobs running.
+*Package.* The TUI is the subpackage `downloadinux.tui`. Only
+`downloadinux.tui.app` and the widget and screen modules it imports import
+Textual. `downloadinux.tui.backend` (§2), `downloadinux.tui.process` (§2),
+and `downloadinux.tui.logtext` (§4) import no Textual, so their tests drive
+them directly. The human renderers the CLI and TUI share (the escaping rule,
+`jobs list`'s state label and table, `jobs show`'s fields, the cancel and
+retry lines, the cookie source and inspection text, `config show`'s and
+`doctor`'s text, and `config set-token`'s login messages) move from `cli.py`
+into `downloadinux.render`, unchanged: every CLI output stays byte for byte
+what it is.
 
-Specific Textual APIs, dependency versions, packaging, and interaction/keybinding
-design are intentionally deferred until implementation research.
+*Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
+`pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
+arrives with it; no other runtime dependency is added. The image does not
+install Textual: the worker and runner stay standard library (DEC-36,
+DEC-41). Tests drive the app headlessly with Textual's `App.run_test()` and
+its pilot, inside `asyncio.run` in ordinary pytest functions; no pytest
+plugin is added.
+
+*Launch.* Bare `downloadinux` or `dlx`, with no subcommand, opens the TUI
+when standard input and standard output are both terminals. Otherwise it
+prints help and exits 0, as before, so a script or pipe never starts a
+screen. The global `--config PATH` and `--set KEY=VALUE` options are
+accepted as for any command. `cli.main` imports `downloadinux.tui.app` only
+on this path; no subcommand imports Textual, and a test checks it in a fresh
+interpreter. Before the screen opens, the settings and credentials are
+loaded once, as every command loads them: a configuration error exits 2 in
+the CLI's error form, and the screen never opens. Every operation the TUI
+then runs is given the same `--config` and `--set` values and reloads the
+settings file itself, so the TUI's own settings writes (§7) and edits made
+elsewhere apply to the next operation, while a `--set` keeps its precedence
+for the whole session.
+
+The TUI starts, stops, builds, and cleans nothing on launch: it never runs
+`up`, and a stopped container shows in the Jobs view (§4) as *Persistent
+worker and jobs* §1's not-running failure until the user starts it (§7).
+Quitting (§8) exits 0. An unexpected exception that ends the app exits 1
+once Textual has restored the terminal, with its traceback on standard
+error. The `just tui *args` recipe
+runs `uv run downloadinux "$@"`, menu line `# Open the terminal UI: just tui
+[--config PATH] [--set KEY=VALUE]…`.
+
+### 2. Running operations off the UI thread (DEC-59)
+
+*Backend.* The app reaches the host operations only through one
+`downloadinux.tui.backend.Backend`, built from the global options and the
+process runners below. Each method calls one existing operation with the
+session's `config` and `overrides` and the TUI's runners, and returns its
+result or raises its error unchanged. It prints nothing and adds no rule;
+tests give the app a fake backend instead, so no app test starts Docker.
+
+| Method | Operation |
+| --- | --- |
+| `jobs(all)` | `host_jobs.list_jobs` |
+| `show(id)` | `host_jobs.show` |
+| `log(id, attempt)` | `host_jobs.logs` without `follow` |
+| `follow_job(id)` | `host_follow.follow_jobs([id])` |
+| `follow_lane(preset)` | `host_follow.follow_lane` |
+| `cancel(ids)` | `host_jobs.cancel` |
+| `retry(ids, selection)` | `host_jobs.retry` |
+| `export_to(preset, path)` | `host_jobs.export_to` (§4) |
+| `submit(preset, urls, selection)` | `host_downloads.submit_download` |
+| `import_queue(preset, path, selection)` | `host_downloads.import_batch` |
+| `cookies()`, `inspect(name)`, `browsers()` | `operations.list_cookies`, `inspect_cookies`, `cookie_browsers` |
+| `import_cookies(…)`, `add_browser(…)`, `refresh(name)`, `set_default(name or anonymous)` | `operations.import_cookies`, `add_browser_cookies`, `refresh_cookies`, `cookie_default` |
+| `doctor()`, `config()` | `operations.doctor`, `operations.show_config` |
+| `set_setting(key, value)`, `unset_setting(key)` | `operations.set_setting`, `operations.unset_setting` (DEC-61) |
+| `set_token(token)` | `operations.set_token`, then `operations.log_in` |
+| `lifecycle(command)` | `operations.lifecycle` with `up`, `down`, or `restart` |
+
+A selection is the CLI's: the default (no option), anonymous, or a source
+name, with an optional user-agent (DEC-39, DEC-40).
+
+*Threads.* Every backend call runs in a Textual thread worker, never on the
+event loop, and hands its result back through the app's thread-safe calls,
+so a slow Compose call, a browser export, or a blocked stream never stops
+keys, redraws, or resizing. Calls are of two kinds:
+
+- *Reads* (`jobs`, `show`, `log`, the two follows, `cookies`, `inspect`,
+  `browsers`, `doctor`, `config`) may run alongside anything. Each pane has at
+  most one read of a kind in flight; a newer read for the same pane
+  supersedes the older, whose result is dropped when it arrives.
+- *Actions* (every other method) change something. They run one at a time,
+  in the order the user asked for them, through one action queue, so two
+  settings writes or a cookie refresh and a submission never interleave.
+  The footer names the running action and how many wait behind it. Each
+  action's outcome is recorded in Activity (§8) and shown as a notification,
+  and then the views it affects re-read: the job listing after a job action,
+  the cookie list after a cookie action, and the configuration and doctor
+  after a settings, token, or lifecycle action.
+
+*Processes.* `downloadinux.tui.process` provides the runners the backend
+passes to every operation that takes them (`runner`, `capture`, `feed`, and
+`spawn`; DEC-53, DEC-55). Each child process gets standard input from
+`/dev/null`, unless its operation's contract needs a pipe (a feed's text, a
+stream's lifetime pipe); standard output as the default runner would give it
+(a pipe, or for `runner`, a pipe whose text is recorded); standard error in
+an anonymous temporary file read once the process ends; and a new session,
+which also gives a stream its own process group as DEC-55 requires. No child
+reads keys from the terminal, writes to the screen, or receives the
+terminal's signals. Statuses and captured standard output reach the
+operation exactly as the default runners return them, so every operation's
+reply rule and failure text is unchanged. The captured standard error, and a
+lifecycle command's standard output, are decoded as UTF-8 with replacement,
+escaped as DEC-55's human output is except that newlines and tabs stay, and
+recorded in Activity under the call that produced it when nonempty. A read
+that repeats on a timer records its text only when it differs from that
+read's previous text.
+
+For the app's lifetime, the process's own file descriptor 2 is redirected to
+an anonymous temporary file, so nothing written there in-process (a browser
+helper, the interpreter) reaches the screen. Once Textual has restored the
+terminal, descriptor 2 is restored and whatever the file holds is copied to
+it.
+
+*Stopping a stream.* A log pane that changes its source (another job,
+attempt, or lane; §4) or a quitting app stops its stream: the TUI's spawn
+runner keeps each process it starts, and stopping marks that stream stopped
+and closes the process's standard input from the UI thread. That is
+DEC-55's detach, so the container client ends at once. The stream's own
+thread then completes the operation's normal ending by closing its
+generator. Whatever that stream yields or raises after the stop is
+discarded, never shown. The TUI installs no signal handler: Textual owns the
+terminal, where Ctrl-C is a key, not a signal.
+
+### 3. Layout, navigation, and keys (DEC-60)
+
+Five views, as tabs: **Jobs**, **Submit**, **Cookies**, **Status**, and
+**Activity**. The header names the settings file in use (escaped) and the job
+summary: from the latest job listing, `R running · Q queued · F failed or
+interrupted`, or that listing's failure text. The footer lists the focused
+view's keys, and `?` toggles Textual's key help panel.
+
+*Refresh.* The job listing (§4) is read every 2 seconds while Jobs is shown
+and every 10 seconds otherwise, each interval counted from the end of the
+previous read, and at once after any job action or `ctrl+r` in Jobs.
+`doctor` and `config show` are read when Status is first shown, on
+`ctrl+r` there, and after a settings, token, or lifecycle action; never on a
+timer, since `doctor` makes several Docker calls. The cookie list is read
+when Cookies or Submit is first shown, on `ctrl+r` in Cookies, and after a
+cookie action. The app takes the two listing intervals as arguments,
+defaulting to 2 and 10 seconds, so tests can shorten them.
+
+*Keys.* While a text field has focus, printable keys type into it and
+`escape` leaves it; the keys below apply elsewhere. Each view's table moves
+with the arrow keys, `j`/`k`, `home`/`end`, and page keys; `tab` and
+`shift+tab` move focus between a view's panes and fields.
+
+| Where | Key | Action |
+| --- | --- | --- |
+| Everywhere | `1`–`5` | Show Jobs, Submit, Cookies, Status, Activity |
+| | `ctrl+r` | Refresh the shown view now |
+| | `q`, `ctrl+q` | Quit (§8) |
+| | `?` | Key help |
+| Jobs | `space` | Mark or unmark the cursor job |
+| | `a` | Toggle every job (`jobs list --all`) and the default listing |
+| | `c` | Cancel the marked jobs, else the cursor job |
+| | `r` | Retry them, each keeping its own cookie rule and user-agent |
+| | `R` | Retry them with a chosen selection |
+| | `[`, `]` | Show the previous or next attempt's log |
+| | `v`, `g` | Follow the video or gallery lane in the log pane |
+| | `escape` | Return the log pane to the cursor job |
+| | `e` | Export a preset's failed work to a queue file |
+| Submit | `ctrl+s` | Submit the form |
+| Cookies | `a` | Add a browser source |
+| | `i` | Import a Netscape file |
+| | `f` | Refresh the cursor source |
+| | `d` | Make the cursor source the default |
+| | `n` | Make anonymous the default |
+| Status | `enter` | Edit the cursor setting |
+| | `x` | Unset the cursor setting |
+| | `t` | Store the NordVPN token |
+| | `U`, `D`, `R` | Container up, down, restart |
+
+*Dialogs.* A form opens as a modal dialog: `enter` in its last field or its
+OK button submits it, and `escape` closes it unchanged. A confirmation is a
+modal question whose `y` or Yes confirms and `n`, `escape`, or No declines;
+No has the focus. Confirmations are asked before cancelling any job the
+latest listing shows running, before `down` and `restart`, and before
+quitting while an action runs (§8).
+
+*Size and appearance.* Every view is usable at 80×24 and reflows when the
+terminal is resized; smaller sizes clip but never fail. Textual's default
+theme applies; there are no theme or key settings in Stage 4. Color never
+carries meaning alone: each job condition (§4) has its own text as well as
+its own style.
+
+### 4. Jobs view
+
+*Listing.* A table of the default listing (`jobs list`'s jobs) or, after
+`a`, every job, in ID order, with `jobs list`'s columns (ID, STATE, PRESET,
+QUEUE, ATTEMPT, URL), cells from the shared renderer, and a mark column.
+STATE carries the distinct conditions: `running` (downloading), `running:
+cancelling`, `queued: throttle until T`, `queued: vpn`, `queued`, `failed`,
+`interrupted`, `cancelled`, and `succeeded`, each with its own style. An
+authentication failure is never labelled as such: the TUI reports the
+job's recorded state and error and nothing it would have to infer. With no
+jobs the table shows `jobs list`'s empty text. The cursor stays on the same
+job ID across reads; when that job leaves the listing, it moves to the next
+listed ID, else the last row. A failed read keeps the last table, marked
+`stale: REASON`, and the next successful read clears the mark.
+
+*Details.* The cursor job's `jobs show` text (shared renderer), read when
+the cursor moves to it and again whenever a listing shows any field of its
+record changed.
+
+*Log pane.* By default it shows the cursor job's current attempt through
+`follow_job`: a `Job I: URL` notice, the log's bytes, wait notices as they
+change (`waiting for VPN`, `waiting for throttle until T`, `resumed`), and,
+at the attempt's end, `attempt N ended: STATE`, with the exit status and
+error when the record has them. This works for any state: a queued job shows
+its waits until it starts, and a finished one shows its whole log and its
+end. `[` steps to the previous attempt and `]` to the next; an earlier
+attempt is read with `log(id, attempt)`, once, and its pane ends with
+`attempt N (earlier)`. The pane's title reads `Log: job I, attempt N of M`.
+When a follow fails and a fresh `show` reports a later attempt than the one
+followed (the job was retried), the pane reopens on the new attempt with the
+notice `attempt N was retried; now showing attempt N+1`; any other failure
+is shown as a notice in the pane, which stays as it is until `ctrl+r`, or
+until a successful listing after failed ones reopens it. Moving the cursor
+to another job stops the stream (§2) and opens the new one.
+
+`v` and `g` switch the pane to `follow_lane` for the video or gallery lane,
+titled `Log: PRESET lane`: each job's `Job I: URL` notice, waits, bytes, and
+end, then `PRESET lane is idle` at its done, after which the pane stays as it
+is. Cursor moves leave lane mode alone; `escape` returns to the cursor job.
+
+*Log text.* `downloadinux.tui.logtext` turns log bytes into pane lines. It
+decodes UTF-8 incrementally, replacing invalid bytes with U+FFFD, so a
+character split across chunks survives. LF and CRLF end a line. A bare CR
+returns to the start of the line, so the text after it replaces what was
+there (a downloader's progress meter shows its latest state). A tab stays;
+every other C0 character, DEL, and C1 character is shown as `\xNN`, as
+DEC-55's human output shows it, so escape sequences are visible and never
+interpreted. An unterminated last line is shown as it stands. The pane keeps
+the last 10,000 lines, and once it has dropped any, its first line reads
+`(earlier lines dropped; dlx jobs logs I shows the whole log)`. Notices are
+separate, styled lines and never change how bytes are rendered. The pane
+keeps its view at the end while new lines arrive unless the user has
+scrolled up; `end` returns to following.
+
+*Cancel and retry.* `space` marks jobs; `c`, `r`, and `R` act on the marked
+jobs in ID order, else on the cursor job, and clear the marks. Marks on jobs
+that leave the listing are dropped. `c` sends one `cancel`. `r` sends one
+`retry` with no selection, so each job keeps its own source rule and
+user-agent (*Persistent worker and jobs* §3, DEC-55). `R` first opens a dialog: cookies (each
+job's own, anonymous, or a listed source) and a user-agent field (empty
+keeps each job's), then sends one `retry` with that selection. Each outcome
+is recorded in Activity with the matching `jobs cancel` or `jobs retry` line,
+and the notification summarizes them.
+
+*Export.* `e` opens a dialog for a preset and a required path. A new host
+operation, `host_jobs.export_to(preset, path, config=None, overrides=(),
+host=Host(), *, capture=None, feed=None)`, expands the path's leading `~` and
+makes it absolute against the working directory without resolving links, as
+a queue path is. It reads `export`'s URLs and writes them as `jobs export`
+prints them (each URL and a newline, UTF-8) through DEC-24's no-clobber write
+at the default file mode, creating no directory; an OS failure is the usual
+`PATH: REASON`. It returns a frozen `ExportFile(path: Path, count: int)`. An existing path is
+refused, `PATH exists; not overwriting it`; with no URLs it
+writes nothing and reports `No failed, cancelled, or interrupted PRESET jobs
+to export.`; otherwise `Exported N URLs to PATH.` The write needs no
+container access beyond `export`'s, and the CLI's `jobs export` is
+unchanged.
+
+### 5. Submit view
+
+A form: mode (URLs or queue file), preset (`video` by default, or
+`gallery`), cookies, and user-agent. Cookies offers `Default (NAME)` (or
+`Default (anonymous)`), `Anonymous`, and each registered source by name, from
+the cookie list; when that list fails, only the first two are offered and
+the failure is shown beside them. An empty user-agent uses
+`downloads.user_agent`; any other value is the CLI's `--user-agent`, with its
+validation. A read-only line says the preset writes under `paths.downloads`
+(the effective path) in its own layout: the destination is not chosen per
+job ([issue #99](https://github.com/johnfoland/downloadinux/issues/99)).
+`ctrl+s` submits.
+
+*URLs.* A multi-line field. Its text is split into lines at LF, CRLF, and CR,
+each stripped of surrounding whitespace, and empty lines and lines beginning
+`#` are skipped, as a queue file's are (*Persistent worker and jobs* §6,
+*Queue file*). With no URL left,
+the form says `enter at least one URL` and submits nothing. Otherwise one
+`submit` sends them in order, and `submit_download` validates them as `dl`
+does. Activity records one line per reference in its order, `job I: URL` or
+`job I: URL (already active)`. The field is cleared, the job listing is
+re-read, and the Jobs cursor is placed on the first reference. The TUI never
+follows a submission itself: the Jobs view shows it.
+
+*Queue file.* A path field whose placeholder is the preset's default queue
+under `paths.downloads`; empty uses it. One `import_queue` imports and
+consumes the file exactly as `batch` does (*Persistent worker and jobs* §6,
+DEC-56), and its result is
+reported with `batch`'s texts: `No URLs in queue: PATH`, or `Queued N jobs;
+skipped M active duplicates in PRESET lane.` A consumption failure is shown
+with its message, which says the jobs were queued.
+
+### 6. Cookies view
+
+A table of the cookie list, one row per source in name order: name, kind,
+origin, revision, refreshed time, and a default mark, the same fields
+`cookies list` prints; above it, `Default: NAME` or `Default: anonymous`.
+Beside it, the cursor source's `cookies inspect` text (shared renderer),
+read when the cursor moves to it and after an action on it. A source's
+cookie values never appear (DEC-30).
+
+- `a` opens a dialog for a name, a browser (from `cookies browsers`), and an
+  optional profile, keyring, and container where that browser supports them,
+  and a Replace checkbox (off), then runs `add_browser`. The notice `export
+  running; a keychain or browser prompt may appear` is shown while it runs.
+- `i` opens a dialog for a name, a file path, and Replace, then runs
+  `import_cookies`.
+- `f` runs `refresh` on the cursor source.
+- `d` makes the cursor source the default; `n` makes anonymous the default.
+
+Each result is the operation's inspection or default, recorded in Activity
+with the CLI's text. Registration never changes the default (*Named cookie
+sources* §2), and the TUI does not either, except through `d` and `n`. `cookies cleanup` and the
+`firefox` and `setup` shortcuts stay CLI-only.
+
+### 7. Status and settings view
+
+*Health.* `doctor`'s checks as a table, in its order: ID, status, detail, and
+fix, with the same text `doctor` prints, including container, worker, VPN,
+mount, and tool rows (DEC-22; *Persistent worker and jobs* §8).
+
+*Settings.* `config show`'s report: one row per setting with its value and
+source (`default`, `file`, or `override`), then the settings and
+credentials files (each marked missing when absent), the token's state, and
+the four mounts. The token's value never appears.
+
+- `enter` on a setting opens a dialog with its current value as `config set`
+  writes it (a TOML value), and submitting runs `set_setting` with the text
+  as entered: `config set`'s parsing, validation, and result (DEC-61). A
+  boolean or a setting with choices is offered as those choices.
+- `x` runs `unset_setting` on the cursor setting.
+- When the written key also has a `--set` override for this session, the
+  result says that the override still applies until the TUI is restarted
+  without it.
+- After writing any `paths.*`, `container.*`, or `vpn.*` setting, the result
+  adds `restart the container to apply it (R)`.
+- `t` opens a masked field for the NordVPN token and runs `set_token`:
+  `set_token`, then `log_in`, reported with `config set-token`'s texts. The
+  token appears nowhere on screen, in Activity, or in a log, and the field is
+  cleared when the dialog closes.
+
+*Container.* `U`, `D`, and `R` run `lifecycle` with `up`, `down`, or
+`restart` (*Host application*'s C02 list), after a confirmation for `down`
+and `restart` that names how many jobs the latest listing shows running:
+`restart` interrupts them and leaves queued jobs to carry on (*Persistent
+worker and jobs* §7). Compose's output is recorded in Activity. `build` and
+`update` stay CLI-only. VPN connection controls and `servers` are not in the
+TUI; `doctor` shows the VPN's state.
+
+### 8. Errors, Activity, and quitting
+
+*Errors.* An operation error (`DownloadinuxError`, a configuration error, or
+an OS error, mapped to `PATH: REASON` as the CLI maps it) is shown as an
+error notification with the text the CLI prints after `downloadinux: error: `
+and recorded in Activity. An unexpected exception in a backend call does not
+end the app: it is recorded in Activity as `internal error: TYPE: MESSAGE`
+with its traceback, and the view that asked shows `internal error; see
+Activity`.
+
+*Activity.* A scrolling record of the session, each entry stamped with the
+local time as `HH:MM:SS`: each action's
+name and outcome, each error, and captured process text (§2), newest last.
+It keeps the last 5,000 entries and is not saved: the worker's job history
+and logs are the durable record.
+
+*Quitting.* `q` or `ctrl+q` quits at once, with no confirmation, unless an
+action is running: then it asks `NAME is still running and cannot be
+stopped safely; quit when it finishes?`. On yes, actions not yet started are
+dropped, and the app exits when the running one ends. Quitting stops every
+stream (§2) and waits for their endings, each bounded by DEC-55's stop wait.
+It never cancels a job, stops the worker, or touches the container.
+
+The ExifTool helper (`exifmod`) stays a shell utility reached with `just
+shell`; the TUI does not expose it.

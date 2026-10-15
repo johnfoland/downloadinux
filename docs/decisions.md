@@ -63,6 +63,9 @@ dependency versions, packaging, and keybindings are deferred to
 implementation research.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI*.
+Clarified on 2026-10-15 for issue #98: the deferred details are now settled
+by DEC-58 (package, `textual==8.2.8`, launch), DEC-59 (threads and child
+processes), and DEC-60 (views and keys); the choice of Textual is unchanged.
 
 ## DEC-6: Existing download behavior is preserved as presets (2026-09)
 
@@ -92,7 +95,9 @@ unsupported. One command name for both CLI and TUI keeps one thing to install
 and type; `dlx` exists because it is typed daily.
 
 *Where:* [target design](target-design.md), *Host application*. Added during
-project P0001.
+project P0001. Clarified on 2026-10-15 for issue #98: Stage 4 opens the TUI
+on bare invocation only when standard input and output are terminals, and
+keeps printing help otherwise (DEC-58).
 
 ## DEC-8: TOML configuration at XDG locations, with flag > file > default precedence (2026-10)
 
@@ -273,7 +278,10 @@ token, which travels only in the process environment.
 
 *Where:* [target design](target-design.md), *Host application* ("Commands
 in the container, pinned for P0001-C03"); `compose.capture_process`. Added
-during P0001-C03-b.
+during P0001-C03-b. Clarified on 2026-10-15 for issue #98: this is the
+CLI's rule. The TUI owns the screen, so its runners capture standard error
+into a temporary file and record it in Activity instead, keeping a Compose
+failure visible beside the TUI's own message (DEC-59).
 
 ## DEC-18: A JSON body that is not the server list fails like a non-JSON one (2026-10)
 
@@ -1409,3 +1417,134 @@ scheduling, store, or retirement rule changes.
 *Where:* [target design](target-design.md), *Persistent worker and jobs* §1,
 “Multi-job and lane following client”, and §6, “Host following operations and
 later front output”. Added on 2026-10-14 for issue #64.
+
+## DEC-58: The TUI is a Textual subpackage behind bare invocation on a terminal, a front over the existing host operations (2026-10)
+
+The TUI is `downloadinux.tui`, on `textual==8.2.8` as an exactly pinned
+runtime dependency of the one package. Bare `dlx` opens it when standard input
+and output are both terminals and prints help otherwise; only that path
+imports Textual. It loads the settings once before the screen opens (a
+configuration error exits 2 without a screen), passes the session's
+`--config` and `--set` to every operation, and lets each operation reload the
+file. It adds no worker client, socket request, store access, or host state:
+every view is built from the CLI's host operations, and the shared human
+renderers move from `cli.py` to `downloadinux.render` unchanged. Launching
+starts nothing and quitting stops nothing.
+
+An optional extra (`downloadinux[tui]`) was rejected: DEC-7 keeps one thing
+to install, and a bare `dlx` that sometimes cannot open its UI would be a
+second failure mode to explain. A separate `dlx tui` subcommand was rejected
+because DEC-7 already reserves bare invocation; `just tui` is the recipe.
+Opening the TUI whenever stdout alone is a terminal was rejected so that
+`dlx < file` or a pipe never starts a screen. A TUI-side job cache or a
+long-lived worker connection was rejected: the worker serves one short
+request per tick (DEC-50, DEC-54), and job history is durable only in the
+worker. Re-rendering the CLI's text in the TUI by calling `cli.py` was
+rejected because the TUI would import the argument parser and its signal
+handling; moving the renderers keeps one definition of each text. The
+ExifTool helper stays a shell utility, settling the implementation plan's
+open row.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §1 and
+the *Host application* note on bare invocation. Added on 2026-10-15 for
+issue #98; clarifies DEC-5 and DEC-7.
+
+## DEC-59: TUI calls run in thread workers with a serial action queue, and no child process touches the terminal (2026-10)
+
+Every host operation the TUI calls runs in a Textual thread worker through one
+backend object. Reads (listings, shows, logs, follows, cookie and config
+reads, doctor) run alongside anything, one per pane and kind, the newer
+superseding; actions (everything that changes state) run one at a time in the
+order asked. The TUI injects its own runners: each child gets `/dev/null` or
+its contract's pipe on standard input, captured standard output as before,
+standard error in a temporary file recorded in Activity, and a new session.
+The app's own descriptor 2 points at a temporary file while the screen is up
+and is replayed after the terminal is restored. A pane stops a stream by
+closing the child's standard input, DEC-55's detach, and discards whatever
+that stream reports afterwards. No signal handler is installed.
+
+Running operations on the event loop was rejected: every one blocks on
+Compose or the filesystem. Converting the host operations to asyncio was
+rejected because the CLI and the gate's tests depend on their synchronous
+generators and injectable runners, which threads reuse unchanged. Letting
+actions run concurrently was rejected: two settings writes would race on one
+file, and a submission beside a cookie refresh would pin whichever revision
+won. Leaving standard error on the terminal (the CLI's DEC-17 rule) was
+rejected because Compose's diagnostics would scribble over the screen;
+discarding it was rejected because they explain failures. Closing a blocked
+generator from the UI thread was rejected because Python refuses to close a
+running generator; stopping the child through its lifetime pipe uses the
+contract the worker client already honors. Reporting the error a stopped
+stream raises was rejected: the user asked for it to stop.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §2 and
+§8. Added on 2026-10-15 for issue #98; clarifies DEC-17 for the TUI and
+uses DEC-53 and DEC-55 unchanged.
+
+## DEC-60: The TUI has five views with fixed refresh rules and keys, and renders logs as escaped text (2026-10)
+
+The views are Jobs, Submit, Cookies, Status, and Activity, reached with `1` to
+`5`. The job listing is read every 2 seconds while Jobs is shown and every
+10 seconds otherwise, counted from the previous read's end, and at once after
+a job action; `doctor` and `config show` are read on demand and after
+settings, token, and lifecycle actions; the cookie list on demand and after
+cookie actions. The keys, dialogs, and confirmations (running-job cancel,
+`down`, `restart`, quitting during an action) are fixed in the target design.
+The log pane follows the cursor job's current attempt through
+`follow_jobs([id])`, steps to earlier attempts with a one-shot `logs`,
+reopens on a retried job's new attempt, and can follow a lane. Log bytes are
+decoded incrementally, a bare CR overwrites the line, and control characters
+other than tab show as `\xNN`, keeping the last 10,000 lines. Marked jobs
+take one cancel or retry. Export writes `jobs export`'s bytes to a new file
+through DEC-24's no-clobber write (`host_jobs.export_to`). The Submit view
+parses its URL field as a queue file's lines and never follows; the queue
+mode is `batch`. Cookies offers add-browser, import, refresh, and default.
+Status runs `up`, `down`, and `restart`, edits settings through DEC-61, and
+stores the token in a masked field. Build, update, cleanup, VPN controls,
+and a per-job destination (#99) are not in the TUI.
+
+Running `doctor` on a timer was rejected because it makes several Docker
+calls per run. Polling `show` and `logs` without the follow client was
+rejected because DEC-57 already pins attempt boundaries and waits.
+Interpreting ANSI sequences in logs was rejected: logs can hold any bytes,
+and the CLI's human output already escapes control characters. An unbounded
+log pane was rejected because a long download's progress output would grow
+without limit; the whole log stays one `dlx jobs logs` away. A TUI that
+follows each submission as `dl` does was rejected: the Jobs view already
+shows it, and following would tie the form to one job. Writing an export to
+an existing file was rejected because a mistyped path could overwrite a live
+queue file. Build and update were left out at the maintainer's choice
+(2026-10-15) because their output is long and they rarely run; VPN controls
+because `doctor` reports the VPN and `dlx vpn` remains.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §3 to
+§7. Added on 2026-10-15 for issue #98; the maintainer chose the lifecycle
+scope and the batch, export, lane, and token extras.
+
+## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
+
+`config set KEY VALUE` parses VALUE as `--set` does, validates it as a file
+value (plus no CR, LF, or NUL in a string, and a nonempty user-agent), and
+writes the untyped TOML value into the settings file with `tomlkit`, keeping
+comments and permission bits and writing nothing when the file already holds
+it; a missing file becomes `init`'s starter file with the value in it.
+`config unset KEY` removes the key so it takes its default, writing nothing
+when it is absent. Both are shared operations returning a `SettingWrite`, so
+the TUI's settings editor and the CLI write identically, and both print fixed
+texts, warning when a `--set` on the same invocation overrides the key. They
+never touch the credentials file or the container.
+
+A TUI-only settings writer was rejected at the maintainer's choice
+(2026-10-15): the CLI would then have no way to make the same edit, against
+the rule that the fronts share operations. Editing only the `paths.*`
+settings was rejected for the same reason. Writing the typed (expanded) path
+was rejected because it would replace a `~` the user wrote with their home
+directory. Restarting the container after a write was rejected: a restart
+interrupts running jobs, which must be the user's explicit choice. A
+`config set` for the token was rejected because the token belongs in the
+credentials file at mode 0600 and `config set-token` already validates it
+without echo.
+
+*Where:* [target design](target-design.md), *Configuration and paths*
+("Settings writes") and the *Host application* command table. Added on
+2026-10-15 for issue #98.
