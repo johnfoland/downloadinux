@@ -21,6 +21,11 @@ from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.mounts import mounts
 from downloadinux.settings import Host
 
+VPN_DISABLED = (
+    "vpn.enabled is false, so the container runs no NordVPN daemon; "
+    "set vpn.enabled = true and run dlx restart to use it"
+)
+
 
 def _cookie_name(name: str) -> None:
     if type(name) is not str or not cookie_store.NAME.fullmatch(name):
@@ -270,10 +275,7 @@ def vpn(
     (DEC-16)."""
     effective = settings.load(config, overrides, host)
     if not effective["vpn.enabled"]:
-        raise DownloadinuxError(
-            "vpn.enabled is false, so the container runs no NordVPN daemon; "
-            "set vpn.enabled = true and run dlx restart to use it"
-        )
+        raise DownloadinuxError(VPN_DISABLED)
     program = ["vpn", *(args or ["status"])]
     return _invocation(effective, host).run(compose.exec_args(program), runner)
 
