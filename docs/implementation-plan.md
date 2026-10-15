@@ -1,7 +1,9 @@
 # Implementation plan
 
 Status: Stages 1–3 are implemented; Stage 4 is settled, with its shared
-renderers and `config set`/`config unset` implemented (PR #103) and the TUI
+renderers and `config set`/`config unset` implemented (PR #103), and
+`host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
+implemented (PR #105), completing the shared host operations. The TUI is
 not implemented.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
@@ -28,7 +30,9 @@ are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadi
 completion evidence through the credential-free gate. Stage 3 is implemented.
 Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
-are implemented (PR #103), and the TUI is not.
+are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
+`operations.server_choices` are implemented (PR #105), completing the
+shared host operations; the TUI is not.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -187,7 +191,8 @@ removes tmux and the zsh loop together (DEC-44). Job history retention is
 outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issues/65)).
 The worker shipped additively first; the coordinated `dl`, `batch`, and
 `watch` cutover and retirement are implemented, and PR #97 joins their
-completion evidence in the gate. Stage 3 is implemented; Stage 4 is settled,
+completion evidence in the gate. Stage 3 is implemented; Stage 4's shared
+host operations are implemented (PRs #103, #105), and its TUI is settled,
 not implemented.
 
 - Define a durable job store and the host/worker interface.
@@ -224,8 +229,11 @@ recreation; persisted state must support reconciliation and a defined retry poli
 
 Settled contract: target design *Python + Textual TUI* §1–§8 and
 *Configuration and paths* ("Settings writes"), DEC-58 to DEC-62
-([issue #98](https://github.com/johnfoland/downloadinux/issues/98)); not
-implemented. The TUI is `downloadinux.tui` on `textual==8.2.8`, opened by
+([issue #98](https://github.com/johnfoland/downloadinux/issues/98)). The
+shared renderers and settings writes are implemented (PR #103), as are
+`host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
+(PR #105), completing the shared host operations. The TUI is not
+implemented. It is `downloadinux.tui` on `textual==8.2.8`, opened by
 bare `dlx` on a terminal (help otherwise), and a front over the CLI's host
 operations through one backend: no new worker client, store access, or host
 state (DEC-58). Every call runs in a thread worker; changes go through one
@@ -252,7 +260,8 @@ stay outside the TUI; history retention stays #65.
 - Add `config set` and `config unset`, shared by the CLI and the settings view
   (implemented, PR #103).
 - Add VPN connect and disconnect, with a server picker, through shared host
-  operations.
+  operations (`host_vpn` and `operations.server_choices` implemented,
+  PR #105; the TUI controls are not).
 
 Acceptance criteria:
 
@@ -333,4 +342,6 @@ outside these stages; queued jobs retain their pinned immutable revisions.
 Stage 4's TUI is settled (DEC-58 to DEC-62): its package, dependency,
 launch, threading and process rules, views, keys, VPN controls, and the
 `config set` and `config unset` writes are pinned before implementation;
-the writes and the shared renderers are implemented (PR #103).
+the writes and the shared renderers are implemented (PR #103), as are
+`host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
+(PR #105), completing the shared host operations. The TUI is not implemented.

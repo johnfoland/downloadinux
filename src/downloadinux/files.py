@@ -32,16 +32,18 @@ def default_file_mode() -> int:
     return 0o666 & ~umask
 
 
-def write_atomic(path: Path, text: str, mode: int, *, replace: bool = True) -> None:
+def write_atomic(path: Path, text: str, mode: int, *, replace: bool = True, parents: bool = True) -> None:
     """Write `text` to `path` through a same-directory temporary file with
     `mode`. With `replace=False` an existing file is never clobbered, even
     one created after the caller checked: `FileExistsError` is raised.
     Prefer hard-link publication; unsupported links use an exclusive mode-000
     reservation followed by replacement (DEC-24). Failure cleanup removes only
     a reservation whose identity can still be verified (DEC-27); a killed
-    process can leave its reservation behind.
+    process can leave its reservation behind. With `parents=False` the
+    parent directory must already exist (Python + Textual TUI §4, Export).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     reservation = None
     try:

@@ -1,6 +1,7 @@
 # Target design
 
-Status: Stages 1–3 are implemented; Stage 4 is settled, not implemented.
+Status: Stages 1–3 are implemented; Stage 4's shared host operations are
+implemented, and its TUI is settled, not implemented.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -37,8 +38,10 @@ and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 Stage 3 completion evidence. Stage 4, the Python + Textual TUI and its
 `config set`/`config unset` settings writes, is settled (*Python + Textual
 TUI*, DEC-58 to DEC-62, issue #98). PR #103 implements the shared human
-renderers and the `config set`/`config unset` writes (DEC-58, DEC-61); the
-TUI itself is not implemented.
+renderers and the `config set`/`config unset` writes (DEC-58, DEC-61).
+PR #105 implements `host_jobs.export_to`, `host_vpn`, and
+`operations.server_choices` (DEC-60, DEC-62), completing the shared host
+operations; the TUI itself is not implemented.
 
 ## Agreed decisions
 
@@ -3330,9 +3333,11 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 ## Python + Textual TUI
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
-DEC-58 to DEC-62); not implemented. Its settings writes, `config set` and
+DEC-58 to DEC-62); the TUI is not implemented. Its settings writes, `config set` and
 `config unset`, are under *Configuration and paths* (DEC-61), and are
-implemented (PR #103).
+implemented with the shared renderers (PR #103). `host_jobs.export_to`,
+`host_vpn`, and `operations.server_choices` are implemented (PR #105),
+completing the shared host operations.
 
 The TUI is a second front, beside the CLI, for the host operations Stages 1–3
 built. It adds no worker client, socket request, store access, or host state
@@ -3610,7 +3615,7 @@ keeps each job's), then sends one `retry` with that selection. Each outcome
 is recorded in Activity with the matching `jobs cancel` or `jobs retry` line,
 and the notification summarizes them.
 
-*Export.* `e` opens a dialog for a preset and a required path. A new host
+*Export.* `e` opens a dialog for a preset and a required path. The host
 operation, `host_jobs.export_to(preset, path, config=None, overrides=(),
 host=Host(), *, capture=None, feed=None)`, expands the path's leading `~` and
 makes it absolute against the working directory without resolving links, as
@@ -3638,7 +3643,8 @@ function that `jobs export` also prints from, so the two cannot drift. The
 no-clobber write is `files.write_atomic` with `replace=False` and a new
 `parents` keyword, default true and unchanged for every other caller, that
 `export_to` sets false: a missing directory is then the OS error naming the
-export path.
+export path. The host operation and shared export text are implemented
+(PR #105); the TUI dialog and result texts are not.
 
 ### 5. Submit view
 
@@ -3769,9 +3775,11 @@ every operation does and runs its container commands captured, with `-T`
   checks no jobs: it can only bring their traffic back onto the VPN. The
   result is a frozen `VpnChange(status: int, output: str)`, the command's
   exit status and captured standard output; a nonzero status is not raised.
-  Each operation loads the settings once and builds one invocation; the
-  refusals and the state read in `connect` and `disconnect` are `state`'s
-  own steps, not a second call to it. The VPN-off text is `vpn`'s, shared as
+  Each operation loads the settings once and builds one invocation for its
+  own steps; the job listing, when read, is `host_jobs.list_jobs` with the
+  caller's `config` and `overrides`, which loads them again as every
+  operation does. The refusals and the state read in `connect` and
+  `disconnect` are `state`'s own steps, not a second call to it. The VPN-off text is `vpn`'s, shared as
   one constant, and the not-running text is the worker calls' (*Persistent
   worker and jobs* §1). A job counts as running when its listed `state` is
   `running`, so one being cancelled counts.
@@ -3790,6 +3798,9 @@ every operation does and runs its container commands captured, with `-T`
   `ServerLoad.host` is the hostname less `.nordvpn.com` and `load` the API's
   value, as `servers` prints them; `cities` is filled whether or not
   `ranked` is. `list_servers` and `server_choices` share one fetch.
+
+`host_vpn` and `operations.server_choices` are implemented (PR #105);
+the TUI's VPN header, dialogs, picker, and controls are not.
 
 `o` opens a connect dialog: a target field holding `vpn.server` from the
 latest `config show` read (empty means the fastest server), and a *Choose a

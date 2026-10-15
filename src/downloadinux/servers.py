@@ -8,6 +8,8 @@ inside the container, which is the thing on the VPN, and ranked here.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from typing import Any
 
 from downloadinux.errors import DownloadinuxError
 
@@ -29,11 +31,20 @@ def fetch_argv(country: str = DEFAULT_COUNTRY) -> list[str]:
     return ["curl", "-sg", "--max-time", "40", API.format(country=country)]
 
 
-def rank(body: str, city: str = DEFAULT_CITY) -> list[str]:
-    """The lines to print: up to eight servers in `city` (an underscore
-    stands for a space), least load first, or, when it has none, the wrapped
-    list of cities. A body that is not the server list is an operation
-    failure (DEC-18)."""
+@dataclass(frozen=True)
+class ServerLoad:
+    host: str
+    load: Any  # The API's value, with rank's existing validation only.
+
+
+@dataclass(frozen=True)
+class ServerChoices:
+    ranked: tuple[ServerLoad, ...]
+    cities: tuple[str, ...]
+
+
+def ranking(body: str, city: str = DEFAULT_CITY) -> ServerChoices:
+    """Shared ranking data for the CLI and TUI (§7, VPN; DEC-18, DEC-62)."""
     want = city.replace("_", " ")
     try:
         servers = [
@@ -46,14 +57,20 @@ def rank(body: str, city: str = DEFAULT_CITY) -> list[str]:
         cities = [name.replace(" ", "_") for name in sorted({name for name, _, _ in servers})]
     except (ValueError, LookupError, TypeError, AttributeError):
         raise DownloadinuxError(UNREACHABLE) from None
+    return ServerChoices(tuple(ServerLoad(host, load) for _, host, load in rows), tuple(cities))
 
-    if rows:
-        return ["    %-12s load %s%%" % (host, load) for _, host, load in rows]
 
+def rank(body: str, city: str = DEFAULT_CITY) -> list[str]:
+    """The CLI's unchanged lines: up to eight servers, else wrapped cities."""
+    choices = ranking(body, city)
+    if choices.ranked:
+        return ["    %-12s load %s%%" % (server.host, server.load) for server in choices.ranked]
+
+    want = city.replace("_", " ")
     lines = [f"    No servers in {want}. Available cities:"]
     # Wrap the list rather than dumping 54 names down the terminal.
     line = "     "
-    for item in cities:
+    for item in choices.cities:
         if len(line) + len(item) > WIDTH:
             lines.append(line)
             line = "     "
