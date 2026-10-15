@@ -36,7 +36,7 @@ and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined
 Stage 3 completion evidence. Stage 4, the Python + Textual TUI and its
 `config set`/`config unset` settings writes, is settled (*Python + Textual
-TUI*, DEC-58 to DEC-61, issue #98) and not implemented.
+TUI*, DEC-58 to DEC-62, issue #98) and not implemented.
 
 ## Agreed decisions
 
@@ -248,7 +248,8 @@ Commands in the container, pinned for P0001-C03:
   from the container (VPN down, or killswitch blocking?)`. It runs whether
   or not the VPN is enabled. The ranking lives in the package
   (`downloadinux.servers`); the old script and the gate step that compiled
-  it are gone.
+  it are gone. Stage 4's TUI reads the same ranking as data through
+  `operations.server_choices` (*Python + Textual TUI* §7, DEC-62).
 - `config set-token` stores the token as before, then, when `vpn.enabled` is
   true and the container is running, logs the daemon in:
   `exec -T -u dl -e NORDVPN_TOKEN downloadinux sh -c 'nordvpn login --token
@@ -3318,7 +3319,7 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 ## Python + Textual TUI
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
-DEC-58 to DEC-61); not implemented. Its settings writes, `config set` and
+DEC-58 to DEC-62); not implemented. Its settings writes, `config set` and
 `config unset`, are under *Configuration and paths* (DEC-61).
 
 The TUI is a second front, beside the CLI, for the host operations Stages 1–3
@@ -3401,6 +3402,9 @@ tests give the app a fake backend instead, so no app test starts Docker.
 | `set_setting(key, value)`, `unset_setting(key)` | `operations.set_setting`, `operations.unset_setting` (DEC-61) |
 | `set_token(token)` | `operations.set_token`, then `operations.log_in` |
 | `lifecycle(command)` | `operations.lifecycle` with `up`, `down`, or `restart` |
+| `vpn_state()` | `host_vpn.state` (§7, DEC-62) |
+| `servers(city, country)` | `operations.server_choices` (§7, DEC-62) |
+| `vpn_connect(target)`, `vpn_disconnect()` | `host_vpn.connect`, `host_vpn.disconnect` (§7, DEC-62) |
 
 A selection is the CLI's: the default (no option), anonymous, or a source
 name, with an optional user-agent (DEC-39, DEC-40).
@@ -3411,17 +3415,20 @@ so a slow Compose call, a browser export, or a blocked stream never stops
 keys, redraws, or resizing. Calls are of two kinds:
 
 - *Reads* (`jobs`, `show`, `log`, the two follows, `cookies`, `inspect`,
-  `browsers`, `doctor`, `config`) may run alongside anything. Each pane has at
-  most one read of a kind in flight; a newer read for the same pane
-  supersedes the older, whose result is dropped when it arrives.
+  `browsers`, `doctor`, `config`, `vpn_state`, `servers`) may run alongside
+  anything. Each pane has at most one read of a kind in flight; a newer
+  read for the same pane supersedes the older, whose result is dropped when
+  it arrives.
 - *Actions* (every other method) change something. They run one at a time,
   in the order the user asked for them, through one action queue, so two
   settings writes or a cookie refresh and a submission never interleave.
   The footer names the running action and how many wait behind it. Each
   action's outcome is recorded in Activity (§8) and shown as a notification,
   and then the views it affects re-read: the job listing after a job action,
-  the cookie list after a cookie action, and the configuration and doctor
-  after a settings, token, or lifecycle action.
+  the cookie list after a cookie action, the configuration and doctor
+  after a settings, token, or lifecycle action, doctor after a VPN action,
+  and the header's VPN state (§3) after a VPN, settings, token, or
+  lifecycle action.
 
 *Processes.* `downloadinux.tui.process` provides the runners the backend
 passes to every operation that takes them (`runner`, `capture`, `feed`, and
@@ -3460,9 +3467,11 @@ terminal, where Ctrl-C is a key, not a signal.
 ### 3. Layout, navigation, and keys (DEC-60)
 
 Five views, as tabs: **Jobs**, **Submit**, **Cookies**, **Status**, and
-**Activity**. The header names the settings file in use (escaped) and the job
+**Activity**. The header names the settings file in use (escaped), the job
 summary: from the latest job listing, `R running · Q queued · F failed or
-interrupted`, or that listing's failure text. The footer lists the focused
+interrupted`, or that listing's failure text, and the VPN's state (§7,
+DEC-62). Where the line does not fit, the settings path is shortened from its
+start with `…`. The footer lists the focused
 view's keys, and `?` toggles Textual's key help panel.
 
 *Refresh.* The job listing (§4) is read every 2 seconds while Jobs is shown
@@ -3472,8 +3481,11 @@ previous read, and at once after any job action or `ctrl+r` in Jobs.
 `ctrl+r` there, and after a settings, token, or lifecycle action; never on a
 timer, since `doctor` makes several Docker calls. The cookie list is read
 when Cookies or Submit is first shown, on `ctrl+r` in Cookies, and after a
-cookie action. The app takes the two listing intervals as arguments,
-defaulting to 2 and 10 seconds, so tests can shorten them.
+cookie action. The header's VPN state is read every 10 seconds whatever
+view is shown, counted the same way, at once on `ctrl+r` in any view, and
+after the actions §2 names. The app takes the two listing intervals and the
+VPN interval as arguments, defaulting to 2, 10, and 10 seconds, so tests can
+shorten them.
 
 *Keys.* While a text field has focus, printable keys type into it and
 `escape` leaves it; the keys below apply elsewhere. Each view's table moves
@@ -3483,7 +3495,7 @@ with the arrow keys, `j`/`k`, `home`/`end`, and page keys; `tab` and
 | Where | Key | Action |
 | --- | --- | --- |
 | Everywhere | `1`–`5` | Show Jobs, Submit, Cookies, Status, Activity |
-| | `ctrl+r` | Refresh the shown view now |
+| | `ctrl+r` | Refresh the shown view and the VPN state now |
 | | `q`, `ctrl+q` | Quit (§8) |
 | | `?` | Key help |
 | Jobs | `space` | Mark or unmark the cursor job |
@@ -3505,13 +3517,16 @@ with the arrow keys, `j`/`k`, `home`/`end`, and page keys; `tab` and
 | | `x` | Unset the cursor setting |
 | | `t` | Store the NordVPN token |
 | | `U`, `D`, `R` | Container up, down, restart |
+| | `o` | Connect the VPN, or switch servers |
+| | `O` | Disconnect the VPN |
 
 *Dialogs.* A form opens as a modal dialog: `enter` in its last field or its
 OK button submits it, and `escape` closes it unchanged. A confirmation is a
 modal question whose `y` or Yes confirms and `n`, `escape`, or No declines;
 No has the focus. Confirmations are asked before cancelling any job the
 latest listing shows running, before `down` and `restart`, and before
-quitting while an action runs (§8).
+quitting while an action runs (§8). Switching VPN servers and disconnecting
+ask nothing: they are refused while a job runs (§7).
 
 *Size and appearance.* Every view is usable at 80×24 and reflows when the
 terminal is resized; smaller sizes clip but never fail. Textual's default
@@ -3683,8 +3698,83 @@ the four mounts. The token's value never appears.
 and `restart` that names how many jobs the latest listing shows running:
 `restart` interrupts them and leaves queued jobs to carry on (*Persistent
 worker and jobs* §7). Compose's output is recorded in Activity. `build` and
-`update` stay CLI-only. VPN connection controls and `servers` are not in the
-TUI; `doctor` shows the VPN's state.
+`update` stay CLI-only.
+
+*VPN (DEC-62).* Three host operations in a new module, `downloadinux.host_vpn`,
+and one in `operations` beside `list_servers`, give the TUI the VPN. Each loads the settings as
+every operation does and runs its container commands captured, with `-T`
+(*Host application*, "Commands in the container").
+
+- `state(config=None, overrides=(), host=Host(), *, capture=None) ->
+  VpnState`, a frozen `VpnState(enabled: bool, running: bool, connected:
+  bool, country: str | None, server: str | None)`. With `vpn.enabled` false
+  it makes no Docker call; with the container not running (the running test
+  under "Commands in the container") `running` is false; otherwise it runs
+  `nordvpn status` and reads it as doctor's `vpn.connected` check and the
+  worker's probe do
+  (`nordvpn_output`, DEC-47), taking `country` and `server` from the
+  `Country:` and `Server:` lines when connected. The header shows `VPN off`,
+  `VPN: container not running`, `VPN: disconnected`, or `VPN: connected
+  (COUNTRY, SERVER)`, each part omitted when absent and the parenthesis when
+  both are; a failed read shows `VPN: unknown`, its error recorded in
+  Activity under §2's rule for a repeated read.
+- `connect(target, config=None, overrides=(), host=Host(), *, capture=None,
+  feed=None) -> VpnChange` and `disconnect(config=None, overrides=(),
+  host=Host(), *, capture=None, feed=None) -> VpnChange | None`. Both refuse
+  with `vpn`'s error naming `vpn.enabled` when it is false (DEC-16) and with
+  `the container is not running; start it with dlx up` when it is not
+  running, running nothing. Each then reads `state`. When the VPN is
+  connected, it reads the default job listing (`host_jobs.list_jobs`, with
+  the same `capture` and `feed`), and if that holds any `running` job it
+  refuses and runs nothing: `1 job is running; let it finish or cancel it
+  before switching servers` (`N jobs are running; let them finish or cancel
+  them before …`), ending `disconnecting the VPN` for `disconnect`. A failed
+  listing is the error, and nothing runs. `connect` then runs `nordvpn
+  connect` with `target` split on whitespace, no argument when empty (the
+  fastest server), as `config set-token`'s connect splits `vpn.server`.
+  `disconnect` returns None when the VPN is not connected, running nothing,
+  and otherwise runs `nordvpn disconnect`. A connect while disconnected
+  checks no jobs: it can only bring their traffic back onto the VPN. The
+  result is a frozen `VpnChange(status: int, output: str)`, the command's
+  exit status and captured standard output; a nonzero status is not raised.
+- `operations.server_choices(city=servers.DEFAULT_CITY,
+  country=servers.DEFAULT_COUNTRY, config=None, overrides=(), host=Host(), *,
+  capture=None) -> ServerChoices` fetches exactly as `servers` does, with its
+  failure, and returns the ranking as data: a frozen
+  `ServerChoices(ranked: tuple[ServerLoad, ...], cities: tuple[str, ...])`,
+  with `ServerLoad(host, load)`. `ranked` holds up to eight servers in the
+  city, least load first, and `cities` every city name, sorted, with
+  underscores for spaces, as `servers` lists them; `servers.rank` is rebuilt
+  on the same ranking, so `dlx servers` prints byte for byte what it does
+  now.
+
+`o` opens a connect dialog: a target field holding `vpn.server` from the
+latest `config show` read (empty means the fastest server), and a *Choose a
+server* button. The button opens a picker with city and country ID fields,
+filled with `servers`' defaults (`New_York`, `228`), whose *Fetch* runs the
+`servers` read. Its rows read `HOST  load N%`, and `enter` on one puts the
+host in the target field and returns to the dialog. When the city has no
+servers (`ranked` is empty) the picker says `No servers in CITY` and lists
+`cities`; `enter` on
+a city puts it in the city field and fetches again. A failed fetch shows
+`servers`' failure text in the picker. Submitting the dialog runs
+`vpn_connect`; `O` runs `vpn_disconnect`. The command's output is recorded in
+Activity, escaped as §2 records standard error, and the result is reported:
+`Connected to TARGET.` (`the fastest server` when the target is empty, as
+`config set-token` names it), `Disconnected; queued jobs wait for the VPN.`,
+`The VPN is already disconnected.`, or the error `could not connect to
+TARGET (nordvpn exit N); see Activity` or `could not disconnect the VPN
+(nordvpn exit N); see Activity`. A connect never changes `vpn.server`: the
+next restart, with `vpn.autoconnect` true, connects as the settings say, and
+`enter` on `vpn.server` keeps a server.
+
+The running-job check narrows a window rather than closing it: a job the
+worker starts between the listing and the command is not caught. The worker
+starts a job only after its own probe sees a connection (*Persistent worker
+and jobs* §4), so after a disconnect no further job starts until the VPN is
+back. The CLI's `dlx vpn` stays a plain pass-through without the check, and
+the killswitch, `vpn ip`, login and logout, and every other `nordvpn`
+setting stay CLI-only; `doctor` reports the killswitch and the exit IP.
 
 ### 8. Errors, Activity, and quitting
 

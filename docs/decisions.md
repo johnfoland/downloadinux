@@ -1500,8 +1500,9 @@ through DEC-24's no-clobber write (`host_jobs.export_to`). The Submit view
 parses its URL field as a queue file's lines and never follows; the queue
 mode is `batch`. Cookies offers add-browser, import, refresh, and default.
 Status runs `up`, `down`, and `restart`, edits settings through DEC-61, and
-stores the token in a masked field. Build, update, cleanup, VPN controls,
-and a per-job destination (#99) are not in the TUI.
+stores the token in a masked field. Build, update, cleanup, and a per-job
+destination (#99) are not in the TUI. VPN controls were left out too until
+2026-10-15, when DEC-62 added them at the maintainer's request.
 
 Running `doctor` on a timer was rejected because it makes several Docker
 calls per run. Polling `show` and `logs` without the follow client was
@@ -1514,8 +1515,10 @@ follows each submission as `dl` does was rejected: the Jobs view already
 shows it, and following would tie the form to one job. Writing an export to
 an existing file was rejected because a mistyped path could overwrite a live
 queue file. Build and update were left out at the maintainer's choice
-(2026-10-15) because their output is long and they rarely run; VPN controls
-because `doctor` reports the VPN and `dlx vpn` remains.
+(2026-10-15) because their output is long and they rarely run. VPN controls
+were first left out because `doctor` reports the VPN and `dlx vpn` remains;
+the maintainer reversed that the same day (DEC-62), since checking why jobs
+wait on the VPN and fixing it should not need a second terminal.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §3 to
 §7. Added on 2026-10-15 for issue #98; the maintainer chose the lifecycle
@@ -1548,3 +1551,41 @@ without echo.
 *Where:* [target design](target-design.md), *Configuration and paths*
 ("Settings writes") and the *Host application* command table. Added on
 2026-10-15 for issue #98.
+
+## DEC-62: The TUI connects and disconnects the VPN through shared host operations, refusing a switch or disconnect while a job runs (2026-10)
+
+The TUI's header shows the VPN's state on every view, read every 10 seconds
+and after each VPN, settings, token, or lifecycle action, through a new
+`host_vpn.state` that reads `nordvpn status` as doctor and the worker's probe
+do. In Status, `o` connects to a typed target (a country, city, group, or
+server, filled with `vpn.server`) or one chosen from a picker over the
+`servers` ranking, returned as data by `operations.server_choices`; `O`
+disconnects. `host_vpn.connect` and `host_vpn.disconnect` refuse, running
+nothing, when the VPN is connected and the default job listing shows a
+running job: a switch or disconnect then would either stall those downloads
+(killswitch on) or carry them on over the host's own connection (killswitch
+off), which `vpn.enabled` rules out. A connect while disconnected checks
+nothing. A connect is for the session only and never writes `vpn.server`.
+
+A confirmation naming the running jobs, like `down`'s, was rejected at the
+maintainer's choice (2026-10-15): the leak with the killswitch off is not
+something a default-No question should allow. Confirming only when the
+killswitch is off was rejected because the configured killswitch can differ
+from the daemon's (doctor's `vpn.killswitch` warning). Text entry alone was
+rejected because `servers`' ranking is what makes a server choice useful,
+and a picker alone because a country or group is a common target. Saving the
+chosen server, always or by offer, was rejected (maintainer, 2026-10-15): it
+keeps `dlx vpn on`'s session-only meaning, and `vpn.server` is one edit away.
+A VPN panel only in Status, or doctor's rows only, was rejected because jobs
+waiting with `queued: vpn` show on Jobs, where the cause should be visible.
+Running `dlx vpn`'s pass-through from the TUI was rejected: its uncaptured
+`exec` and `nordvpn`'s free-form output fit a terminal, not a screen, and it
+passes `vpn login` a token on the command line. Adding the running-job check
+to `dlx vpn` was rejected: the CLI stays a plain pass-through the user can
+always force. The check reads the listing just before the command, so a job
+the worker starts in between is not caught; after a disconnect the worker's
+own probe holds every further job.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §2, §3,
+and §7, and the *Host application* `servers` note. Added on 2026-10-15 for
+issue #98; amends DEC-60's VPN exclusion.
