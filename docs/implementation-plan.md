@@ -1,6 +1,6 @@
 # Implementation plan
 
-Status: Stages 1–3 are implemented; Stage 4 remains proposed.
+Status: Stages 1–3 are implemented; Stage 4 is settled, not implemented.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -24,7 +24,8 @@ commands. Reusable host submission and queue-import operations are implemented
 reduction (DEC-57; PR #94). The coordinated download fronts and retirement
 are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3
 completion evidence through the credential-free gate. Stage 3 is implemented.
-Stage 4 remains a proposal.
+Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
+DEC-58 to DEC-61) and not implemented.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -183,8 +184,8 @@ removes tmux and the zsh loop together (DEC-44). Job history retention is
 outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issues/65)).
 The worker shipped additively first; the coordinated `dl`, `batch`, and
 `watch` cutover and retirement are implemented, and PR #97 joins their
-completion evidence in the gate. Stage 3 is implemented; Stage 4 remains
-proposed.
+completion evidence in the gate. Stage 3 is implemented; Stage 4 is settled,
+not implemented.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -218,11 +219,31 @@ recreation; persisted state must support reconciliation and a defined retry poli
 
 ## Stage 4 — Python + Textual TUI
 
+Settled contract: target design *Python + Textual TUI* §1–§8 and
+*Configuration and paths* ("Settings writes"), DEC-58 to DEC-61
+([issue #98](https://github.com/johnfoland/downloadinux/issues/98)); not
+implemented. The TUI is `downloadinux.tui` on `textual==8.2.8`, opened by
+bare `dlx` on a terminal (help otherwise), and a front over the CLI's host
+operations through one backend: no new worker client, store access, or host
+state (DEC-58). Every call runs in a thread worker; changes go through one
+serial action queue; child processes get `/dev/null` or their pipe on
+standard input, captured standard error, and a new session, so nothing
+touches the screen; streams stop through DEC-55's detach (DEC-59). Five
+views, Jobs, Submit, Cookies, Status, and Activity, have fixed refresh rules,
+keys, and confirmations; logs render as escaped text with CR overwrite and a
+10,000-line pane; export writes a new file without clobbering; Status runs
+`up`, `down`, and `restart` and stores the token (DEC-60). `config set` and
+`config unset` are the shared settings writes the editor calls (DEC-61).
+Build/update, cleanup, VPN controls, the ExifTool helper, and a per-job
+destination ([issue #99](https://github.com/johnfoland/downloadinux/issues/99))
+stay outside the TUI; history retention stays #65.
+
 - Build against the same operations as the CLI.
 - Add job submission, queue/history views, details, and live logs.
 - Add named cookie selection, import/export-source setup, and refresh controls.
 - Add container/worker/VPN status and configuration views.
 - Expose cancellation/retry according to the worker's defined semantics.
+- Add `config set` and `config unset`, shared by the CLI and the settings view.
 
 Acceptance criteria:
 
@@ -233,6 +254,10 @@ Acceptance criteria:
 - Background operations do not block UI responsiveness.
 - Keyboard navigation, resizing, and error presentation work on macOS and Linux.
 - No tmux panes, sessions, or attachment mechanisms are required.
+- No child process the TUI starts reads from or writes to the terminal, and
+  every CLI output stays byte for byte as it was.
+- `config set` and `config unset` keep comments and permission bits, refuse
+  invalid values as a settings file would, and change nothing else.
 
 ## Validation throughout the stages
 
@@ -277,7 +302,7 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 | Cancellation, retry, duplicates, and concurrency | Resolved for Stage 3: `SIGTERM` through the runner, deliberate retries that re-pin, active duplicates skipped, a throttled lane per preset and an immediate queue per `dl` (DEC-42, DEC-43). |
 | VPN packaging and required/optional policy | Optional per config (DEC-11). Same container or a separate service is still open. |
 | Archive/state migration locations | Resolved: the gallery archive stays in place (DEC-13, DEC-44); job history lives under `paths.state/jobs/` (DEC-41). |
-| ExifTool helper scope | Determines whether it remains a shell utility or gets a UI |
+| ExifTool helper scope | Resolved for Stage 4: it stays a shell utility reached through `just shell`; the TUI does not expose it (DEC-58). |
 
 Configuration and cookie-source contracts are settled. P0003 D1, the source
 store, parser, and legacy migration, and D2, browser/file registration and
@@ -294,4 +319,6 @@ the worker is packaged into the image with its implemented job clients, and the 
 joined completion evidence (*Stage 3* above), so Stage 3 is implemented.
 Job history retention (#65) and cookie source lifecycle/pruning (#35) remain
 outside these stages; queued jobs retain their pinned immutable revisions.
-The proposed Stage 4 TUI styling and keybindings follow stable operations.
+Stage 4's TUI is settled (DEC-58 to DEC-61): its package, dependency,
+launch, threading and process rules, views, keys, and the `config set` and
+`config unset` writes are pinned before implementation.

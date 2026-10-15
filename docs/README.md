@@ -45,7 +45,10 @@ and retires tmux and the zsh loop. Stage 3 is implemented, with joined
 credential-free evidence for disconnect/reconnect, throttled lanes, process-tree
 cancellation, refreshed retry, restart reconciliation, and doctor (PR #97).
 Stage 4,
-the Python + Textual TUI, remains a proposal.
+the Python + Textual TUI, is settled under
+[issue #98](https://github.com/johnfoland/downloadinux/issues/98)
+(DEC-58 to DEC-61), with the `config set` and `config unset` settings
+writes it shares with the CLI; it is not implemented.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.
