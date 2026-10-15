@@ -478,14 +478,17 @@ Settings writes, settled for Stage 4 (DEC-61; not implemented):
   host=Host())` and `operations.unset_setting(key, config=None,
   overrides=(), host=Host())`, each returning a frozen
   `SettingWrite(settings_file: Path, key: str, value: Any, written: bool)`
-  (`value` the TOML value written, or null for an unset). The TUI's settings
+  (`value` the TOML value written or already held, or null for an unset;
+  `written` false when nothing was written). The TUI's settings
   editor calls them (*Python + Textual TUI* §7). They take the global
   options like every command, and a `VALUE` beginning with `-` goes after
   `--`, as for `config user-agent`.
 - `KEY` must be one of the settings above; any other is a configuration
   error, exit 2, `config set: KEY: unknown setting` (likewise `config
-  unset`). Both first load the effective settings, so a bad settings file or
-  `--set` is refused before anything is written.
+  unset`). Each checks `KEY`, then (for `config set`) `VALUE` as below,
+  then loads the effective settings, so a bad settings file or `--set` is
+  refused before anything is written; the first failure is the one
+  reported.
 - `VALUE` is parsed as a `--set` value is (a string or path setting takes
   the text as given unless it is a quoted TOML string; an integer or boolean
   setting parses it as TOML) and validated as a file value is, with `config
@@ -501,7 +504,10 @@ Settings writes, settled for Stage 4 (DEC-61; not implemented):
   bits. When the file already holds an equal TOML value for the key, nothing
   is written. A missing settings file is written as `init`'s starter file,
   with the invocation's `--set` values and this value winning, through a
-  no-clobber write. `config user-agent VALUE` stays, with its own texts.
+  no-clobber write; a file that appears meanwhile is refused as `init`
+  refuses one, `PATH already exists; not overwriting it`, exit 1 (`config
+  user-agent` shares this write). `config user-agent VALUE` stays, with its
+  own texts.
 - `config unset` removes the key from an existing file with `tomlkit`,
   keeping every comment and other key, and an emptied table; the setting
   then takes its default. With no settings file, or a file without the key,
@@ -514,7 +520,10 @@ Settings writes, settled for Stage 4 (DEC-61; not implemented):
   interpolated strings escaped as DEC-55's human output is. When `--set`
   names `KEY` on the same invocation, standard error also gets
   `downloadinux: warning: --set KEY overrides the settings file for this
-  command`.
+  command`, after the result line. A failed write to either stream is an
+  operation error, exit 1, finished inside the command with no exit-time
+  retry, as for `dl --detach`'s report (issue #96 tracks the older
+  reports).
 - Neither touches the credentials file (the token stays `config
   set-token`'s), the container, or anything else. A changed `paths.*`,
   `container.*`, or `vpn.*` setting reaches the container at the next
