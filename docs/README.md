@@ -47,7 +47,7 @@ cancellation, refreshed retry, restart reconciliation, and doctor (PR #97).
 Stage 4,
 the Python + Textual TUI, is settled under
 [issue #98](https://github.com/johnfoland/downloadinux/issues/98)
-(DEC-58 to DEC-61), with the `config set` and `config unset` settings
+(DEC-58 to DEC-62), with the `config set` and `config unset` settings
 writes it shares with the CLI; it is not implemented.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,

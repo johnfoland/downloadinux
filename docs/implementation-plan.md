@@ -25,7 +25,7 @@ reduction (DEC-57; PR #94). The coordinated download fronts and retirement
 are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3
 completion evidence through the credential-free gate. Stage 3 is implemented.
 Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
-DEC-58 to DEC-61) and not implemented.
+DEC-58 to DEC-62) and not implemented.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -220,7 +220,7 @@ recreation; persisted state must support reconciliation and a defined retry poli
 ## Stage 4 — Python + Textual TUI
 
 Settled contract: target design *Python + Textual TUI* §1–§8 and
-*Configuration and paths* ("Settings writes"), DEC-58 to DEC-61
+*Configuration and paths* ("Settings writes"), DEC-58 to DEC-62
 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98)); not
 implemented. The TUI is `downloadinux.tui` on `textual==8.2.8`, opened by
 bare `dlx` on a terminal (help otherwise), and a front over the CLI's host
@@ -234,7 +234,10 @@ keys, and confirmations; logs render as escaped text with CR overwrite and a
 10,000-line pane; export writes a new file without clobbering; Status runs
 `up`, `down`, and `restart` and stores the token (DEC-60). `config set` and
 `config unset` are the shared settings writes the editor calls (DEC-61).
-Build/update, cleanup, VPN controls, the ExifTool helper, and a per-job
+The header shows the VPN's state on every view, and Status connects (to a
+typed target or one picked from the `servers` ranking) and disconnects it,
+refusing a switch or disconnect while a job runs (DEC-62).
+Build/update, cleanup, the ExifTool helper, and a per-job
 destination ([issue #99](https://github.com/johnfoland/downloadinux/issues/99))
 stay outside the TUI; history retention stays #65.
 
@@ -244,6 +247,8 @@ stay outside the TUI; history retention stays #65.
 - Add container/worker/VPN status and configuration views.
 - Expose cancellation/retry according to the worker's defined semantics.
 - Add `config set` and `config unset`, shared by the CLI and the settings view.
+- Add VPN connect and disconnect, with a server picker, through shared host
+  operations.
 
 Acceptance criteria:
 
@@ -258,6 +263,8 @@ Acceptance criteria:
   every CLI output stays byte for byte as it was.
 - `config set` and `config unset` keep comments and permission bits, refuse
   invalid values as a settings file would, and change nothing else.
+- The TUI never switches VPN servers or disconnects while a job it can list
+  is running, and `dlx vpn` and `dlx servers` behave exactly as before.
 
 ## Validation throughout the stages
 
@@ -319,6 +326,6 @@ the worker is packaged into the image with its implemented job clients, and the 
 joined completion evidence (*Stage 3* above), so Stage 3 is implemented.
 Job history retention (#65) and cookie source lifecycle/pruning (#35) remain
 outside these stages; queued jobs retain their pinned immutable revisions.
-Stage 4's TUI is settled (DEC-58 to DEC-61): its package, dependency,
-launch, threading and process rules, views, keys, and the `config set` and
-`config unset` writes are pinned before implementation.
+Stage 4's TUI is settled (DEC-58 to DEC-62): its package, dependency,
+launch, threading and process rules, views, keys, VPN controls, and the
+`config set` and `config unset` writes are pinned before implementation.
