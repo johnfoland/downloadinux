@@ -287,7 +287,8 @@ and doctor. The dated review and the Stage 1/2 observations above remain history
 | tmux, the zsh batch loop, quiet gallery batches, and URL logs are runtime dependencies | The image and current routes retire them together. `just shell`, zsh utilities, and rich-cli remain. Existing URL logs and the gallery archive stay untouched, and output paths stay in place. Upgrade notes explain finishing/stopping old tmux batches before rebuilding. | Target design §7; DEC-6/44; PR #95; sentinel preservation through recovery in #97 |
 | VPN readiness looks like a hung downloader; no worker health row | Scheduling exposes VPN/throttle waits, and `doctor` reports `worker.running` alongside mount/tool checks. The joined gate needs no credentials and skips VPN probes when disabled; injected tests cover enabled-VPN readiness. | Target design §4/§8; DEC-43/47/53; PRs #73, #84; final idle-worker doctor evidence in #97 |
 
-The Python + Textual TUI (Stage 4) is settled (DEC-58 to DEC-62, issue #98), not implemented.
+The Python + Textual TUI (Stage 4) is settled (DEC-58 to DEC-62, issue #98), not implemented; its
+`config set`/`config unset` writes and shared renderers are implemented (PR #103).
 [History retention #65](https://github.com/johnfoland/downloadinux/issues/65) and
 [cookie source lifecycle/pruning #35](https://github.com/johnfoland/downloadinux/issues/35)
 remain deliberate exclusions; queued jobs retain their pinned canonical revisions.

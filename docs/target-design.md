@@ -36,7 +36,9 @@ and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined
 Stage 3 completion evidence. Stage 4, the Python + Textual TUI and its
 `config set`/`config unset` settings writes, is settled (*Python + Textual
-TUI*, DEC-58 to DEC-62, issue #98) and not implemented.
+TUI*, DEC-58 to DEC-62, issue #98). PR #103 implements the shared human
+renderers and the `config set`/`config unset` writes (DEC-58, DEC-61); the
+TUI itself is not implemented.
 
 ## Agreed decisions
 
@@ -3329,7 +3331,8 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); not implemented. Its settings writes, `config set` and
-`config unset`, are under *Configuration and paths* (DEC-61).
+`config unset`, are under *Configuration and paths* (DEC-61), and are
+implemented (PR #103).
 
 The TUI is a second front, beside the CLI, for the host operations Stages 1–3
 built. It adds no worker client, socket request, store access, or host state

@@ -48,7 +48,8 @@ Stage 4,
 the Python + Textual TUI, is settled under
 [issue #98](https://github.com/johnfoland/downloadinux/issues/98)
 (DEC-58 to DEC-62), with the `config set` and `config unset` settings
-writes it shares with the CLI; it is not implemented.
+writes it shares with the CLI. Those writes and the shared renderers are
+implemented (PR #103); the TUI is not.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.
