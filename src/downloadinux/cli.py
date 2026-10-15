@@ -766,7 +766,7 @@ def _jobs_retry(args: argparse.Namespace, options: GlobalOptions) -> int:
 @_jobs_errors
 def _jobs_export(args: argparse.Namespace, options: GlobalOptions) -> int:
     urls = host_jobs.export(args.preset, options.config, options.overrides)
-    sys.stdout.buffer.write("".join(f"{url}\n" for url in urls).encode("utf-8"))
+    sys.stdout.buffer.write(host_jobs.export_text(urls).encode("utf-8"))
     sys.stdout.buffer.flush()
     return 0
 

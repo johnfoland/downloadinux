@@ -13,12 +13,13 @@ job store or a job log (§1).
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from downloadinux import compose, cookie_pinning, cookie_store, host_worker, job_store, presets, settings, worker
-from downloadinux.errors import DownloadinuxError
+from downloadinux import compose, cookie_pinning, cookie_store, files, host_worker, job_store, presets, settings, worker
+from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.settings import Host
 
 # `jobs list`'s default states, and `jobs export`'s (§6).
@@ -306,5 +307,51 @@ def export(
     """The URLs of the preset's failed, cancelled, and interrupted jobs, in
     ID order. `preset` may be an alias."""
     effective = settings.load(config, overrides, host)
+    return _export(preset, effective, host, capture, feed)
+
+
+def _export(preset, effective, host, capture, feed) -> list[str]:
     jobs = _list(effective, host, None, list(EXPORTED), presets.resolve(preset).name, capture, feed)
     return [job["url"] for job in jobs]
+
+
+def export_text(urls: Sequence[str]) -> str:
+    """The queue text shared by `jobs export` and file export (TUI §4)."""
+    return "".join(f"{url}\n" for url in urls)
+
+
+@dataclass(frozen=True)
+class ExportFile:
+    path: Path
+    count: int
+
+
+def export_to(
+    preset: str,
+    path: str,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    *,
+    capture: compose.Capture | None = None,
+    feed: compose.Feed | None = None,
+) -> ExportFile:
+    """Write ended work to a new queue file (TUI §4, Export; DEC-60).
+
+    Refuse existing paths before reading the worker, and publish without
+    clobbering a path created during that read (DEC-24).
+    """
+    if not path or "\x00" in path:
+        raise ConfigError("export path must be a nonempty path without NUL")
+    effective = settings.load(config, overrides, host)
+    target = settings.user_path(path)
+    exists = f"{target} exists; not overwriting it"
+    if os.path.lexists(target):
+        raise DownloadinuxError(exists)
+    urls = _export(preset, effective, host, capture, feed)
+    if urls:
+        try:
+            files.write_atomic(target, export_text(urls), files.default_file_mode(), replace=False, parents=False)
+        except FileExistsError:
+            raise DownloadinuxError(exists) from None
+    return ExportFile(target, len(urls))
