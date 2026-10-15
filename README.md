@@ -314,6 +314,9 @@ dlx init                                # starter file, VPN off; refuses if one 
 dlx init --set vpn.enabled=true         # the same with the VPN on (--set values are written in)
 dlx config show                         # every setting, its value, and where it came from
 dlx config show --json                  # the same for scripts
+dlx config set paths.downloads "~/Media" # save a path, keeping the ~ in the file
+dlx config set vpn.enabled true         # save a boolean
+dlx config unset container.timezone     # return to the computed default
 dlx --set vpn.server=us8649 restart     # one invocation with an override
 ```
 
@@ -324,7 +327,18 @@ the token's state (`set`, `unset`, or `malformed`, never its value), and the
 four container mounts. The tables are `[paths]`, `[container]`,
 `[downloads]`, and `[vpn]`; the full schema, defaults, and validation rules
 are in the [target design](docs/target-design.md#configuration-and-paths).
-After editing the file, `just restart` applies it to the container.
+
+`config set KEY VALUE` preserves comments and permissions; an equal value
+writes nothing. If no settings file exists, it creates the starter file with
+the value in it. `config unset KEY` removes a saved value so the setting takes
+its default, and writes nothing when it is absent. Put a value beginning with
+`-` after `--`, as in `dlx config set downloads.user_agent -- -Agent`.
+An invocation's `--set` still takes precedence; both commands warn when it
+names the key being written or removed.
+
+Changing a `paths.*`, `container.*`, or `vpn.*` setting needs `just restart`
+to apply it to the container; the write itself does not restart anything.
+A changed `container.project` selects that Compose project for later commands.
 
 ## Migrating from `.env`
 
@@ -911,6 +925,8 @@ dlx init                     Write a starter settings file (VPN off); refuses if
 dlx config show [--json]     Effective settings, where each comes from, the files, the
                                token's state (set/unset/malformed, never its value),
                                and the container mounts
+dlx config set KEY VALUE     Write one setting, keeping comments and permissions
+dlx config unset KEY         Remove a setting so it takes its default
 dlx config set-token [TOKEN] Store the NordVPN token (prompts, or reads stdin, without TOKEN);
                                with the VPN on and the container running, log it in
 dlx config import-env        Turn the checkout's .env into the new files (VPN on) and copy

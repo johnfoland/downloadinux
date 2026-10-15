@@ -471,7 +471,7 @@ Further rules, pinned for P0001-C01:
   malformed token is refused, exit 1, with its length but never its value.
   It writes the credentials file at mode 0600, creating the directory.
 
-Settings writes, settled for Stage 4 (DEC-61; not implemented):
+Settings writes, implemented (DEC-61):
 
 - `config set KEY VALUE` and `config unset KEY` are the shared settings
   writes, `operations.set_setting(key, value, config=None, overrides=(),
@@ -3349,9 +3349,9 @@ and `downloadinux.tui.logtext` (§4) import no Textual, so their tests drive
 them directly. The human renderers the CLI and TUI share (the escaping rule,
 `jobs list`'s state label and table, `jobs show`'s fields, the cancel and
 retry lines, the cookie source and inspection text, `config show`'s and
-`doctor`'s text, and `config set-token`'s login messages) move from `cli.py`
-into `downloadinux.render`, unchanged: every CLI output stays byte for byte
-what it is.
+`doctor`'s text, and `config set-token`'s login messages) are implemented
+in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
+output stays byte for byte what it is. The TUI itself remains planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich

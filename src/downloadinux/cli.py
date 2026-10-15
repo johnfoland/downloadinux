@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from downloadinux import (
-    cookie_selectors, cookie_store, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, render, servers, worker,
+    cookie_selectors, cookie_store, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, render, servers, settings, worker,
 )
 from downloadinux.errors import DownloadinuxError, _Detached
 
@@ -161,6 +161,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_options(show, 2)
     show.add_argument("--json", action="store_true", help="print JSON")
     show.set_defaults(handler=_config_show)
+
+    set_setting = config_commands.add_parser(
+        "set", help="write one setting in the settings file",
+        description="Write KEY to the settings file, preserving comments. "
+        "Put a VALUE beginning with - after --.",
+    )
+    _add_global_options(set_setting, 2)
+    set_setting.add_argument("key", metavar="KEY")
+    set_setting.add_argument("value", metavar="VALUE")
+    set_setting.set_defaults(handler=_config_set)
+
+    unset_setting = config_commands.add_parser(
+        "unset", help="remove one setting so it takes its default"
+    )
+    _add_global_options(unset_setting, 2)
+    unset_setting.add_argument("key", metavar="KEY")
+    unset_setting.set_defaults(handler=_config_unset)
 
     set_token = config_commands.add_parser(
         "set-token",
@@ -816,6 +833,25 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
     if warning is not None:
         print(f"{PROG}: warning: {warning}", file=sys.stderr)
     return 0
+
+
+def _setting_report(write: operations.SettingWrite, options: GlobalOptions) -> int:
+    # Configuration and paths, Settings writes (DEC-61): finish the stdout
+    # report before a warning, with failures inside main's OS-error boundary.
+    _write_text(render.setting_write(write))
+    if write.key in settings.parse_overrides(options.overrides):
+        _notice(f"{PROG}: warning: --set {write.key} overrides the settings file for this command")
+    return 0
+
+
+def _config_set(args: argparse.Namespace, options: GlobalOptions) -> int:
+    write = operations.set_setting(args.key, args.value, options.config, options.overrides)
+    return _setting_report(write, options)
+
+
+def _config_unset(args: argparse.Namespace, options: GlobalOptions) -> int:
+    write = operations.unset_setting(args.key, options.config, options.overrides)
+    return _setting_report(write, options)
 
 
 def _config_user_agent(args: argparse.Namespace, options: GlobalOptions) -> int:

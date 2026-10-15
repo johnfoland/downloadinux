@@ -12,7 +12,7 @@ import re
 import sys
 from pathlib import Path
 
-from downloadinux import health, host_jobs, operations
+from downloadinux import files, health, host_jobs, operations
 
 PROG = "downloadinux"
 
@@ -205,3 +205,16 @@ def login_messages(result: operations.LoginResult) -> tuple[list[str], str | Non
             else:
                 warning = f"could not connect to {target}; try dlx vpn on"
     return lines, warning
+
+
+def setting_write(write: operations.SettingWrite) -> str:
+    """Configuration and paths, Settings writes: DEC-61's human report."""
+    path = escape(str(write.settings_file))
+    if write.value is None:
+        if write.written:
+            return f"Unset {write.key} in {path}; it now uses its default."
+        return f"{write.key} is not set in {path}; nothing written."
+    value = escape(files._toml_value(write.value))
+    if write.written:
+        return f"Set {write.key} = {value} in {path}."
+    return f"{write.key} is already {value} in {path}; nothing written."
