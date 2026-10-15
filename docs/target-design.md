@@ -3624,6 +3624,22 @@ to export.`; otherwise `Exported N URLs to PATH.` The write needs no
 container access beyond `export`'s, and the CLI's `jobs export` is
 unchanged.
 
+Its steps run in this order. A path that is empty or holds NUL is a
+configuration error, `export path must be a nonempty path without NUL`,
+before the settings load. Then the settings load and the path is
+normalized. A path that already exists (`os.path.lexists`, so a directory
+and a symlink, dangling or not, count) is refused with the existing-path
+text before any container call. Then `export`'s read, the preset resolved
+as `export` resolves it. With no URLs it returns `ExportFile(path, 0)` and
+writes nothing; otherwise it writes, and a `FileExistsError` from the
+no-clobber write (a path created after the check) is the same refusal.
+`ExportFile.path` is the normalized path. The file's text comes from one
+function that `jobs export` also prints from, so the two cannot drift. The
+no-clobber write is `files.write_atomic` with `replace=False` and a new
+`parents` keyword, default true and unchanged for every other caller, that
+`export_to` sets false: a missing directory is then the OS error naming the
+export path.
+
 ### 5. Submit view
 
 A form: mode (URLs or queue file), preset (`video` by default, or
@@ -3720,12 +3736,16 @@ every operation does and runs its container commands captured, with `-T`
 - `state(config=None, overrides=(), host=Host(), *, capture=None) ->
   VpnState`, a frozen `VpnState(enabled: bool, running: bool, connected:
   bool, country: str | None, server: str | None)`. With `vpn.enabled` false
-  it makes no Docker call; with the container not running (the running test
+  it makes no Docker call and every other field is false or None; with the
+  container not running (the running test
   under "Commands in the container") `running` is false; otherwise it runs
   `nordvpn status` and reads it as doctor's `vpn.connected` check and the
   worker's probe do
   (`nordvpn_output`, DEC-47), taking `country` and `server` from the
-  `Country:` and `Server:` lines when connected. The header shows `VPN off`,
+  `Country:` and `Server:` lines when connected (`nordvpn_output.value`, an
+  empty value as None; both None when not connected). A nonzero `nordvpn
+  status` reads as disconnected, as doctor reads it. An error from running
+  Docker at all (an `OSError`) is raised, not mapped. The header shows `VPN off`,
   `VPN: container not running`, `VPN: disconnected`, or `VPN: connected
   (COUNTRY, SERVER)`, each part omitted when absent and the parenthesis when
   both are; a failed read shows `VPN: unknown`, its error recorded in
@@ -3749,6 +3769,12 @@ every operation does and runs its container commands captured, with `-T`
   checks no jobs: it can only bring their traffic back onto the VPN. The
   result is a frozen `VpnChange(status: int, output: str)`, the command's
   exit status and captured standard output; a nonzero status is not raised.
+  Each operation loads the settings once and builds one invocation; the
+  refusals and the state read in `connect` and `disconnect` are `state`'s
+  own steps, not a second call to it. The VPN-off text is `vpn`'s, shared as
+  one constant, and the not-running text is the worker calls' (*Persistent
+  worker and jobs* §1). A job counts as running when its listed `state` is
+  `running`, so one being cancelled counts.
 - `operations.server_choices(city=servers.DEFAULT_CITY,
   country=servers.DEFAULT_COUNTRY, config=None, overrides=(), host=Host(), *,
   capture=None) -> ServerChoices` fetches exactly as `servers` does, with its
@@ -3758,7 +3784,12 @@ every operation does and runs its container commands captured, with `-T`
   city, least load first, and `cities` every city name, sorted, with
   underscores for spaces, as `servers` lists them; `servers.rank` is rebuilt
   on the same ranking, so `dlx servers` prints byte for byte what it does
-  now.
+  now. `ServerChoices` and `ServerLoad` live in `downloadinux.servers`,
+  beside `ranking(body, city) -> ServerChoices`, which holds the parsing and
+  its DEC-18 failure; `rank` formats its lines from `ranking`'s result.
+  `ServerLoad.host` is the hostname less `.nordvpn.com` and `load` the API's
+  value, as `servers` prints them; `cities` is filled whether or not
+  `ranked` is. `list_servers` and `server_choices` share one fetch.
 
 `o` opens a connect dialog: a target field holding `vpn.server` from the
 latest `config show` read (empty means the fastest server), and a *Choose a
