@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from downloadinux import cli, compose, cookie_runner, cookiejar, host_follow, launch, operations, presets
+from downloadinux import render, cli, compose, cookie_runner, cookiejar, host_follow, launch, operations, presets
 from stream_support import reaped
 from test_host_follow import counterpart, rig, short, children  # noqa: F401
 from test_host_jobs import client
@@ -263,7 +263,7 @@ def test_actual_consumption_failure_reports_recorded_work_and_displayed_symlink(
     front.after_submit = replace_with_directory
     assert front.run('batch', '--anonymous', 'g', str(link)) == 1
     out, err = capfdbinary.readouterr()
-    assert out == b'' and err.endswith((f'downloadinux: error: no such queue file: {cli.escape(str(link))}'
+    assert out == b'' and err.endswith((f'downloadinux: error: no such queue file: {render.escape(str(link))}'
                                       '; jobs were queued; inspect with dlx jobs list\n').encode())
     assert link.is_symlink() and front.job(1)['url'] == 'wait=consumption'
     assert front.feeds == ['submit'] and front.cp.calls == []
@@ -385,7 +385,7 @@ TEXT_OUTPUT_PROCESS = r'''
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from downloadinux import cli, compose
+from downloadinux import render, cli, compose
 spec = json.loads(Path(sys.argv[2]).read_text())
 children, calls, output_states = [], [], []
 real_feed, real_spawn = compose.capture_with_input, compose.spawn_process

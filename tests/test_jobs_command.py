@@ -17,7 +17,7 @@ import time
 import pytest
 from stream_support import Spawner, chunk, error_line, reaped, spawn_process
 
-from downloadinux import cli, compose, job_store, worker
+from downloadinux import render, cli, compose, job_store, worker
 
 RUNNING_ID = "4f1c0a3e9b2d\n"
 STAMP = "2026-10-13T12:00:00Z"
@@ -217,7 +217,7 @@ def test_an_error_reply_is_the_operation_error(rig, capsys):
 # The escaper ---------------------------------------------------------------------
 
 def test_the_escaper_changes_only_c0_del_and_c1():
-    assert cli.escape(CONTROLS) == ESCAPED
+    assert render.escape(CONTROLS) == ESCAPED
     assert ESCAPED.count("\\x") == 0x20 + 1 + 0x20
 
 

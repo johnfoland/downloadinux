@@ -12,15 +12,13 @@ import functools
 import getpass
 import json
 import os
-import re
 import signal
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from downloadinux import (
-    cookie_selectors, cookie_store, health, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, servers, worker,
+    cookie_selectors, cookie_store, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, render, servers, worker,
 )
 from downloadinux.errors import DownloadinuxError, _Detached
 
@@ -44,7 +42,7 @@ def _jobs_errors(handler):
         try:
             return handler(args, options)
         except DownloadinuxError as error:
-            raise type(error)(escape(str(error))) from None
+            raise type(error)(render.escape(str(error))) from None
     return run
 
 
@@ -406,7 +404,7 @@ def _cookies_list(args: argparse.Namespace, options: GlobalOptions) -> int:
         print(json.dumps(report, indent=2))
     else:
         lines = [f"Default: {report['default'] or 'anonymous'}"]
-        lines.extend(render_cookie_source(source) for source in report['sources'])
+        lines.extend(render.render_cookie_source(source) for source in report['sources'])
         print('\n'.join(lines))
     return 0
 
@@ -428,14 +426,14 @@ def _cookies_inspect(args: argparse.Namespace, options: GlobalOptions) -> int:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print(render_cookie_inspection(report))
+        print(render.render_cookie_inspection(report))
     return 0
 
 
 def _cookies_import(args: argparse.Namespace, options: GlobalOptions) -> int:
     report = operations.import_cookies(args.name, args.file, replace=args.replace,
                                        config=options.config, overrides=options.overrides)
-    print(render_cookie_inspection(report))
+    print(render.render_cookie_inspection(report))
     return 0
 
 
@@ -443,13 +441,13 @@ def _cookies_add_browser(args: argparse.Namespace, options: GlobalOptions) -> in
     report = operations.add_browser_cookies(args.name, args.browser, profile=args.profile,
                                             keyring=args.keyring, container=args.container,
                                             replace=args.replace, config=options.config, overrides=options.overrides)
-    print(render_cookie_inspection(report))
+    print(render.render_cookie_inspection(report))
     return 0
 
 
 def _cookies_firefox(args: argparse.Namespace, options: GlobalOptions) -> int:
     report = operations.firefox_cookies(args.profile, options.config, options.overrides)
-    print(render_cookie_inspection(report))
+    print(render.render_cookie_inspection(report))
     return 0
 
 
@@ -471,22 +469,14 @@ def _cookies_setup(args: argparse.Namespace, options: GlobalOptions) -> int:
         print('The cookie default stays anonymous; add a source later with '
               'dlx cookies firefox, add-browser, or import.')
     else:
-        print(render_cookie_inspection(outcome.report))
+        print(render.render_cookie_inspection(outcome.report))
     return 0
 
 
 def _cookies_refresh(args: argparse.Namespace, options: GlobalOptions) -> int:
     report = operations.refresh_cookies(args.name, options.config, options.overrides)
-    print(render_cookie_inspection(report))
+    print(render.render_cookie_inspection(report))
     return 0
-
-
-def render_cookie_inspection(report: dict) -> str:
-    lines = [render_cookie_source(report['source']), render_cookie_counts(report)]
-    for domain in report['domains']:
-        presence = 'present' if domain['session_cookie_present'] else 'absent'
-        lines.append(f"  {domain['domain']}: {render_cookie_counts(domain)}; recognized session cookie {presence}")
-    return '\n'.join(lines)
 
 
 def _cookies_default(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -501,18 +491,6 @@ def _cookies_cleanup(args: argparse.Namespace, options: GlobalOptions) -> int:
     print(f"Removed {counts.removed} abandoned cookie snapshots; "
           f"skipped {counts.skipped} in use or unverifiable.")
     return 0
-
-
-def render_cookie_source(source: dict) -> str:
-    """Render the same metadata fields as JSON, without individual cookies."""
-    origin = {key: source[key] for key in ('path', 'browser', 'profile', 'keyring', 'container') if key in source}
-    return (f"{source['name']}: {source['kind']}; default: {'yes' if source['is_default'] else 'no'}\n"
-            f"  origin: {json.dumps(origin, ensure_ascii=False)}\n"
-            f"  revision: {source['revision']}; refreshed_at: {source['refreshed_at']}")
-
-
-def render_cookie_counts(summary: dict) -> str:
-    return '; '.join(f'{key}: {summary[key]}' for key in ('total', 'session', 'expired', 'unexpired'))
 
 
 def _compose(args: argparse.Namespace, options: GlobalOptions) -> int:
@@ -540,7 +518,7 @@ def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
     result = host_downloads.import_batch(args.preset, args.queue, options.config, options.overrides,
                                          **_launch_options(args))
     if result.submission is None:
-        _write_text(f"No URLs in queue: {escape(str(result.queue))}")
+        _write_text(f"No URLs in queue: {render.escape(str(result.queue))}")
     else:
         skipped = sum(reference.duplicate for reference in result.references)
         _write_text(f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
@@ -574,71 +552,11 @@ def _servers(args: argparse.Namespace, options: GlobalOptions) -> int:
 # Persistent worker and jobs §6, "Job operations, output, and exit statuses"
 # (DEC-55).
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 DETACH_SIGNALS = (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)
-
-
-def escape(text: str) -> str:
-    r"""Human output's form of an interpolated string: each C0 control
-    character, DEL, and C1 control character as `\xNN`; nothing else."""
-    return _CONTROL.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
 
 
 def _json(value: object) -> None:
     print(json.dumps(value, indent=2))
-
-
-def _job_state(job: dict) -> str:
-    wait = job["wait"]
-    if job["state"] == "queued" and wait is not None:
-        return "queued: vpn" if wait["reason"] == "vpn" else f"queued: throttle until {escape(wait['until'])}"
-    if job["state"] == "running" and job["cancel_requested"]:
-        return "running: cancelling"
-    return job["state"]
-
-
-def render_jobs(jobs: list[dict]) -> str:
-    """`jobs list`'s table: columns two spaces apart, each but the last
-    padded to its widest cell, header included (§6 *Output*)."""
-    rows = [("ID", "STATE", "PRESET", "QUEUE", "ATTEMPT", "URL")]
-    rows += [(str(job["id"]), _job_state(job), job["preset"], "lane" if job["lane"] else "immediate",
-              str(job["attempt"]), escape(job["url"])) for job in jobs]
-    widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]) - 1)]
-    return "\n".join("  ".join([*(cell.ljust(width) for cell, width in zip(row, widths)), row[-1]])
-                     for row in rows)
-
-
-def _or_dash(value: object) -> str:
-    return "-" if value is None else escape(str(value))
-
-
-def render_job(view: host_jobs.JobView) -> str:
-    """`jobs show`'s block: each value from the 21st character (§6 *Output*)."""
-    job = view.job
-    wait = job["wait"]
-    fields = [
-        ("URL", escape(job["url"])),
-        ("Preset", job["preset"]),
-        ("Queue", f"{job['preset']} lane" if job["lane"] else "immediate"),
-        ("Submission", str(job["submission"])),
-        ("Cookies", "anonymous" if job["source"] is None
-         else f"{escape(job['source'])} at revision {escape(job['revision'])}"),
-        ("User-agent", escape(job["user_agent"]) or "(empty)"),
-        ("Attempt", str(job["attempt"])),
-        ("Wait", "-" if wait is None else "vpn" if wait["reason"] == "vpn"
-         else f"throttle until {escape(wait['until'])}"),
-        ("Cancel requested", "yes" if job["cancel_requested"] else "no"),
-        ("Created", escape(job["created_at"])),
-        ("Queued", escape(job["queued_at"])),
-        ("Started", _or_dash(job["started_at"])),
-        ("Finished", _or_dash(job["finished_at"])),
-        ("Exit status", _or_dash(job["exit_status"])),
-        ("Error", _or_dash(job["error"])),
-        *((f"Log, attempt {attempt}", escape(str(path))) for attempt, path in view.logs),
-    ]
-    lines = [f"Job {job['id']}: {job['state']}"]
-    lines += [f"  {label}:".ljust(19) + " " + value for label, value in fields]
-    return "\n".join(lines)
 
 
 @_jobs_errors
@@ -649,7 +567,7 @@ def _jobs_list(args: argparse.Namespace, options: GlobalOptions) -> int:
     elif not jobs:
         print("No jobs." if args.all else "No queued, running, failed, or interrupted jobs.")
     else:
-        print(render_jobs(jobs))
+        print(render.render_jobs(jobs))
     return 0
 
 
@@ -659,7 +577,7 @@ def _jobs_show(args: argparse.Namespace, options: GlobalOptions) -> int:
     if args.json:
         _json({"job": view.job, "logs": [{"attempt": n, "path": str(path)} for n, path in view.logs]})
     else:
-        print(render_job(view))
+        print(render.render_job(view))
     return 0
 
 
@@ -753,12 +671,12 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
                     if isinstance(event, host_follow.FollowJob):
                         selected = True
                         job = event.job
-                        _notice(f"Job {job['id']}: {escape(job['url'])}")
+                        _notice(f"Job {job['id']}: {render.escape(job['url'])}")
                     elif isinstance(event, host_follow.FollowWait):
                         wait = event.wait
                         reason = ('resumed' if wait is None else 'waiting for VPN'
                                   if wait['reason'] == 'vpn' else
-                                  f"waiting for throttle until {escape(wait['until'])}")
+                                  f"waiting for throttle until {render.escape(wait['until'])}")
                         _notice(f"job {event.id} {reason}")
                     elif isinstance(event, host_follow.FollowLog):
                         _write_bytes(event.data)
@@ -771,8 +689,8 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
                     raise DownloadinuxError('the worker went away; see dlx jobs list')
         except _Detached as detached:
             if lane is not None:
-                _notice(f"detached from {escape(lane)} lane, which carries on in the worker; "
-                        f"follow it with dlx watch {escape(lane)} or inspect and cancel jobs with "
+                _notice(f"detached from {render.escape(lane)} lane, which carries on in the worker; "
+                        f"follow it with dlx watch {render.escape(lane)} or inspect and cancel jobs with "
                         "dlx jobs list and dlx jobs cancel ID")
             elif remaining:
                 for job_id in remaining:
@@ -782,7 +700,7 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
             return 128 + detached.number
     if lane is not None:
         if not selected:
-            _write_text(f"No queued or running jobs in {escape(lane)} lane.")
+            _write_text(f"No queued or running jobs in {render.escape(lane)} lane.")
         return 0
     return host_follow.download_status(records)
 
@@ -816,38 +734,15 @@ def _jobs_logs(args: argparse.Namespace, options: GlobalOptions) -> int:
 def _jobs_cancel(args: argparse.Namespace, options: GlobalOptions) -> int:
     outcomes = host_jobs.cancel(args.ids, options.config, options.overrides)
     for outcome in outcomes:
-        job_id = outcome["id"]
-        print({
-            "cancelled": f"job {job_id} cancelled",
-            "requested": f"job {job_id}: cancel requested; it ends when its downloader exits",
-            "refused": f"job {job_id} is {outcome['state']}; only queued or running jobs can be cancelled",
-            "unknown": f"unknown job ID {job_id}",
-        }[outcome["outcome"]])
+        print(render.cancel_line(outcome))
     return 0 if all(outcome["outcome"] in ("cancelled", "requested") for outcome in outcomes) else 1
-
-
-def _retry_line(line: host_jobs.RetryLine) -> str:
-    outcome = line.outcome
-    if outcome is None:
-        if line.record is None:
-            return f"unknown job ID {line.id}"
-        state = line.record["state"]
-    elif outcome["outcome"] == "requeued":
-        return f"job {line.id} queued again as attempt {line.record['attempt'] + 1}"
-    elif outcome["outcome"] == "shadowed":
-        return f"job {line.id} not retried: job {outcome['holder']} already holds its preset and URL"
-    elif outcome["outcome"] == "unknown":
-        return f"unknown job ID {line.id}"
-    else:
-        state = outcome["state"]
-    return f"job {line.id} is {state}; only failed, cancelled, or interrupted jobs can be retried"
 
 
 @_jobs_errors
 def _jobs_retry(args: argparse.Namespace, options: GlobalOptions) -> int:
     lines = host_jobs.retry(args.ids, options.config, options.overrides, **_launch_options(args))
     for line in lines:
-        print(_retry_line(line))
+        print(render.retry_line(line))
     return 0 if all(line.outcome and line.outcome["outcome"] == "requeued" for line in lines) else 1
 
 
@@ -864,7 +759,7 @@ def _doctor(args: argparse.Namespace, options: GlobalOptions) -> int:
     if args.json:
         print(json.dumps(result.as_dict(), indent=2))
     else:
-        print(render_health(result))
+        print(render.render_health(result))
     return 0 if result.ok else 1
 
 
@@ -887,7 +782,7 @@ def _config_import_env(args: argparse.Namespace, options: GlobalOptions) -> int:
         print(f"{PROG}: warning: {warning}", file=sys.stderr)
     print(f"Wrote {result.settings_file} from {result.env_file}, importing:")
     for key, value in result.imported:
-        print(f"  {key} = {_toml(value)}")
+        print(f"  {key} = {render.toml_text(value)}")
     if result.credentials_file is not None:
         print(f"Wrote {result.credentials_file} (token: {result.token.value})")
     else:
@@ -913,23 +808,13 @@ def _config_set_token(args: argparse.Namespace, options: GlobalOptions) -> int:
     token = args.token if args.token is not None else _read_token()
     path = operations.set_token(token, options.config, options.overrides)
     # Flushed so it precedes Docker's and the login's own messages in a log.
-    print(f"Stored the NordVPN token in {path}", flush=True)
+    print(render.token_stored(path), flush=True)
     result = operations.log_in(token, options.config, options.overrides)
-    if result.login is operations.Login.VPN_OFF:
-        print("vpn.enabled is false: the token is kept for when the VPN is enabled.")
-    elif result.login is operations.Login.NOT_RUNNING:
-        print("The container is not running; it logs in with the token at the next dlx up.")
-    else:
-        print("Logged in.")
-        if result.connect is not None:
-            target = " ".join(result.connect.server) or "the fastest server"
-            if result.connect.connected:
-                print(f"Connected to {target}.")
-            else:
-                print(
-                    f"{PROG}: warning: could not connect to {target}; try dlx vpn on",
-                    file=sys.stderr,
-                )
+    lines, warning = render.login_messages(result)
+    for line in lines:
+        print(line)
+    if warning is not None:
+        print(f"{PROG}: warning: {warning}", file=sys.stderr)
     return 0
 
 
@@ -960,68 +845,8 @@ def _config_show(args: argparse.Namespace, options: GlobalOptions) -> int:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print(render_config(report))
+        print(render.render_config(report))
     return 0
-
-
-def _toml(value: object) -> str:
-    if isinstance(value, Path):
-        value = str(value)
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def _missing(exists: bool) -> str:
-    return "" if exists else "  (missing)"
-
-
-def render_config(report: dict) -> str:
-    """`config show`'s text form: one `key = value  (source)` line per
-    setting, then the files, the token's state, and the mounts."""
-    lines = [
-        f"{s['key']} = {_toml(s['value'])}  ({s['source']})"
-        for s in report["settings"]
-    ]
-    config_file, creds_file = report["config_file"], report["credentials_file"]
-    lines += [
-        "",
-        f"settings file:    {config_file['path']}{_missing(config_file['exists'])}",
-        f"credentials file: {creds_file['path']}{_missing(creds_file['exists'])}",
-        f"token:            {report['token']}",
-        "",
-        "mounts:",
-    ]
-    lines += [
-        f"  {m['container']:<10} <- {m['host']}  ({m['access']})"
-        f"{_missing(m['exists'])}"
-        for m in report["mounts"]
-    ]
-    return "\n".join(lines)
-
-
-_HEALTH_MARKS = {
-    health.Status.OK: ("✓", "32"),
-    health.Status.WARN: ("!", "33"),
-    health.Status.FAIL: ("✗", "31"),
-    health.Status.SKIP: ("-", "2"),
-}
-
-
-def render_health(result: health.Result) -> str:
-    """DEC-22's human view; only marks receive terminal colour."""
-    colour = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-    lines = [PROG]
-    for check in result.checks:
-        mark, code = _HEALTH_MARKS[check.status]
-        if colour:
-            mark = f"\033[{code}m{mark}\033[0m"
-        lines.append(f"  {mark} {check.summary}")
-        if check.fix is not None:
-            lines.append(f"      fix: {check.fix}")
-    return "\n".join(lines)
 
 
 def _report_error(error: DownloadinuxError) -> int:
