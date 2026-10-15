@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from downloadinux import cli, cookie_browser, cookie_selectors, cookie_store as store, cookie_writer as writer, cookiejar, files, operations, settings, useragent
+from downloadinux import render, cli, cookie_browser, cookie_selectors, cookie_store as store, cookie_writer as writer, cookiejar, files, operations, settings, useragent
 from test_cookie_migration import DATA, legacy
 from test_cookie_registration import overrides, run, source_file
 from test_cookie_writer import bytes_state
@@ -60,7 +60,7 @@ def test_no_registry_and_no_legacy_creates_firefox_as_default(tmp_path, capsys, 
         kind='browser', browser='firefox', profile=None, keyring=None, container=None)
     assert exports == [cookie_selectors.Selector('firefox', None, None, None)]
     report = operations.inspect_cookies('firefox', overrides=overrides(root))
-    assert out == cli.render_cookie_inspection(report) + '\n'
+    assert out == render.render_cookie_inspection(report) + '\n'
     assert report['source']['is_default'] is True and report['total'] == 2
 
 
@@ -118,7 +118,7 @@ def test_replaces_existing_firefox_and_moves_default_in_one_write(tmp_path, caps
         kind='browser', browser='firefox', profile='new profile', keyring=None, container=None)
     # The replaced revision is retained (§1, DEC-31).
     assert store.revision_path(root, 'firefox', before.sources['firefox'].revision).exists()
-    assert out == cli.render_cookie_inspection(operations.inspect_cookies('firefox', overrides=overrides(root))) + '\n'
+    assert out == render.render_cookie_inspection(operations.inspect_cookies('firefox', overrides=overrides(root))) + '\n'
 
 
 def _with_work_default(tmp_path):

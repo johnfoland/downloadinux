@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from downloadinux import cli, cookie_browser, cookie_store as store, cookie_writer as writer, cookiejar, operations, useragent
+from downloadinux import render, cli, cookie_browser, cookie_store as store, cookie_writer as writer, cookiejar, operations, useragent
 from test_cookie_migration import DATA, legacy
 from test_cookie_registration import overrides, source_file
 from test_cookie_writer import bytes_state
@@ -81,7 +81,7 @@ def setup(capsys, config, *argv):
 
 
 def summary(root, name):
-    return cli.render_cookie_inspection(operations.inspect_cookies(name, overrides=overrides(root))) + '\n'
+    return render.render_cookie_inspection(operations.inspect_cookies(name, overrides=overrides(root))) + '\n'
 
 
 # --- named default ------------------------------------------------------------

@@ -1,6 +1,8 @@
 # Implementation plan
 
-Status: Stages 1–3 are implemented; Stage 4 is settled, not implemented.
+Status: Stages 1–3 are implemented; Stage 4 is settled, with its shared
+renderers and `config set`/`config unset` implemented (PR #103) and the TUI
+not implemented.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -25,7 +27,8 @@ reduction (DEC-57; PR #94). The coordinated download fronts and retirement
 are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3
 completion evidence through the credential-free gate. Stage 3 is implemented.
 Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
-DEC-58 to DEC-62) and not implemented.
+DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
+are implemented (PR #103), and the TUI is not.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -246,7 +249,8 @@ stay outside the TUI; history retention stays #65.
 - Add named cookie selection, import/export-source setup, and refresh controls.
 - Add container/worker/VPN status and configuration views.
 - Expose cancellation/retry according to the worker's defined semantics.
-- Add `config set` and `config unset`, shared by the CLI and the settings view.
+- Add `config set` and `config unset`, shared by the CLI and the settings view
+  (implemented, PR #103).
 - Add VPN connect and disconnect, with a server picker, through shared host
   operations.
 
@@ -328,4 +332,5 @@ Job history retention (#65) and cookie source lifecycle/pruning (#35) remain
 outside these stages; queued jobs retain their pinned immutable revisions.
 Stage 4's TUI is settled (DEC-58 to DEC-62): its package, dependency,
 launch, threading and process rules, views, keys, VPN controls, and the
-`config set` and `config unset` writes are pinned before implementation.
+`config set` and `config unset` writes are pinned before implementation;
+the writes and the shared renderers are implemented (PR #103).

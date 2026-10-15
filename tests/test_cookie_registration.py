@@ -9,7 +9,7 @@ import stat
 import sys
 
 import pytest
-from downloadinux import cli, cookie_browser, cookiejar, cookie_selectors, cookie_store as store, cookie_writer as writer, credentials, compose, files, operations, settings, useragent
+from downloadinux import render, cli, cookie_browser, cookiejar, cookie_selectors, cookie_store as store, cookie_writer as writer, credentials, compose, files, operations, settings, useragent
 from downloadinux.errors import ConfigError, DownloadinuxError
 from test_cookie_migration import DATA, legacy
 from test_cookie_writer import bytes_state
@@ -42,7 +42,7 @@ def test_import_first_anonymous_summary_external_and_published_modes(tmp_path, c
     status, out, err = run(capsys, root, 'import', 'file-source', str(external))
     assert status == 0 and err == ''
     report = operations.inspect_cookies('file-source', overrides=overrides(root))
-    assert out == cli.render_cookie_inspection(report) + '\n'
+    assert out == render.render_cookie_inspection(report) + '\n'
     assert report['total'] == 2 and report['source']['is_default'] is False
     assert report['source']['path'] == str(external)
     assert store.read(root).default is None
@@ -262,7 +262,7 @@ def test_nested_flags_and_human_success_parity(tmp_path, monkeypatch, capsys, le
     argv = flags + ['cookies', *command] if level == 0 else ['cookies', *flags, *command] if level == 1 else ['cookies', *command, *flags]
     assert cli.main(argv) == 0
     out, err = capsys.readouterr()
-    assert out == cli.render_cookie_inspection(operations.inspect_cookies('a', overrides=overrides(root))) + '\n' and err == ''
+    assert out == render.render_cookie_inspection(operations.inspect_cookies('a', overrides=overrides(root))) + '\n' and err == ''
 
 
 def test_file_commands_no_browser_or_credentials_or_docker(tmp_path, monkeypatch, capsys):

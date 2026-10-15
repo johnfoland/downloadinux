@@ -36,7 +36,9 @@ and download status reduction (DEC-57). The coordinated `dl`, `batch`, and
 [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined
 Stage 3 completion evidence. Stage 4, the Python + Textual TUI and its
 `config set`/`config unset` settings writes, is settled (*Python + Textual
-TUI*, DEC-58 to DEC-62, issue #98) and not implemented.
+TUI*, DEC-58 to DEC-62, issue #98). PR #103 implements the shared human
+renderers and the `config set`/`config unset` writes (DEC-58, DEC-61); the
+TUI itself is not implemented.
 
 ## Agreed decisions
 
@@ -471,7 +473,7 @@ Further rules, pinned for P0001-C01:
   malformed token is refused, exit 1, with its length but never its value.
   It writes the credentials file at mode 0600, creating the directory.
 
-Settings writes, settled for Stage 4 (DEC-61; not implemented):
+Settings writes, implemented (DEC-61):
 
 - `config set KEY VALUE` and `config unset KEY` are the shared settings
   writes, `operations.set_setting(key, value, config=None, overrides=(),
@@ -3329,7 +3331,8 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); not implemented. Its settings writes, `config set` and
-`config unset`, are under *Configuration and paths* (DEC-61).
+`config unset`, are under *Configuration and paths* (DEC-61), and are
+implemented (PR #103).
 
 The TUI is a second front, beside the CLI, for the host operations Stages 1–3
 built. It adds no worker client, socket request, store access, or host state
@@ -3349,9 +3352,9 @@ and `downloadinux.tui.logtext` (§4) import no Textual, so their tests drive
 them directly. The human renderers the CLI and TUI share (the escaping rule,
 `jobs list`'s state label and table, `jobs show`'s fields, the cancel and
 retry lines, the cookie source and inspection text, `config show`'s and
-`doctor`'s text, and `config set-token`'s login messages) move from `cli.py`
-into `downloadinux.render`, unchanged: every CLI output stays byte for byte
-what it is.
+`doctor`'s text, and `config set-token`'s login messages) are implemented
+in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
+output stays byte for byte what it is. The TUI itself remains planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich

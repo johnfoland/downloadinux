@@ -305,13 +305,17 @@ def parse_override(text: str) -> tuple[str, Any]:
     setting = BY_KEY.get(key)
     if setting is None:
         raise ConfigError(f"--set: {key}: unknown setting")
+    return key, validate(setting, override_value(setting, raw), "--set")
+
+
+def override_value(setting: Setting, raw: str) -> Any:
+    """Parse `--set`'s value without typing it, so a saved path keeps `~`
+    (Configuration and paths, Settings writes; DEC-61)."""
     parsed = _parse_toml_value(raw)
     if setting.type in (STRING, PATH):
         quoted = raw.strip()[:1] in ("'", '"') and isinstance(parsed, str)
-        value: Any = parsed if quoted else raw
-    else:
-        value = raw if parsed is _UNPARSED else parsed
-    return key, validate(setting, value, "--set")
+        return parsed if quoted else raw
+    return raw if parsed is _UNPARSED else parsed
 
 
 _UNPARSED = object()

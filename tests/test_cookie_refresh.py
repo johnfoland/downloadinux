@@ -11,7 +11,7 @@ import sys
 
 import pytest
 from yt_dlp import cookies as upstream
-from downloadinux import cli, cookie_browser, cookiejar, cookie_selectors, cookie_store as store, cookie_writer as writer, files, operations
+from downloadinux import render, cli, cookie_browser, cookiejar, cookie_selectors, cookie_store as store, cookie_writer as writer, files, operations
 from downloadinux.errors import DownloadinuxError
 from test_cookie_migration import DATA, legacy
 from test_cookie_registration import overrides, run, source_file, report_equals_inspect
@@ -203,7 +203,7 @@ def test_refresh_nested_flags_and_human_summary(tmp_path, capsys, level):
     argv = flags + ['cookies', *command] if level == 0 else ['cookies', *flags, *command] if level == 1 else ['cookies', *command, *flags]
     assert cli.main(argv) == 0
     out, err = capsys.readouterr()
-    assert err == '' and out == cli.render_cookie_inspection(operations.inspect_cookies('a', overrides=overrides(root))) + '\n'
+    assert err == '' and out == render.render_cookie_inspection(operations.inspect_cookies('a', overrides=overrides(root))) + '\n'
 
 
 def test_refresh_no_browser_credentials_docker_or_useragent(tmp_path, monkeypatch, capsys):
