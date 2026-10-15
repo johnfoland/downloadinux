@@ -12,10 +12,11 @@ Jobs retain their state and attempt logs, with explicit cancel and retry.
 
 Settings live outside the checkout. Named cookie sources are pinned when
 submitted; each job attempt gets its own private copy at startup, or runs
-anonymously. `--user-agent` overrides the setting for a submission. Stage 1
-and Stage 2 are implemented. Stage 3's command cutover and batch retirement
-are implemented; its final joined completion evidence remains pending.
-The [planning documents](docs/README.md) describe that remaining evidence
+anonymously. `--user-agent` overrides the setting for a submission. Stages 1–3
+are implemented. [PR #97](https://github.com/johnfoland/downloadinux/pull/97)
+adds the joined Stage 3 completion evidence for detachment, cancellation,
+retry, and recovery.
+The [planning documents](docs/README.md) describe the implemented contracts
 and the proposed Python + Textual TUI (Stage 4). This README covers current
 behavior.
 

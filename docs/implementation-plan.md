@@ -1,7 +1,7 @@
 # Implementation plan
 
-Status: Stage 1 is implemented, as project
-P0001: D1's package and configuration
+Status: Stages 1–3 are implemented; Stage 4 remains proposed.
+Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
 (`shell`, `vpn`, `servers`) and login on `config set-token` (P0001-C03); D3:
@@ -22,8 +22,8 @@ worker runs in the image and answers the host, `doctor`, and the `jobs`
 commands. Reusable host submission and queue-import operations are implemented
 (DEC-56), as are multi-job/lane following and typed host events with status
 reduction (DEC-57; PR #94). The coordinated download fronts and retirement
-are implemented (DEC-44/56/57); D5's joined Stage 3 completion evidence
-remains pending.
+are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3
+completion evidence through the credential-free gate. Stage 3 is implemented.
 Stage 4 remains a proposal.
 
 Read [current state](current-state.md) for the migration baseline and
@@ -159,7 +159,10 @@ the `jobs list|show|logs|cancel|retry|export` commands with `just jobs`
 (DEC-55) are implemented in PR #90, with smoke evidence against the worker
 in the built image. The coordinated cutover (D4) is implemented: `dl`, `batch`, and `watch`
 use the worker, and tmux, the zsh loop, the runner batch route, and gallery
-batch quiet mode are retired. D5's joined completion evidence is pending.
+batch quiet mode are retired. [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined completion
+evidence: real host detach/reconnect, queue consumption and duplicates,
+observed lane throttles, process-tree cancel, refreshed explicit retry, hard
+container restart reconciliation, retained attempt logs, and doctor.
 Target design §6's host submission and byte-preserving queue import
 operations (DEC-56) are implemented as additive preparation in PR #92;
 the coordinated command cutover now uses them. Multi-job and
@@ -179,8 +182,9 @@ queued, `watch` follows a lane, `jobs` manages history, and the cutover
 removes tmux and the zsh loop together (DEC-44). Job history retention is
 outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issues/65)).
 The worker shipped additively first; the coordinated `dl`, `batch`, and
-`watch` cutover and retirement are now implemented. Stage 3 completion is
-not declared until D5's joined evidence is accepted.
+`watch` cutover and retirement are implemented, and PR #97 joins their
+completion evidence in the gate. Stage 3 is implemented; Stage 4 remains
+proposed.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -249,13 +253,16 @@ and container restarts. Keep credentialed live-site checks separate and explicit
 - Preserve `dlmp4` and `dlgal` naming and output conventions in the presets;
   retire their container shell shortcuts in Stage 2 and document host commands
   (done in PR #62).
-- Preserve or explicitly relocate the existing gallery archive.
-- Import existing text queues with a documented duplicate policy (settled:
-  `batch` imports and consumes them, skipping active duplicates; DEC-44).
-- Keep old URL-only batch logs distinguishable from new job history (settled:
-  they stay untouched under the output root, history lives in
-  `paths.state/jobs/`; DEC-44).
-- Document replacement commands and remove obsolete tmux instructions.
+- Preserve the gallery archive in place (implemented in PR #95; byte-exact
+  migration/recovery evidence in PR #97).
+- Import existing text queues with a documented duplicate policy (`batch`
+  imports and consumes them, skipping active duplicates; DEC-44, implemented
+  in PR #95, with external-path append/rerun evidence in PR #97).
+- Keep old URL-only batch logs distinguishable from new job history (they
+  stay untouched under the output root, history lives in `paths.state/jobs/`;
+  DEC-44, implemented in PR #95 and checked across recovery in PR #97).
+- Document replacement commands and remove obsolete tmux instructions
+  (implemented in PR #95; retain the dated baseline and upgrade notes).
 - Update the main README to describe implemented behavior as each stage lands.
 
 ## Decisions to resolve before their implementation
@@ -283,6 +290,8 @@ the coordinated download cutover, is implemented: PR #55 adds its
 D5, Stage 2's completion evidence, lands in PR #63, so Stage 2 is
 implemented. Worker and job rules are settled for Stage 3 (DEC-41 to DEC-57);
 the worker is packaged into the image with its implemented job clients, and the host
-`jobs` commands and coordinated download fronts reach it. D5 completion
-evidence remains pending (*Stage 3* above); TUI styling
-and keybindings follow stable operations.
+`jobs` commands and coordinated download fronts reach it. PR #97 adds D5's
+joined completion evidence (*Stage 3* above), so Stage 3 is implemented.
+Job history retention (#65) and cookie source lifecycle/pruning (#35) remain
+outside these stages; queued jobs retain their pinned immutable revisions.
+The proposed Stage 4 TUI styling and keybindings follow stable operations.

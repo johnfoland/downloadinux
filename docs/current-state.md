@@ -265,3 +265,29 @@ container's download shortcuts, `DL_USER_AGENT`, and the placeholder jar are
 retired. [PR #63](https://github.com/johnfoland/downloadinux/pull/63) adds Stage 2's completion evidence (D5): Stage 2 is
 implemented.
 The dated review and Stage 1 outcomes above remain historical observations.
+
+
+## Since this review: Stage 3
+
+Stage 3 is implemented. [PR #97](https://github.com/johnfoland/downloadinux/pull/97)
+joins the accepted worker and command routes in the credential-free gate: real
+host detachment and reconnection, lane imports and observed throttles, process-tree
+cancellation, refreshed explicit retry, crash reconciliation, retained logs,
+and doctor. The dated review and the Stage 1/2 observations above remain history.
+
+| Baseline observation | Implemented Stage 3 outcome | Authority and implementation |
+| --- | --- | --- |
+| No persistent worker; `sleep infinity` and host execs own execution | A standard-library worker runs as `dl` under Docker init, owns private rollback-journal SQLite in `/state/jobs/`, and answers host clients through `compose exec` and a container-local socket. A second worker waits without opening the store or socket. | Target design *Persistent worker and jobs* §1–§2; DEC-41/45/50; PRs #68, #78, #84; teardown repair and failure evidence in #97 |
+| Fixed tmux sessions and a personal shell loop process queues | Per-preset batch lanes and independent immediate submissions run concurrently, with FIFO inside each queue. Persisted 120–289-second lane deadlines and VPN readiness gates have structured wait reasons. | Target design §4; DEC-43/47; PRs #71, #73, #76; observed lane/restart waits in #97 |
+| Terminal attachment is the inspection API; no durable job IDs or explicit retry/cancel | `dl` follows per-URL jobs and detaches on Ctrl-C while work continues; `watch` follows a lane. `jobs` lists, shows, reads/follows attempt logs, cancels, retries, and exports. Cancellation reaches the downloader group; restart marks running work `interrupted`, preserves queued work, and waits for deliberate retry. | Target design §2–§6; DEC-42/44/48/54–57; PRs #87, #90, #94, #95; joined process-tree and recovery evidence in #97 |
+| Queue files must be under downloads, duplicate handling is implicit, and appends are unreliable | Host `batch` imports any regular queue path atomically into the worker, skips exact active preset/URL duplicates, then consumes accepted lines while retaining other bytes. Appending and rerunning queues only new URLs; a failed rewrite reports committed jobs. The documented append-during-replacement race remains. | Target design §2/§6; DEC-45/56; PRs #92, #95; external queue and rerun evidence in #97 |
+| URL-only logs are the diagnostics and failures stay in the import file | Raw per-attempt logs and explicit terminal states stay in job history; `jobs export` produces a new queue from failed, cancelled, or interrupted work. Earlier attempt logs remain readable after retry and restart. | Target design §2–§3/§6; DEC-42/54/55; PRs #87, #90; byte-exact retained logs in #97 |
+| Shared mutable cookie jar and host-return lifetime | Each job pins the source/revision at submission and allocates a private lease-held jar per attempt at startup. Refresh/default changes cannot alter queued or running selections; explicit retry re-pins the job's own source and keeps its user-agent. Anonymous jobs read no source store. | Target design *Named cookie sources* §3 and *Persistent worker and jobs* §2–§5; DEC-31/35/36/42; PRs #76, #90, #92, #95; R1/R2 and inherited descriptor evidence in #97 |
+| tmux, the zsh batch loop, quiet gallery batches, and URL logs are runtime dependencies | The image and current routes retire them together. `just shell`, zsh utilities, and rich-cli remain. Existing URL logs and the gallery archive stay untouched, and output paths stay in place. Upgrade notes explain finishing/stopping old tmux batches before rebuilding. | Target design §7; DEC-6/44; PR #95; sentinel preservation through recovery in #97 |
+| VPN readiness looks like a hung downloader; no worker health row | Scheduling exposes VPN/throttle waits, and `doctor` reports `worker.running` alongside mount/tool checks. The joined gate needs no credentials and skips VPN probes when disabled; injected tests cover enabled-VPN readiness. | Target design §4/§8; DEC-43/47/53; PRs #73, #84; final idle-worker doctor evidence in #97 |
+
+The Python + Textual TUI (Stage 4) remains proposed.
+[History retention #65](https://github.com/johnfoland/downloadinux/issues/65) and
+[cookie source lifecycle/pruning #35](https://github.com/johnfoland/downloadinux/issues/35)
+remain deliberate exclusions; queued jobs retain their pinned canonical revisions.
+Snapshot cleanup stays explicit through `cookies cleanup`, never automatic.

@@ -84,6 +84,7 @@ def batch(log, cookies, source, revision, agent, *urls):
 
 STEPS = {'named-download': named_download, 'anonymous-download': anonymous_download, 'batch': batch}
 
-step, log, cookies, *rest = sys.argv[1:]
-STEPS[step](Path(log), Path(cookies), *rest)
-print(f'Host-route {step} passed.')
+if __name__ == '__main__':
+    step, log, cookies, *rest = sys.argv[1:]
+    STEPS[step](Path(log), Path(cookies), *rest)
+    print(f'Host-route {step} passed.')

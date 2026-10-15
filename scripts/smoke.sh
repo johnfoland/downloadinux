@@ -12,11 +12,14 @@ cli=(uv run --locked downloadinux --config "$smoke_dir/absent.toml" "${sets[@]}"
 export DOWNLOADINUX_IMAGE=downloadinux:check
 # A background `jobs logs --follow` (the jobs smoke) until it is reaped.
 follower_pid=
+second=downloadinux-check-second-worker
 cleanup() {
   if [[ -n $follower_pid ]]; then
     kill "$follower_pid" 2>/dev/null || true
     wait "$follower_pid" 2>/dev/null || true
   fi
+  # compose down does not own this named one-off (#85).
+  docker rm -f "$second" >/dev/null 2>&1 || true
   "${cli[@]}" compose -- down -v >/dev/null 2>&1 || true
   rm -rf "$smoke_dir"
 }
@@ -438,7 +441,6 @@ rm -f "$route_log"/call-*
 
 # 4. A second worker on the same state root waits for the lock without a
 # socket, stops cleanly, and the first still answers.
-second=downloadinux-check-second-worker
 "${cli[@]}" compose -- run -d --name "$second" downloadinux >/dev/null
 wait_for "the second worker's waiting line" container_log_has "$second" \
   'downloadinux-worker: another worker holds /state/jobs/.worker.lock; waiting'
@@ -666,6 +668,20 @@ for prefix in dlmp4 dlgal; do
 done
 cmp -s "$smoke_dir/downloads with space/dlgal/gallery-dl-archive.sqlite3" "$smoke_dir/archive.copy"
 printf 'Host-route smoke passed (worker dl named/default/anonymous, per-job jars, consumed batch, watch, retired image route).\n'
+
+# Persistent worker and jobs §1–§8: joined Stage 3 completion evidence.
+# Keep the earlier 2-second scenario intact; this one needs an observable
+# 20-second wait, configured only by a disposable container overlay (DEC-47).
+cat >"$smoke_dir/stage3.yaml" <<'YAML'
+services:
+  downloadinux:
+    environment:
+      DOWNLOADINUX_TEST_THROTTLE_SECONDS: "20"
+YAML
+"${cli[@]}" compose -- --file "$smoke_dir/stage3.yaml" up -d --force-recreate
+wait_for "the Stage 3 worker to answer" worker_answers
+install_downloaders
+python3 -I "$route_fixture/stage3.py" "$smoke_dir" "$route_agent" "${cli[@]}"
 
 # Named cookie sources §3, the host front (DEC-37): `dlx cookies cleanup`
 # against the running `up` container. A one-off container allocates a
