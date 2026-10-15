@@ -358,12 +358,29 @@ def list_servers(
     """`servers`: fetch Nord's recommendations in the container, which is
     the thing on the VPN, and rank them here. Runs with the VPN on or off
     (DEC-16)."""
+    return servers.rank(_fetch_servers(country, config, overrides, host, capture), city)
+
+
+def server_choices(
+    city: str = servers.DEFAULT_CITY,
+    country: str = servers.DEFAULT_COUNTRY,
+    config: str | None = None,
+    overrides: Sequence[str] = (),
+    host: Host = Host(),
+    *,
+    capture: compose.Capture | None = None,
+) -> servers.ServerChoices:
+    """The same fetch as `servers`, returned as data (TUI §7; DEC-62)."""
+    return servers.ranking(_fetch_servers(country, config, overrides, host, capture), city)
+
+
+def _fetch_servers(country, config, overrides, host, capture) -> str:
     effective = settings.load(config, overrides, host)
     fetch = compose.exec_args(servers.fetch_argv(country), captured=True)
     status, body = _invocation(effective, host).capture(fetch, capture)
     if status != 0:
         raise DownloadinuxError(servers.UNREACHABLE)
-    return servers.rank(body, city)
+    return body
 
 
 LIFECYCLE = {
