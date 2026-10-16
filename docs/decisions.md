@@ -1459,7 +1459,9 @@ order asked. The TUI injects its own runners: each child gets `/dev/null` or
 its contract's pipe on standard input, captured standard output as before,
 standard error in a temporary file recorded in Activity, and a new session.
 The app's own descriptor 2 points at a temporary file while the screen is up
-and is replayed after the terminal is restored. A pane stops a stream by
+and is replayed after the terminal is restored. Textual draws the screen on
+descriptor 2 itself, so its driver is given a duplicate of that descriptor
+before the redirect (clarified 2026-10-16). A pane stops a stream by
 closing the child's standard input, DEC-55's detach, and discards whatever
 that stream reports afterwards. No signal handler is installed.
 
@@ -1479,7 +1481,11 @@ stream raises was rejected: the user asked for it to stop.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §2 and
 §8. Added on 2026-10-15 for issue #98; clarifies DEC-17 for the TUI and
-uses DEC-53 and DEC-55 unchanged.
+uses DEC-53 and DEC-55 unchanged. Clarified on 2026-10-16: Textual 8.2.8's
+Linux and macOS driver writes the screen to `sys.__stderr__`, so redirecting
+descriptor 2 alone would have sent the screen into the temporary file; the
+backend's, runners', and stream handle's shapes were pinned in §2 at the
+same time.
 
 ## DEC-60: The TUI has five views with fixed refresh rules and keys, and renders logs as escaped text (2026-10)
 
