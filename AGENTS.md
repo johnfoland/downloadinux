@@ -139,10 +139,16 @@ said it, and cite the entry at the code site.
 - **Release branch:** same as the integration branch.
 - **Gate:** `just check` (steps under *Commands*). The gate matches CI: the
   workflow installs tools and runs `just check` and nothing else, so a new
-  check goes into the recipe, never into the workflow alone.
+  check goes into the recipe, never into the workflow alone. The one
+  exception: a pull request that changes only `docs/*.md`, README.md,
+  AGENTS.md, or CLAUDE.md skips the gate in CI, and `check` still passes.
+  Nothing in the gate reads those files. Planning pull requests are
+  usually docs-only, so they merge in about a minute.
 - **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, job
-  `check`), on pull requests into `master` and pushes to `master`. The `check`
-  status is required on `master`.
+  `check`), on pull requests into `master` only. Every change reaches
+  `master` through a squash-merged pull request that has already passed, so
+  there is no second run on the push. The `check` status is required on
+  `master`.
 - **Releases:** none.
 - **Issues:** GitHub Issues, as *Roadmap* describes: review follow-ups and
   ideas are filed as issues, a project or maintenance chunk may start from
