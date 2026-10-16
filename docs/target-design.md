@@ -3426,6 +3426,31 @@ tests give the app a fake backend instead, so no app test starts Docker.
 A selection is the CLI's: the default (no option), anonymous, or a source
 name, with an optional user-agent (DEC-39, DEC-40).
 
+*Backend shape.* `Backend(config, overrides, record)` takes the global
+`--config` value (or None), the `--set` values in order, and `record(call,
+text)`, which receives each process text (*Processes*, below) with `call`, the
+backend method's name (`lifecycle`, `follow_job`, `doctor`, …). `record` is
+called on the thread running the backend call, so the app's callback hands
+the text to the UI thread itself. Each method call builds its own
+`tui.process.Runners` bound to its name and passes its methods as the
+operation's `runner`, `capture`, `feed`, and `spawn` keywords, each where the
+operation takes it; the default `Host()` is used. A selection is a frozen
+`backend.Selection(source: str | None = None, anonymous: bool = False,
+user_agent: str | None = None)`, passed as the operation's `cookie_source`,
+`anonymous`, and `user_agent` keywords as given; `Selection()` is the
+default, and `retry(ids, Selection())` keeps each job's own rule. The other
+arguments follow the operations: `import_cookies(name, file, replace)`,
+`add_browser(name, browser, profile, keyring, container, replace)`,
+`set_default(name)` with None for anonymous, `export_to(preset, path)`, and
+`servers(city, country)`. `set_token(token)` runs `set_token` and then
+`log_in` with the same token and returns the pair `(path, login_result)`;
+`log_in`'s error is raised unchanged, and its text already says the token is
+stored. `lifecycle(command)` accepts only `up`, `down`, and `restart`, and
+raises `ValueError` for anything else before any operation runs. `log`,
+`follow_job`, and `follow_lane` return a `Stream` (*Stopping a stream*,
+below) over the operation's items; every other method returns the
+operation's result.
+
 *Threads.* Every backend call runs in a Textual thread worker, never on the
 event loop, and hands its result back through the app's thread-safe calls,
 so a slow Compose call, a browser export, or a blocked stream never stops
@@ -3465,11 +3490,42 @@ recorded in Activity under the call that produced it when nonempty. A read
 that repeats on a timer records its text only when it differs from that
 read's previous text.
 
+`tui.process.Runners(record)` holds one backend call's runners as its
+methods `runner`, `capture`, `feed`, and `spawn`, with `compose`'s `Runner`,
+`Capture`, `Feed`, and `Spawn` signatures, and `record(text)` taking one
+text. Each runs `argv` with `dict(environ)` as its environment,
+`start_new_session=True`, and standard error in its own
+`tempfile.TemporaryFile()`, and raises whatever starting the process raises
+(an `OSError`), as the default runners do. `runner` gives standard input
+`/dev/null`, captures standard output, and returns the exit status;
+`capture` gives standard input `/dev/null` and returns the status and
+standard output decoded as `compose.capture_process` decodes it (UTF-8,
+replacement); `feed` gives standard input as `compose.capture_with_input`
+does (the text as UTF-8, empty when None) and decodes standard output as it
+does (`surrogateescape`); `spawn` gives standard input and output pipes, as
+`compose.spawn_process` does. Once a `runner`, `capture`, or `feed` process
+ends, `record` receives `runner`'s standard output and then the process's
+standard error, each turned into text by one rule: decoded as UTF-8 with
+replacement, CRLF read as LF, trailing LFs removed, and escaped with
+`render.escape` except that LF and tab stay; a text that is then empty is not
+recorded. A spawned process's standard error is recorded when its stream
+ends (*Stopping a stream*).
+
 For the app's lifetime, the process's own file descriptor 2 is redirected to
 an anonymous temporary file, so nothing written there in-process (a browser
-helper, the interpreter) reaches the screen. Once Textual has restored the
-terminal, descriptor 2 is restored and whatever the file holds is copied to
-it.
+helper, the interpreter) reaches the screen. Textual draws the screen on
+descriptor 2 itself (Textual 8.2.8's Linux and macOS driver writes to
+`sys.__stderr__`), so the redirect alone would capture the screen. Before
+redirecting, the TUI therefore duplicates descriptor 2 and gives Textual's
+driver a text stream on the duplicate, with `sys.__stderr__`'s encoding and
+error handler: a subclass of Textual's `LinuxDriver`, passed as the app's
+`driver_class`, that replaces only its output file. Once Textual has
+restored the terminal, descriptor 2 is restored from the duplicate, the
+duplicate is closed, and the temporary file's bytes are copied to
+descriptor 2 unchanged. `tui.process.stderr_backstop()` is the context
+manager that does this, however its body ends, and yields the stream;
+`tui.app` holds the driver subclass. Headless runs (`run_test`) use no
+backstop.
 
 *Stopping a stream.* A log pane that changes its source (another job,
 attempt, or lane; §4) or a quitting app stops its stream: the TUI's spawn
@@ -3480,6 +3536,22 @@ thread then completes the operation's normal ending by closing its
 generator. Whatever that stream yields or raises after the stop is
 discarded, never shown. The TUI installs no signal handler: Textual owns the
 terminal, where Ctrl-C is a key, not a signal.
+
+That handle is `tui.process.Stream`, an iterator over the operation's items
+(log byte chunks or follow events) that one read's thread consumes. Its
+`stop()` may be called from any thread, more than once: under one lock with
+the spawn runner, it marks the stream stopped and closes the standard input
+of every process the runner has started, ignoring `BrokenPipeError`, and a
+process the runner starts after the stop has its standard input closed as
+soon as it starts. A stream stopped before its consumer first asks for an
+item never starts the operation. Once stopped, the iterator ends at the next item or error the
+operation produces, discarding it. However iteration ends (the operation's
+end, its error, a stop, or the consumer's `close()`), the stream closes the
+operation's generator, which runs the operation's own ending (DEC-55's stop
+wait and reaping), and then records each spawned process's standard error
+by the rule above, except after a stop, when that text is discarded with the
+rest; each temporary file is closed either way. An error the operation
+raises before any stop reaches the consumer after that recording.
 
 ### 3. Layout, navigation, and keys (DEC-60)
 
