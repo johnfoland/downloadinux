@@ -1488,7 +1488,10 @@ already captured by the runners.
 §8. Added on 2026-10-15 for issue #98; clarifies DEC-17 for the TUI and
 uses DEC-53 and DEC-55 unchanged. Amended on 2026-10-16: the descriptor-2
 redirect was dropped (above), and the backend's, runners', and stream
-handle's shapes were pinned in §2.
+handle's shapes were pinned in §2. Clarified on 2026-10-16: worker threads hand
+results to the UI only by posting messages, read keys and supersession,
+the timed reads' scheduling, and the action names and re-reads are pinned
+in §2.
 
 ## DEC-60: The TUI has five views with fixed refresh rules and keys, and renders logs as escaped text (2026-10)
 
@@ -1531,7 +1534,11 @@ wait on the VPN and fixing it should not need a second terminal.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §3 to
 §7. Added on 2026-10-15 for issue #98; the maintainer chose the lifecycle
-scope and the batch, export, lane, and token extras.
+scope and the batch, export, lane, and token extras. Clarified on 2026-10-16: a timed
+read records and notifies an outcome only when it differs from the previous
+one (§2), so a container that stays stopped is reported once, not every two
+seconds; the header, footer line, key scope, and quitting order are pinned
+in §3 and §8.
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 
