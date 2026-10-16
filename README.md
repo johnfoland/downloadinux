@@ -1,8 +1,11 @@
 # downloadinux
 
 A headless Debian 13 "Trixie" container that runs the `video` (yt-dlp) and
-`gallery` (gallery-dl) download presets behind NordVPN against the host
-`~/Downloads` folder.
+`gallery` (gallery-dl) download presets against a host download folder
+(`~/Downloads` by default), optionally behind NordVPN (off by default).
+
+A personal tool, shared as it is: it is built and used on macOS with Docker
+Desktop, and its checks also run on Linux in CI.
 
 The host CLI, `dlx`, and its `just` wrappers submit downloads to a persistent
 worker in the container. `dl` follows per-URL jobs; Ctrl-C detaches while they
@@ -20,14 +23,15 @@ The [planning documents](docs/README.md) describe the implemented contracts
 and the settled, not yet implemented Python + Textual TUI (Stage 4). This
 README covers current behavior.
 
-Your existing download configs live on as the `video` and `gallery`
-presets, run from the host with `just dl` and `just batch`.
+The download configs live in the `video` and `gallery` presets, run from
+the host with `just dl` and `just batch`.
 [Step 3](#step-3--cookie-source) explains cookie handling;
 [Batch queues](#batch-queues) and [Inside the container](#inside-the-container)
 explain the worker commands and the upgrade from tmux batches.
 
 ```sh
-cd ~/Code/downloadinux
+git clone https://github.com/johnfoland/downloadinux.git
+cd downloadinux
 just setup
 ```
 
@@ -41,7 +45,7 @@ you want to do it a piece at a time or come back to fix one part.
 
 ## Step 0 — Prerequisites
 
-You already have all of these; listed so future-you knows what to reinstall.
+You need:
 
 | | |
 |---|---|
@@ -54,7 +58,7 @@ You already have all of these; listed so future-you knows what to reinstall.
 Then install the CLI from the checkout, with [uv](https://docs.astral.sh/uv/):
 
 ```sh
-cd ~/Code/downloadinux
+cd downloadinux                # your clone
 uv tool install --editable .   # puts dlx (and its long name, downloadinux) on PATH
 just                           # shows the full menu of commands
 ```
@@ -1055,6 +1059,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 .
 ├── .github/workflows/ci.yml      # CI: runs `just check` on pull requests (docs-only ones skip it)
 ├── justfile
+├── LICENSE                       # MIT
 ├── Dockerfile
 ├── compose/base.yaml, vpn.yaml   # four mounts; optional VPN overlay
 ├── presets/                      # read-only /config: media behavior only
@@ -1107,3 +1112,7 @@ sources.json                      # named-source metadata and the default (0600)
 .lock                             # host writer lock (0600)
 sources/<name>/<revision>.txt      # immutable managed copy (0600 in 0700 directories)
 ```
+
+# License
+
+MIT; see [LICENSE](LICENSE).
