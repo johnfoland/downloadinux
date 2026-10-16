@@ -3511,21 +3511,17 @@ replacement, CRLF read as LF, trailing LFs removed, and escaped with
 recorded. A spawned process's standard error is recorded when its stream
 ends (*Stopping a stream*).
 
-For the app's lifetime, the process's own file descriptor 2 is redirected to
-an anonymous temporary file, so nothing written there in-process (a browser
-helper, the interpreter) reaches the screen. Textual draws the screen on
-descriptor 2 itself (Textual 8.2.8's Linux and macOS driver writes to
-`sys.__stderr__`), so the redirect alone would capture the screen. Before
-redirecting, the TUI therefore duplicates descriptor 2 and gives Textual's
-driver a text stream on the duplicate, with `sys.__stderr__`'s encoding and
-error handler: a subclass of Textual's `LinuxDriver`, passed as the app's
-`driver_class`, that replaces only its output file. Once Textual has
-restored the terminal, descriptor 2 is restored from the duplicate, the
-duplicate is closed, and the temporary file's bytes are copied to
-descriptor 2 unchanged. `tui.process.stderr_backstop()` is the context
-manager that does this, however its body ends, and yields the stream;
-`tui.app` holds the driver subclass. Headless runs (`run_test`) use no
-backstop.
+The TUI leaves its own file descriptor 2 alone. Textual draws the screen
+there (Textual 8.2.8's Linux and macOS driver writes to `sys.__stderr__`), so
+redirecting it would hide the screen, and keeping the screen through a
+redirect would need a private attribute of Textual's driver. What a redirect
+would catch is covered otherwise: child processes' standard error is
+captured by the runners above, and Python-level writes to `sys.stdout` and
+`sys.stderr` while the app runs are captured by Textual itself. The app
+receives them through Textual's public `begin_capture_print` (both streams)
+and records them in Activity under `output`, by the process-text rule. Only a
+write made below Python straight to descriptor 2 can still reach the screen,
+until the next redraw replaces it.
 
 *Stopping a stream.* A log pane that changes its source (another job,
 attempt, or lane; §4) or a quitting app stops its stream: the TUI's spawn
