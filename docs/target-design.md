@@ -1,7 +1,8 @@
 # Target design
 
 Status: Stages 1–3 are implemented; Stage 4's shared host operations are
-implemented, and its TUI is settled, not implemented.
+implemented, as are the TUI's Textual-free backend, process runners, and
+stream handle (PR #110). The app, views, and launch remain planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -41,7 +42,8 @@ TUI*, DEC-58 to DEC-62, issue #98). PR #103 implements the shared human
 renderers and the `config set`/`config unset` writes (DEC-58, DEC-61).
 PR #105 implements `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` (DEC-60, DEC-62), completing the shared host
-operations; the TUI itself is not implemented.
+operations. PR #110 implements the Textual-free backend, process runners,
+and stream handle; the app, views, and launch remain planned.
 
 ## Agreed decisions
 
@@ -3333,7 +3335,9 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 ## Python + Textual TUI
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
-DEC-58 to DEC-62); the TUI is not implemented. Its settings writes, `config set` and
+DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
+handle are implemented (PR #110). The app, views, and launch remain
+planned. Its settings writes, `config set` and
 `config unset`, are under *Configuration and paths* (DEC-61), and are
 implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
@@ -3359,7 +3363,9 @@ them directly. The human renderers the CLI and TUI share (the escaping rule,
 retry lines, the cookie source and inspection text, `config show`'s and
 `doctor`'s text, and `config set-token`'s login messages) are implemented
 in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
-output stays byte for byte what it is. The TUI itself remains planned.
+output stays byte for byte what it is. The Textual-free backend, process
+runners, and stream handle are implemented (PR #110); the app, views,
+launch, and Textual dependency remain planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3548,6 +3554,9 @@ wait and reaping), and then records each spawned process's standard error
 by the rule above, except after a stop, when that text is discarded with the
 rest; each temporary file is closed either way. An error the operation
 raises before any stop reaches the consumer after that recording.
+
+The backend, runners, and stream handle are implemented (PR #110); the
+app's thread workers, action queue, and driver remain planned.
 
 ### 3. Layout, navigation, and keys (DEC-60)
 
