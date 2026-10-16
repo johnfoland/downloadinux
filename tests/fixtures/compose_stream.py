@@ -7,6 +7,7 @@ order; the process then exits 0 unless a step ends it:
 - `["line", TEXT]`: write TEXT (UTF-8, a lone surrogate escape standing for
   the byte it escapes) and a newline to standard output.
 - `["raw", TEXT]`: write TEXT with no newline.
+- `["stderr", TEXT]`: write TEXT and a newline to standard error, flushed.
 - `["await", PATH]`: wait until PATH exists.
 - `["ignore-term", null]`: ignore `SIGTERM` from now on.
 - `["eof", PATH]`: read standard input to end of file, then create PATH.
@@ -32,6 +33,9 @@ for action, value in json.loads(sys.argv[1]):
     elif action == 'raw':
         out.write(value.encode('utf-8', 'surrogateescape'))
         out.flush()
+    elif action == 'stderr':
+        sys.stderr.buffer.write(value.encode('utf-8', 'surrogateescape') + b'\n')
+        sys.stderr.buffer.flush()
     elif action == 'await':
         while not os.path.exists(value):
             time.sleep(0.01)
