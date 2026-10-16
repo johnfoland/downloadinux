@@ -3,8 +3,9 @@
 Status: Stages 1–3 are implemented; Stage 4 is settled, with its shared
 renderers and `config set`/`config unset` implemented (PR #103), and
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
-implemented (PR #105), completing the shared host operations. The TUI is
-not implemented.
+implemented (PR #105), completing the shared host operations. The TUI's
+Textual-free backend, process runners, and stream handle are implemented
+(PR #110); its app, views, and launch remain planned.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -32,7 +33,9 @@ Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issue
 DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
 are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` are implemented (PR #105), completing the
-shared host operations; the TUI is not.
+shared host operations. The Textual-free backend, process runners, and
+stream handle are implemented (PR #110); the app, views, and launch remain
+planned.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -192,8 +195,9 @@ outside this stage ([issue #65](https://github.com/johnfoland/downloadinux/issue
 The worker shipped additively first; the coordinated `dl`, `batch`, and
 `watch` cutover and retirement are implemented, and PR #97 joins their
 completion evidence in the gate. Stage 3 is implemented; Stage 4's shared
-host operations are implemented (PRs #103, #105), and its TUI is settled,
-not implemented.
+host operations are implemented (PRs #103, #105), as are its Textual-free
+backend, process runners, and stream handle (PR #110). The TUI's app,
+views, and launch remain planned.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -232,10 +236,12 @@ Settled contract: target design *Python + Textual TUI* §1–§8 and
 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98)). The
 shared renderers and settings writes are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
-(PR #105), completing the shared host operations. The TUI is not
-implemented. It is `downloadinux.tui` on `textual==8.2.8`, opened by
-bare `dlx` on a terminal (help otherwise), and a front over the CLI's host
-operations through one backend: no new worker client, store access, or host
+(PR #105), completing the shared host operations. The Textual-free backend,
+process runners, and stream handle are implemented (PR #110); the app,
+views, and launch remain planned. The planned app uses `downloadinux.tui`
+on `textual==8.2.8` and opens on bare `dlx` on a terminal (help otherwise).
+It is a front over the CLI's host operations through one backend: no new
+worker client, store access, or host
 state (DEC-58). Every call runs in a thread worker; changes go through one
 serial action queue; child processes get `/dev/null` or their pipe on
 standard input, captured standard error, and a new session, so nothing
@@ -344,4 +350,6 @@ launch, threading and process rules, views, keys, VPN controls, and the
 `config set` and `config unset` writes are pinned before implementation;
 the writes and the shared renderers are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
-(PR #105), completing the shared host operations. The TUI is not implemented.
+(PR #105), completing the shared host operations. The Textual-free backend,
+process runners, and stream handle are implemented (PR #110); the app,
+views, and launch remain planned.
