@@ -3398,6 +3398,21 @@ error. The `just tui *args` recipe
 runs `uv run downloadinux "$@"`, menu line `# Open the terminal UI: just tui
 [--config PATH] [--set KEY=VALUE]…`.
 
+*Entry point.* `downloadinux.tui.app.run(config, overrides) -> int` is what
+the launch calls. It loads the settings (`settings.load(config, overrides)`)
+and then the credentials file they name (`credentials.load`), raising either
+load's error unchanged to its caller, which maps it as `cli.main` maps a
+command's error (exit 2 for a configuration error). It then builds the app
+with the loaded settings file's path and a backend factory, runs it, and
+returns the app's return code: 0 after a quit, 1 after an unexpected
+exception (Textual sets it and prints the traceback on standard error once
+the terminal is restored). The app class is `tui.app.DownloadinuxApp(
+make_backend, settings_path, *, jobs_shown=2.0, jobs_hidden=10.0,
+vpn_every=10.0)`: `make_backend(record)` returns the backend, given the
+app's thread-safe `record(call, text)` (§2), so `run` passes
+`lambda record: Backend(config, overrides, record)` and tests pass a fake;
+the three intervals are §3's, in seconds.
+
 ### 2. Running operations off the UI thread (DEC-59)
 
 *Backend.* The app reaches the host operations only through one
@@ -3478,6 +3493,60 @@ keys, redraws, or resizing. Calls are of two kinds:
   and the header's VPN state (§3) after a VPN, settings, token, or
   lifecycle action.
 
+*Handing results back.* Each backend call runs through Textual's
+`run_worker(…, thread=True, exit_on_error=False)`, and the function it runs
+catches every exception itself, so no error ends the app through the worker.
+A worker thread reaches the UI only by posting a message
+(`post_message`, which is thread-safe and never waits), never through
+`call_from_thread`, which blocks the calling thread until the UI answers and
+raises once the event loop has closed; the app's `record(call, text)`
+callback posts the same way. The outcome (a result, an operation error, or an
+unexpected exception) is then handled on the UI thread.
+
+*Reads.* Each read has a key naming the place its result goes: `listing`
+for the job listing, `vpn` for the header's VPN state, and one per view pane
+the views add. A read started under a key supersedes the one in flight
+under it: the older one's outcome is dropped when it arrives, and if it is
+a stream, it is stopped (*Stopping a stream*). A dropped outcome changes
+nothing on screen. The two timed reads are `listing` (§3's job intervals)
+and `vpn`: the next one is scheduled when the outcome of the newest read
+under its key arrives, at the interval in force then; a superseded read's
+outcome schedules nothing. When Jobs is shown or hidden, the pending
+listing read is rescheduled to the newest read's end plus the new interval,
+at once if that time has passed. A read started by `ctrl+r` or after an
+action under a timed key supersedes one in flight, and the timer then runs
+from its end.
+
+Under a timed key, a read's process texts are held until its outcome
+arrives. The outcome (those texts in order, and its error text, §8's text
+or the internal-error line, or none) is compared with the previous outcome
+under the key, and only a different one is recorded in Activity and its
+error notified (§8); a success with no text
+counts as an outcome, so the same failure after it is reported again. A
+dropped outcome under a timed key records nothing and is not compared. Every
+other read and every action records its process text as it arrives.
+
+*Actions.* Each action carries a name, used in the footer, in Activity, and
+in §8's quit question, and the views it re-reads when it ends:
+
+| Backend method | Name | Re-reads after it |
+| --- | --- | --- |
+| `cancel`, `retry` | `jobs cancel`, `jobs retry` | listing |
+| `export_to` | `jobs export` | none |
+| `submit`, `import_queue` | `dl`, `batch` | listing |
+| `import_cookies`, `add_browser`, `refresh`, `set_default` | `cookies import`, `cookies add-browser`, `cookies refresh`, `cookies default` | cookie list |
+| `set_setting`, `unset_setting`, `set_token` | `config set`, `config unset`, `config set-token` | configuration, doctor, VPN state |
+| `lifecycle` | `up`, `down`, `restart` | configuration, doctor, VPN state |
+| `vpn_connect`, `vpn_disconnect` | `vpn connect`, `vpn disconnect` | doctor, VPN state |
+
+An action starts when it reaches the head of the queue, and its outcome is
+recorded as one Activity entry under its name when it ends (§8): the view's
+result text, or the error. The next action then starts, and the re-reads
+run, whether the action succeeded or failed. A re-read of a view not yet
+shown (doctor and configuration before Status is first shown, the cookie
+list before Cookies or Submit is) is skipped: that view reads when it is
+first shown.
+
 *Processes.* `downloadinux.tui.process` provides the runners the backend
 passes to every operation that takes them (`runner`, `capture`, `feed`, and
 `spawn`; DEC-53, DEC-55). Each child process gets standard input from
@@ -3556,7 +3625,7 @@ rest; each temporary file is closed either way. An error the operation
 raises before any stop reaches the consumer after that recording.
 
 The backend, runners, and stream handle are implemented (PR #110); the
-app's thread workers, action queue, and driver remain planned.
+app's thread workers, reads, and action queue remain planned.
 
 ### 3. Layout, navigation, and keys (DEC-60)
 
@@ -3567,6 +3636,32 @@ interrupted`, or that listing's failure text, and the VPN's state (§7,
 DEC-62). Where the line does not fit, the settings path is shortened from its
 start with `…`. The footer lists the focused
 view's keys, and `?` toggles Textual's key help panel.
+
+*Frame.* The tabs are one `TabbedContent` whose panes have the IDs `jobs`,
+`submit`, `cookies`, `status`, and `activity`, titled as above; Jobs is shown
+at launch. The header is the app's own one-line widget (no Textual `Header`,
+title, or clock) reading `PATH | SUMMARY | VPN`: PATH is the settings file's
+path from the launch load, escaped with `render.escape`; SUMMARY is `R
+running · Q queued · F failed or interrupted`, all three counts always shown,
+counted by each listed job's `state` (`failed` and `interrupted` together),
+or `jobs: TEXT` with the listing's error text (§8) escaped, or `jobs:
+reading…` before the first listing outcome; VPN is §7's text, or `VPN:
+reading…` before the first VPN outcome. When the line is wider than the
+header, PATH keeps as many of its last characters as fit after a leading
+`…`; if the rest still does not fit, the line is clipped at the right. Above
+Textual's `Footer` is one line naming the running action: `NAME running`,
+`NAME running; N waiting` when others wait, empty when none runs, and
+§8's quitting texts while quitting. All text the TUI shows that comes from
+outside it (paths, errors, process text, job fields) is rendered as plain
+text, never as Textual or Rich markup, and notifications are posted with
+`markup=False`. The command palette is disabled
+(`ENABLE_COMMAND_PALETTE = False`), so the keys are exactly the table's,
+beside Textual's own `ctrl+c` notice.
+
+`q`, `1`–`5`, and `?` do not apply in a text field, so they type there;
+`ctrl+r` does. `ctrl+q` quits from anywhere, a text field or a dialog
+included. While a dialog is open, its own keys and `ctrl+q` are the only
+keys that apply: the view and global keys under it do nothing.
 
 *Refresh.* The job listing (§4) is read every 2 seconds while Jobs is shown
 and every 10 seconds otherwise, each interval counted from the end of the
@@ -3912,10 +4007,22 @@ setting stay CLI-only; `doctor` reports the killswitch and the exit IP.
 *Errors.* An operation error (`DownloadinuxError`, a configuration error, or
 an OS error, mapped to `PATH: REASON` as the CLI maps it) is shown as an
 error notification with the text the CLI prints after `downloadinux: error: `
-and recorded in Activity. An unexpected exception in a backend call does not
-end the app: it is recorded in Activity as `internal error: TYPE: MESSAGE`
-with its traceback, and the view that asked shows `internal error; see
-Activity`.
+and recorded in Activity (a timed read's only when its outcome changes,
+§2). An unexpected exception in a backend call does not end the app: it is
+recorded in Activity as `internal error: TYPE: MESSAGE` with its traceback,
+and the view that asked shows `internal error; see Activity`.
+
+The OS-error mapping is one function, `errors.from_os_error(error) ->
+DownloadinuxError`, giving `cli.main`'s text (`FILENAME: STRERROR`, with
+`<stdin/stdout>` when the error names no file); `cli.main` and the TUI both
+call it. An error notification has severity `error` and a 10-second timeout;
+every other notification keeps Textual's defaults. An internal error's TYPE
+is the exception class's `__name__` and MESSAGE its `str()`; the entry's
+text is the `internal error: TYPE: MESSAGE` line, then the traceback
+(`traceback.format_exception`) through §2's process-text rule; its
+notification is `internal error; see Activity`.
+Where the header shows the failed read, it reads `jobs: internal error; see
+Activity` for the listing and `VPN: unknown` for the VPN state.
 
 *Activity.* A scrolling record of the session, each entry stamped with the
 local time as `HH:MM:SS`: each action's
@@ -3923,12 +4030,31 @@ name and outcome, each error, and captured process text (§2), newest last.
 It keeps the last 5,000 entries and is not saved: the worker's job history
 and logs are the durable record.
 
+Each entry reads `HH:MM:SS SOURCE: TEXT`. SOURCE is the action's name (§2)
+for an action's outcome or error, the backend method's name for process text
+and a read's error, and `output` for Python-level writes (§2). An operation
+error's TEXT is `error: ` and §8's error text; a multi-line TEXT continues on
+the following lines, each indented by nine spaces. Dropping the oldest entry
+drops all its lines. The view keeps the newest entry in sight unless the
+user has scrolled up; `end` returns to following.
+
 *Quitting.* `q` or `ctrl+q` quits at once, with no confirmation, unless an
 action is running: then it asks `NAME is still running and cannot be
 stopped safely; quit when it finishes?`. On yes, actions not yet started are
 dropped, and the app exits when the running one ends. Quitting stops every
 stream (§2) and waits for their endings, each bounded by DEC-55's stop wait.
 It never cancels a job, stops the worker, or touches the container.
+
+In order: once quitting starts (at once, or on yes), no timed read, read, or
+action starts again, and a further `q` or `ctrl+q` does nothing. On yes, the
+footer line reads `quitting when NAME finishes` until the action ends, and
+its outcome is recorded and notified as usual, with no re-reads. On no,
+nothing changes; if the action ended while the question was open, yes quits
+at once. Then every open stream is stopped, the footer line reads
+`quitting`, and the app awaits each stream read's worker without blocking
+the event loop, then exits with status 0.
+Reads still running that are not streams are not waited for on screen:
+their outcomes are dropped, and the process exits once their threads end.
 
 The ExifTool helper (`exifmod`) stays a shell utility reached with `just
 shell`; the TUI does not expose it.
