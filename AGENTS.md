@@ -141,7 +141,7 @@ said it, and cite the entry at the code site.
   workflow installs tools and runs `just check` and nothing else, so a new
   check goes into the recipe, never into the workflow alone. The one
   exception: a pull request that changes only `docs/*.md`, README.md,
-  AGENTS.md, or CLAUDE.md skips the gate in CI, and `check` still passes.
+  AGENTS.md, CLAUDE.md, or LICENSE skips the gate in CI, and `check` still passes.
   Nothing in the gate reads those files. Planning pull requests are
   usually docs-only, so they merge in about a minute.
 - **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, job

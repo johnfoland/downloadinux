@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 2
 
       # A pull request that changes only the planning docs, README.md,
-      # AGENTS.md, or CLAUDE.md skips the gate, and `check` still succeeds,
+      # AGENTS.md, CLAUDE.md, or LICENSE skips the gate, and `check` still succeeds,
       # so the required status reports. Nothing in the gate reads them.
       - name: Detect a docs-only change
         id: scope
@@ -29,7 +29,7 @@ jobs:
           changed=$(git diff --name-only HEAD^1 HEAD)
           printf 'Changed files:\n%s\n' "$changed"
           if [ -n "$changed" ] && ! printf '%s\n' "$changed" \
-              | grep -qvE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md)$'; then
+              | grep -qvE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|LICENSE)$'; then
             echo "Docs-only change: skipping the gate."
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
