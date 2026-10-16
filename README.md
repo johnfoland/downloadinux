@@ -1053,7 +1053,7 @@ just nuke            Delete volumes too — forces a fresh NordVPN login
 
 ```
 .
-├── .github/workflows/ci.yml      # CI: runs `just check` on pull requests and master
+├── .github/workflows/ci.yml      # CI: runs `just check` on pull requests (docs-only ones skip it)
 ├── justfile
 ├── Dockerfile
 ├── compose/base.yaml, vpn.yaml   # four mounts; optional VPN overlay

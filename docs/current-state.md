@@ -232,7 +232,7 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 | Linux ownership: output subdirectories created as root | Resolved: the entrypoint creates them as `dl` and never chowns a mount, warning instead when one is unwritable; the gate's smoke test checks the subdirectories and a write to each mount on CI's Linux runner | `scripts/entrypoint.sh`, `scripts/smoke.sh`; P0001-C02 |
 | The mount health check tests only that a directory exists | Resolved: `doctor` checks each mount with `mountpoint` and a create-and-remove probe as `dl`, skipping the probe when the path is not a mount (DEC-12, DEC-22) | target design *Health checks*; P0001-C05, P0001-C06 |
 | `doctor`'s "logged in" wording overstates a cookie check | Resolved: cookie checks report a session cookie as *present*, and neither README claims a login is valid; Stage 2's inspection adds expiry, still without claiming validity | target design *Health checks*; README.md *Step 3*; P0001-C05, P0001-C06 |
-| No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` and every push to it, with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
+| No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` (a docs-only one skips it), with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
 
 
 ## Since this review: Stage 2 preparation and cutover
