@@ -314,6 +314,8 @@ class Read:
     def drop(self) -> None:
         """Drop the outcome; stop the stream, now or as soon as it opens."""
         with self.lock:
+            if self.dropped:
+                return
             self.dropped = True
             stream = self.stream
         if stream is not None:
@@ -405,6 +407,8 @@ class DownloadinuxApp(App):
         self._waiting: deque[Action] = deque()
         self._action: Action | None = None
         self._jobs_shown = True
+        self._asking = False  # The quit question is open (TUI §8 *Quitting*).
+        self._quitting = False
 
     def compose(self) -> ComposeResult:
         # Kept, not queried: an outcome posted during shutdown still finds them.
@@ -481,8 +485,11 @@ class DownloadinuxApp(App):
         A newer read under the same key supersedes this one: its outcome is
         dropped and, for a stream, the stream is stopped. With `item`, the
         method returns a stream whose items reach `item` one by one; else
-        the outcome reaches `done`, on the UI thread, unless dropped.
+        the outcome reaches `done`, on the UI thread, unless dropped. Once
+        quitting has started, no read starts.
         """
+        if self._quitting:
+            return
         previous = self._reads.pop(key, None)
         if previous is not None:
             previous.drop()
@@ -523,7 +530,7 @@ class DownloadinuxApp(App):
     def on_read_done(self, message: ReadDone) -> None:
         read, outcome = message.read, message.outcome
         self._streams.discard(read)
-        if read.dropped or self._reads.get(read.key) is not read:
+        if self._quitting or read.dropped or self._reads.get(read.key) is not read:
             return  # Superseded: nothing changes, nothing is scheduled.
         del self._reads[read.key]
         if read.timed:
@@ -554,7 +561,7 @@ class DownloadinuxApp(App):
     def _schedule(self, key: str) -> None:
         """Set the next read to the newest read's end plus the interval now."""
         self._cancel_timer(key)
-        if key in self._reads or key not in self._ended:
+        if self._quitting or key in self._reads or key not in self._ended:
             return  # The read in flight schedules the next when it ends.
         delay = self._ended[key] + self._interval(key) - time.monotonic()
         if delay <= 0:
@@ -596,13 +603,16 @@ class DownloadinuxApp(App):
     def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
         """Queue `backend.<method>(*args)` as an action, named and re-read
         by §2's table. `report(result)` gives a success's Activity text
-        and notification text."""
+        and notification text. Once quitting has started, nothing is queued."""
+        if self._quitting:
+            return
         name, rereads = ACTIONS[method]
         self._waiting.append(Action(name or args[0], method, args, report, rereads))
         self._next_action()
 
     def _next_action(self) -> None:
-        if self._action is None and self._waiting:
+        # The queue waits while the quit question is open (DEC-63).
+        if self._action is None and self._waiting and not self._asking:
             self._action = self._waiting.popleft()
             self.run_worker(partial(self._run_action, self._action), name=self._action.name,
                             group="action", thread=True, exit_on_error=False)
@@ -629,6 +639,9 @@ class DownloadinuxApp(App):
             text, notice = action.report(outcome.result)
             self.activity.add(action.name, text)
             self.notify(notice, markup=False)
+        if self._quitting:
+            self._finish_quitting()  # No re-reads (TUI §8 *Quitting*).
+            return
         self._next_action()
         for kind in action.rereads:
             self.reread(kind)
@@ -655,8 +668,55 @@ class DownloadinuxApp(App):
         for kind in VIEW_REFRESH.get(self.query_one(TabbedContent).active, ()):
             self.reread(kind)
 
+    # Quitting (TUI §8 *Quitting*).
+
     async def action_quit(self) -> None:
-        self.exit(return_code=0)
+        """Quit at once, or, while an action runs, ask first."""
+        if self._quitting or self._asking:
+            return
+        if self._action is None:
+            self._finish_quitting()
+            return
+        self._asking = True
+        self.push_screen(Confirm(f"{self._action.name} is still running and cannot be "
+                                 "stopped safely; quit when it finishes?"), self._answer)
 
     async def action_quit_anywhere(self) -> None:
         await self.action_quit()
+
+    def _answer(self, quit: bool) -> None:
+        self._asking = False
+        if not quit:
+            self._next_action()
+        elif self._action is None:
+            self._finish_quitting()
+        else:
+            self._start_quitting()
+            self.show_running(f"quitting when {self._action.name} finishes")
+
+    def _start_quitting(self) -> None:
+        """From here on no read, timed read, or action starts."""
+        self._quitting = True
+        self._waiting.clear()
+        for key in list(self._read_timers):
+            self._cancel_timer(key)
+
+    def _finish_quitting(self) -> None:
+        """Stop every stream, then exit 0 once each stream read's worker ends.
+
+        The wait runs in an async worker, so neither the event loop nor the
+        app's messages stop. Other reads are not waited for; their outcomes
+        are dropped.
+        """
+        self._start_quitting()
+        streams = list(self._streams)
+        for read in [*self._reads.values(), *streams]:
+            read.drop()
+        self.show_running("quitting")
+
+        async def wait_and_exit() -> None:
+            for read in streams:
+                await read.worker.wait()
+            self.exit(return_code=0)
+
+        self.run_worker(wait_and_exit, name="quit", group="quit")

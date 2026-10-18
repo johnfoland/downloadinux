@@ -949,3 +949,187 @@ def test_an_exception_in_a_ui_handler_ends_the_app_with_1():
     with pytest.raises(RuntimeError, match="handler"):
         drive(app, scenario)
     assert app.return_code == 1
+
+
+# Quitting (TUI §8 *Quitting*).
+
+QUESTION = "jobs cancel is still running and cannot be stopped safely; quit when it finishes?"
+MUTATING = {"cancel", "retry", "lifecycle", "import_cookies", "add_browser", "refresh",
+            "set_default", "set_setting", "unset_setting", "set_token", "vpn_connect",
+            "vpn_disconnect"}
+
+
+def footer(app) -> str:
+    return app.running_line.render().plain
+
+
+def assert_threads_ended(app):
+    """Run after `drive` returns: no backend call's thread is left running."""
+    assert app.backend.calls
+    assert not [call for call in app.backend.calls if call.thread.is_alive()]
+
+
+def touched_after(app, mark: int) -> set[str]:
+    return {call.name for call in app.backend.calls[mark:]} & MUTATING
+
+
+def test_quitting_with_nothing_running_exits_at_once():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("q")
+        await until(pilot, lambda: app.return_code == 0)
+        assert not isinstance(app.screen, Confirm)
+        assert touched_after(app, 0) == set()
+
+    drive(app, scenario)
+    assert_threads_ended(app)
+
+
+def test_quitting_stops_each_stream_and_waits_for_its_worker():
+    app = make_slow_app()
+    stream = FakeStream(stop_ends=False)
+    app.backend.script("follow_job", Step(result=stream))
+
+    async def scenario(pilot):
+        await settle(pilot, app, "jobs", "vpn_state")
+        app.read("log", "follow_job", 4, item=lambda item: None, done=lambda outcome: None)
+        await until(pilot, lambda: app.backend.called("follow_job"))
+        await pilot.press("q")
+        await until(pilot, lambda: stream.stops == 1)
+        await until(pilot, lambda: footer(app) == "quitting")
+        for _ in range(5):
+            await pilot.pause(0.02)
+        assert app.return_code is None  # Still waiting for the stream's worker.
+        stream.end()
+        await until(pilot, lambda: app.return_code == 0)
+
+    drive(app, scenario)
+    assert stream.ended.is_set()
+    assert_threads_ended(app)
+    assert touched_after(app, 0) == set()
+
+
+def test_quitting_does_not_wait_for_other_reads():
+    app = make_slow_app()
+    held = app.backend.hold("doctor", result="report")
+    outcomes = []
+
+    async def scenario(pilot):
+        await settle(pilot, app, "jobs", "vpn_state")
+        app.read("status", "doctor", done=outcomes.append)
+        await until(pilot, held.started.is_set)
+        await pilot.press("ctrl+q")
+        await until(pilot, lambda: app.return_code == 0)
+        assert not held.finished.is_set()
+
+    drive(app, scenario)
+    assert held.finished.is_set() and outcomes == []
+    assert_threads_ended(app)
+
+
+def queue_three(app):
+    held = app.backend.hold("cancel", result="1")
+    app.act("cancel", [1], report=report)
+    app.act("retry", [2], report=report)
+    app.act("export_to", "video", "/q", report=report)
+    return held
+
+
+def test_answering_no_leaves_everything_running():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        held = queue_three(app)
+        await until(pilot, held.started.is_set)
+        await pilot.press("q")
+        assert isinstance(app.screen, Confirm)
+        assert app.screen.query_one("#question").render().plain == QUESTION
+        assert app.focused.id == "no"
+        await pilot.press("n")
+        await pilot.pause()
+        assert footer(app) == "jobs cancel running; 2 waiting"
+        held.release()
+        await until(pilot, lambda: entries(app, "jobs export"))
+        assert [call.name for call in app.backend.calls if call.name in ACTION_NAMES] == [
+            "cancel", "retry", "export_to"]
+        assert app.return_code is None
+
+    drive(app, scenario)
+
+
+def test_answering_yes_drops_the_waiting_and_quits_when_the_action_ends():
+    app = make_slow_app()
+    notes = watch_notes(app)
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        held = queue_three(app)
+        await until(pilot, held.started.is_set)
+        await pilot.press("q")
+        mark = len(app.backend.calls)
+        await pilot.press("y")
+        await until(pilot, lambda: footer(app) == "quitting when jobs cancel finishes")
+        assert app.return_code is None
+        held.release()
+        await until(pilot, lambda: app.return_code == 0)
+        assert entries(app, "jobs cancel") == ["12:34:56 jobs cancel: done 1"]
+        assert notes == [("note 1", {"markup": False})]
+        assert app.backend.calls[mark:] == []  # No re-read, no dropped action.
+
+    drive(app, scenario)
+    assert app.backend.called("retry") == app.backend.called("export_to") == []
+    assert_threads_ended(app)
+
+
+def test_yes_quits_at_once_when_the_action_ended_during_the_question():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        held = app.backend.hold("cancel", result="1")
+        app.act("cancel", [1], report=report)
+        app.act("retry", [2], report=report)
+        await until(pilot, held.started.is_set)
+        await pilot.press("q")
+        held.release()
+        await until(pilot, lambda: entries(app, "jobs cancel"))
+        await pilot.pause(0.05)
+        assert app.backend.called("retry") == []  # The queue waits for the answer.
+        assert isinstance(app.screen, Confirm)
+        await pilot.press("y")
+        await until(pilot, lambda: app.return_code == 0)
+
+    drive(app, scenario)
+    assert app.backend.called("retry") == []
+    assert_threads_ended(app)
+
+
+def test_nothing_starts_once_quitting_has_started():
+    app = make_app(jobs_shown=0.05, jobs_hidden=0.05, vpn_every=0.05)
+
+    async def scenario(pilot):
+        await until(pilot, lambda: len(app.backend.called("vpn_state")) >= 2)
+        held = app.backend.hold("cancel", result="1")
+        app.act("cancel", [1], report=report)
+        await until(pilot, held.started.is_set)
+        await pilot.press("q", "y")
+        await until(pilot, lambda: footer(app).startswith("quitting when"))
+        await settle(pilot, app, "jobs", "vpn_state")
+        mark = len(app.backend.calls)
+        for _ in range(6):
+            await pilot.pause(0.03)  # Several timer intervals.
+        await pilot.press("q", "ctrl+q", "ctrl+r")
+        app.read("pane", "show", 1, done=lambda outcome: None)
+        app.act("retry", [1], report=report)
+        await pilot.pause(0.05)
+        assert app.backend.calls[mark:] == []
+        assert not isinstance(app.screen, Confirm)
+        held.release()
+        await until(pilot, lambda: app.return_code == 0)
+        assert app.backend.calls[mark:] == []
+
+    drive(app, scenario)
+    assert_threads_ended(app)

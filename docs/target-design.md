@@ -2,7 +2,8 @@
 
 Status: Stages 1–3 are implemented; Stage 4's shared host operations are
 implemented, as are the TUI's Textual-free backend, process runners, and
-stream handle (PR #110). The app, views, and launch remain planned.
+stream handle (PR #110) and its app frame (PR #112). The views (Jobs,
+Submit, Cookies, Status) and the launch remain planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -43,7 +44,8 @@ renderers and the `config set`/`config unset` writes (DEC-58, DEC-61).
 PR #105 implements `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` (DEC-60, DEC-62), completing the shared host
 operations. PR #110 implements the Textual-free backend, process runners,
-and stream handle; the app, views, and launch remain planned.
+and stream handle, and PR #112 the app frame; the views (Jobs, Submit,
+Cookies, Status) and the launch remain planned.
 
 ## Agreed decisions
 
@@ -3336,10 +3338,10 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
-handle are implemented (PR #110). The app, views, and launch remain
-planned. Its settings writes, `config set` and
-`config unset`, are under *Configuration and paths* (DEC-61), and are
-implemented with the shared renderers (PR #103). `host_jobs.export_to`,
+handle are implemented (PR #110), and so is the app frame (PR #112). The
+views (Jobs, Submit, Cookies, Status) and the launch remain planned. Its
+settings writes, `config set` and `config unset`, are under *Configuration
+and paths* (DEC-61), and are implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
 completing the shared host operations.
 
@@ -3364,8 +3366,9 @@ retry lines, the cookie source and inspection text, `config show`'s and
 `doctor`'s text, and `config set-token`'s login messages) are implemented
 in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
 output stays byte for byte what it is. The Textual-free backend, process
-runners, and stream handle are implemented (PR #110); the app, views,
-launch, and Textual dependency remain planned.
+runners, and stream handle are implemented (PR #110), and the app frame
+in `downloadinux.tui.app`, with the Textual dependency and `run`, is
+implemented (PR #112); the views and the launch remain planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3624,8 +3627,9 @@ by the rule above, except after a stop, when that text is discarded with the
 rest; each temporary file is closed either way. An error the operation
 raises before any stop reaches the consumer after that recording.
 
-The backend, runners, and stream handle are implemented (PR #110); the
-app's thread workers, reads, and action queue remain planned.
+The backend, runners, and stream handle are implemented (PR #110), and the
+app's thread workers, reads, timed reads, and action queue are implemented
+(PR #112).
 
 ### 3. Layout, navigation, and keys (DEC-60)
 
@@ -3722,6 +3726,10 @@ terminal is resized; smaller sizes clip but never fail. Textual's default
 theme applies; there are no theme or key settings in Stage 4. Color never
 carries meaning alone: each job condition (§4) has its own text as well as
 its own style.
+
+The frame, header, footer line, global keys, help, and confirmation dialog
+are implemented (PR #112); the views' own keys, refresh, and dialogs are
+not.
 
 ### 4. Jobs view
 
@@ -4048,13 +4056,16 @@ It never cancels a job, stops the worker, or touches the container.
 In order: once quitting starts (at once, or on yes), no timed read, read, or
 action starts again, and a further `q` or `ctrl+q` does nothing. On yes, the
 footer line reads `quitting when NAME finishes` until the action ends, and
-its outcome is recorded and notified as usual, with no re-reads. On no,
-nothing changes; if the action ended while the question was open, yes quits
-at once. Then every open stream is stopped, the footer line reads
+its outcome is recorded and notified as usual, with no re-reads. While the
+question is open, the next queued action waits for the answer (DEC-63). On
+no, nothing changes and the queue carries on; if the action ended while the
+question was open, yes quits at once. Then every open stream is stopped, the footer line reads
 `quitting`, and the app awaits each stream read's worker without blocking
 the event loop, then exits with status 0.
 Reads still running that are not streams are not waited for on screen:
 their outcomes are dropped, and the process exits once their threads end.
+
+The errors, Activity, and quitting are implemented (PR #112).
 
 The ExifTool helper (`exifmod`) stays a shell utility reached with `just
 shell`; the TUI does not expose it.

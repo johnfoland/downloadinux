@@ -1605,3 +1605,20 @@ own probe holds every further job.
 *Where:* [target design](target-design.md), *Python + Textual TUI* §2, §3,
 and §7, and the *Host application* `servers` note. Added on 2026-10-15 for
 issue #98; amends DEC-60's VPN exclusion.
+
+## DEC-63: The TUI's action queue waits while the quit question is open (2026-10)
+
+While *NAME is still running …; quit when it finishes?* is open, an action
+that ends is recorded, notified, and re-read as usual, but the next queued
+action does not start until the question is answered. On no, the queue
+carries on; on yes, the waiting actions are dropped, and if nothing is
+running any more the app quits at once.
+
+Letting the queue carry on under the question was rejected: an action that
+ended during the question would start the next one, so yes could no longer
+quit at once, as *Python + Textual TUI* §8 says it does, and would start
+work the user was about to drop. Asking again for the next action was
+rejected because the question names the action the user saw running.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §8
+*Quitting*. Added on 2026-10-18 in #112; clarifies DEC-60's quitting order.

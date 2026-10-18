@@ -87,10 +87,15 @@ _END = object()
 
 
 class FakeStream:
-    """A stream whose `__next__` blocks until fed, ended, or stopped."""
+    """A stream whose `__next__` blocks until fed, ended, or stopped.
 
-    def __init__(self):
+    With `stop_ends=False`, `stop()` is only counted, and the stream ends
+    when the test calls `end()`, as a slow stop wait would.
+    """
+
+    def __init__(self, stop_ends: bool = True):
         self._items = queue.Queue()
+        self.stop_ends = stop_ends
         self.stops = 0
         self.ended = threading.Event()
 
@@ -113,7 +118,8 @@ class FakeStream:
 
     def stop(self) -> None:
         self.stops += 1
-        self.end()
+        if self.stop_ends:
+            self.end()
 
 
 class FakeBackend:

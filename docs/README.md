@@ -52,8 +52,8 @@ writes it shares with the CLI. Those writes and the shared renderers are
 implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` are implemented (PR #105), completing the
 shared host operations. The TUI's Textual-free backend, process runners,
-and stream handle are implemented (PR #110); its app, views, and launch
-remain planned.
+and stream handle are implemented (PR #110), as is its app frame (PR #112);
+the views (Jobs, Submit, Cookies, Status) and the launch remain planned.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.
