@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import sys
 import threading
+import time
 
 import pytest
 from textual.widgets import HelpPanel, Input, TabbedContent
@@ -11,9 +12,12 @@ from textual.widgets import HelpPanel, Input, TabbedContent
 from downloadinux import errors, settings
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.tui import app as tui_app
-from downloadinux.tui.app import ActivityLog, Confirm, DownloadinuxApp, header_line
+from downloadinux.host_vpn import VpnState
+from downloadinux.tui.app import (ActivityLog, Confirm, DownloadinuxApp, header_line,
+                                  job_summary, vpn_text)
 from downloadinux.tui.backend import Backend
-from tui_support import METHODS, FakeBackend, broken_pipe, drive, os_error, until
+from tui_support import (METHODS, FakeBackend, FakeStream, Step, broken_pipe, drive,
+                         os_error, until)
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "downloadinux"
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
@@ -23,8 +27,17 @@ def make_app(path=SETTINGS, **intervals) -> DownloadinuxApp:
     return DownloadinuxApp(FakeBackend, path, **intervals)
 
 
-def fixed_clock(app, stamp="12:34:56"):
-    app.activity.clock = lambda: stamp
+def hold_reads(app) -> DownloadinuxApp:
+    """Keep the header's placeholders: the first listing and VPN reads wait."""
+    app.backend.hold("jobs")
+    app.backend.hold("vpn_state")
+    return app
+
+
+@pytest.fixture(autouse=True)
+def fixed_clock(monkeypatch):
+    """Every Activity entry is stamped 12:34:56."""
+    monkeypatch.setattr(ActivityLog, "clock", staticmethod(lambda: "12:34:56"))
 
 
 def texts(app) -> list[str]:
@@ -101,7 +114,7 @@ def test_only_the_app_module_imports_textual_or_rich():
 # Frame and header (TUI §3 *Frame*).
 
 def test_frame_tabs_keys_and_placeholder_header():
-    app = make_app()
+    app = hold_reads(make_app())
 
     async def scenario(pilot):
         tabs = app.query_one(TabbedContent)
@@ -132,7 +145,7 @@ def test_header_shortens_a_long_path_from_its_start():
 
 def test_header_renders_the_path_escaped_and_literal_at_every_size():
     path = Path("/tmp/[b]bold[/b]/\x1b[31m/" + "y" * 100 + "/config.toml")
-    app = make_app(path)
+    app = hold_reads(make_app(path))
 
     async def scenario(pilot):
         line = app.header.render()
@@ -150,7 +163,7 @@ def test_header_renders_the_path_escaped_and_literal_at_every_size():
 
     drive(app, scenario)
 
-    short = make_app(Path("/tmp/[b]x[/b]\x07[/]"))
+    short = hold_reads(make_app(Path("/tmp/[b]x[/b]\x07[/]")))
 
     async def literal(pilot):
         assert short.header.text.startswith("/tmp/[b]x[/b]\\x07[/] | ")
@@ -273,11 +286,15 @@ def test_confirm_buttons(button, expected):
 
 # Activity (TUI §8 *Activity*).
 
+def test_activity_stamps_the_local_time(monkeypatch):
+    monkeypatch.undo()
+    assert re.fullmatch(r"\d\d:\d\d:\d\d", ActivityLog.clock())
+
+
 def test_activity_entry_format_and_continuation():
     app = make_app()
 
     async def scenario(pilot):
-        fixed_clock(app)
         app.activity.add("doctor", "first\nsecond\n\tthird")
         app.activity.add("output", "[b]x[/b] [/]")
         assert list(app.activity.lines) == [
@@ -298,7 +315,6 @@ def test_activity_keeps_the_last_5000_entries_whole():
     app = make_app()
 
     async def scenario(pilot):
-        fixed_clock(app)
         app.activity.add("first", "one\ntwo\nthree")
         for number in range(1, 5000):
             app.activity.add("n", str(number))
@@ -342,7 +358,6 @@ def test_record_adds_process_text_from_any_thread():
     app = make_app()
 
     async def scenario(pilot):
-        fixed_clock(app)
         worker = threading.Thread(target=app.record, args=("lifecycle", "pulled [b]x[/b]"))
         worker.start()
         worker.join()
@@ -356,7 +371,6 @@ def test_prints_are_recorded_as_output():
     app = make_app()
 
     async def scenario(pilot):
-        fixed_clock(app)
         print("x[b]y")
         sys.stderr.write("e\x1b\n")
         sys.stdout.write("\n")
@@ -372,3 +386,566 @@ def test_prints_are_recorded_as_output():
         ]
 
     drive(app, scenario)
+
+
+# Reads, timers, the header, actions, and errors (TUI §2, §3, §7, §8).
+
+SLOW = dict(jobs_shown=30.0, jobs_hidden=30.0, vpn_every=30.0)  # No timer fires.
+
+
+def make_slow_app(path=Path("/c.toml"), **intervals) -> DownloadinuxApp:
+    return make_app(path, **{**SLOW, **intervals})
+
+
+def watch_notes(app) -> list[tuple[str, dict]]:
+    notes = []
+    app.notify = lambda message, **options: notes.append((message, options))
+    return notes
+
+
+def report(result):
+    return f"done {result}", f"note {result}"
+
+
+async def settle(pilot, app, *names):
+    """Wait until every call of `names` so far has ended and been handled."""
+    await until(pilot, lambda: all(call.end is not None for call in app.backend.calls
+                                   if not names or call.name in names))
+    await pilot.pause()
+    await pilot.pause()
+
+
+def job(id, state, cancel=False, wait=None):
+    return {"id": id, "state": state, "cancel_requested": cancel, "wait": wait}
+
+
+def test_keys_and_redraws_continue_while_a_read_is_held():
+    app = make_slow_app()
+    held = app.backend.hold("jobs", result=[job(1, "running")])
+
+    async def scenario(pilot):
+        await until(pilot, held.started.is_set)
+        tabs = app.query_one(TabbedContent)
+        await pilot.press("2")
+        assert tabs.active == "submit"
+        await pilot.press("1", "question_mark")
+        assert tabs.active == "jobs" and app.screen.query(HelpPanel)
+        await pilot.resize_terminal(60, 20)
+        assert app.size == (60, 20) and app.header.size.width < 60  # Beside the help.
+        [call] = app.backend.called("jobs")
+        assert call.thread is not threading.main_thread()
+        assert "jobs: reading…" in app.header.text
+        held.release()
+        await until(pilot, lambda: "1 running" in app.header.text)
+
+    drive(app, scenario)
+
+
+def test_a_read_completes_while_an_action_is_held():
+    app = make_slow_app()
+    connected = VpnState(True, True, True, "France", "fr1")
+    app.backend.script("vpn_state", Step(), Step(result=connected))
+    held = app.backend.hold("cancel")
+
+    async def scenario(pilot):
+        await settle(pilot, app, "vpn_state")
+        app.act("cancel", [3], report=report)
+        await until(pilot, held.started.is_set)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: "VPN: connected (France, fr1)" in app.header.text)
+        assert app.running_line.render().plain == "jobs cancel running"
+        assert app.backend.called("cancel")[0].thread is not threading.main_thread()
+
+    drive(app, scenario)
+
+
+def test_a_newer_read_supersedes_the_older():
+    app = make_slow_app()
+    first = app.backend.hold("show", result="first", before=("one",))
+    app.backend.script("show", Step(result="second"))
+    outcomes = []
+
+    async def scenario(pilot):
+        app.read("pane", "show", 1, done=outcomes.append)
+        await until(pilot, first.started.is_set)
+        app.read("pane", "show", 2, done=outcomes.append)
+        await until(pilot, lambda: outcomes)
+        first.release()
+        await settle(pilot, app, "show")
+        assert [outcome.result for outcome in outcomes] == ["second"]
+        assert [call.args for call in app.backend.called("show")] == [(1,), (2,)]
+
+    drive(app, scenario)
+
+
+def test_a_superseded_stream_is_stopped_and_its_items_dropped():
+    app = make_slow_app()
+    old, new = FakeStream(), FakeStream()
+    app.backend.script("log", Step(result=old), Step(result=new))
+    items, outcomes = [], []
+
+    async def scenario(pilot):
+        app.read("log", "log", 4, None, item=items.append, done=outcomes.append)
+        await until(pilot, lambda: app.backend.called("log"))
+        old.feed(b"a")
+        await until(pilot, lambda: items == [b"a"])
+        app.read("log", "log", 4, 2, item=items.append, done=outcomes.append)
+        assert old.stops == 1
+        await until(pilot, lambda: old.ended.is_set())
+        new.feed(b"b")
+        await until(pilot, lambda: items == [b"a", b"b"])
+        new.end()
+        await until(pilot, lambda: outcomes)
+        assert len(outcomes) == 1 and not outcomes[0].failed
+        assert new.stops == 0
+
+    drive(app, scenario)
+
+
+def test_a_stream_superseded_before_it_opens_is_stopped_when_it_opens():
+    app = make_slow_app()
+    old = FakeStream()
+    held = app.backend.hold("follow_job", result=old)
+    items = []
+
+    async def scenario(pilot):
+        app.read("log", "follow_job", 4, item=items.append, done=lambda outcome: None)
+        await until(pilot, held.started.is_set)
+        app.read("log", "follow_job", 5, item=items.append, done=lambda outcome: None)
+        held.release()
+        await until(pilot, lambda: old.stops == 1 and old.ended.is_set())
+        assert items == []
+
+    drive(app, scenario)
+
+
+def test_switching_tabs_does_not_start_a_listing_while_one_is_in_flight():
+    app = make_app(jobs_shown=0.05, jobs_hidden=0.4, vpn_every=30.0)
+    app.backend.script("jobs", Step(), Step(hold=True))
+
+    async def scenario(pilot):
+        held = app.backend.all_steps[1]
+        await until(pilot, held.started.is_set)
+        for _ in range(3):
+            await pilot.pause(0.03)
+            await pilot.press("2")
+            await pilot.pause(0.03)
+            await pilot.press("1")
+        assert len(app.backend.called("jobs")) == 2
+        held.release()
+        await until(pilot, lambda: len(app.backend.called("jobs")) == 3)
+
+    drive(app, scenario)
+
+
+def test_the_listing_waits_its_interval_from_the_previous_end():
+    app = make_app(jobs_shown=0.05, jobs_hidden=0.4, vpn_every=30.0)
+    app.backend.script("jobs", Step(), Step(), Step(hold=True), Step())
+
+    async def scenario(pilot):
+        held = app.backend.all_steps[2]
+        await until(pilot, held.started.is_set)
+        # The held third read: nothing else starts while it is in flight.
+        for _ in range(10):
+            await pilot.pause(0.02)
+        assert len(app.backend.called("jobs")) == 3
+        held.release()
+        await until(pilot, lambda: len(app.backend.called("jobs")) >= 5)
+        calls = app.backend.called("jobs")
+        for previous, call in zip(calls, calls[1:]):
+            assert call.start - previous.end >= 0.05
+
+    drive(app, scenario)
+
+
+def test_hiding_jobs_lengthens_the_interval_and_showing_it_reads_at_once():
+    app = make_app(jobs_shown=0.05, jobs_hidden=0.4, vpn_every=30.0)
+
+    async def scenario(pilot):
+        await until(pilot, lambda: len(app.backend.called("jobs")) >= 2)
+        await pilot.press("2")
+        await settle(pilot, app, "jobs")
+        hidden_from = app.backend.called("jobs")[-1]
+        count = len(app.backend.called("jobs"))
+        await until(pilot, lambda: len(app.backend.called("jobs")) > count, timeout=2)
+        later = app.backend.called("jobs")[count]
+        assert later.start - hidden_from.end >= 0.4
+        await settle(pilot, app, "jobs")
+        count = len(app.backend.called("jobs"))
+        await pilot.pause(0.06)  # Past the shown interval, well before the hidden one.
+        pressed = time.monotonic()
+        await pilot.press("1")
+        await until(pilot, lambda: len(app.backend.called("jobs")) > count)
+        assert app.backend.called("jobs")[count].start - pressed < 0.2
+
+    drive(app, scenario)
+
+
+def test_ctrl_r_reads_the_listing_only_on_jobs_and_the_vpn_everywhere():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: len(app.backend.called("jobs")) == 2
+                    and len(app.backend.called("vpn_state")) == 2)
+        await settle(pilot, app)
+        await pilot.press("3", "ctrl+r")
+        await until(pilot, lambda: len(app.backend.called("vpn_state")) == 3)
+        await pilot.pause(0.05)
+        assert len(app.backend.called("jobs")) == 2
+
+    drive(app, scenario)
+
+
+def test_the_vpn_is_read_on_its_interval_on_every_tab():
+    app = make_app(jobs_shown=30.0, jobs_hidden=30.0, vpn_every=0.05)
+
+    async def scenario(pilot):
+        await pilot.press("4")
+        await until(pilot, lambda: len(app.backend.called("vpn_state")) >= 3)
+        calls = app.backend.called("vpn_state")
+        for previous, call in zip(calls, calls[1:]):
+            assert call.start - previous.end >= 0.05
+        assert len(app.backend.called("jobs")) == 1
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("state,text", [
+    (VpnState(False, False, False, None, None), "VPN off"),
+    (VpnState(True, False, False, None, None), "VPN: container not running"),
+    (VpnState(True, True, False, None, None), "VPN: disconnected"),
+    (VpnState(True, True, True, "France", "fr1.nordvpn.com"), "VPN: connected (France, fr1.nordvpn.com)"),
+    (VpnState(True, True, True, "France", None), "VPN: connected (France)"),
+    (VpnState(True, True, True, None, "fr1"), "VPN: connected (fr1)"),
+    (VpnState(True, True, True, None, None), "VPN: connected"),
+    (VpnState(True, True, True, "F[b]\x1b", None), "VPN: connected (F[b]\\x1b)"),
+])
+def test_vpn_header_texts(state, text):
+    assert vpn_text(state) == text
+
+
+def test_the_header_shows_each_vpn_outcome():
+    app = make_slow_app()
+    app.backend.script("vpn_state",
+                       Step(result=VpnState(True, True, True, "France", None)),
+                       Step(error=DownloadinuxError("docker: not found")),
+                       Step(result=VpnState(True, False, False, None, None)))
+
+    async def scenario(pilot):
+        await until(pilot, lambda: app.header.text.endswith("| VPN: connected (France)"))
+        await settle(pilot, app)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: app.header.text.endswith("| VPN: unknown"))
+        await settle(pilot, app)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: app.header.text.endswith("| VPN: container not running"))
+
+    drive(app, scenario)
+
+
+def test_job_summary_counts_listed_states():
+    jobs = [job(1, "running", cancel=True), job(2, "running"),
+            job(3, "queued", wait={"reason": "vpn"}),
+            job(4, "queued", wait={"reason": "throttle", "until": "x"}), job(5, "queued"),
+            job(6, "failed"), job(7, "interrupted"), job(8, "succeeded"), job(9, "cancelled")]
+    assert job_summary(jobs) == "2 running · 3 queued · 2 failed or interrupted"
+    assert job_summary([]) == "0 running · 0 queued · 0 failed or interrupted"
+
+
+@pytest.mark.parametrize("step,summary", [
+    (Step(result=[job(1, "queued"), job(2, "failed")]), "0 running · 1 queued · 1 failed or interrupted"),
+    (Step(result=[]), "0 running · 0 queued · 0 failed or interrupted"),
+    (Step(error=DownloadinuxError("the [b]container[/b]\x1b is not running")),
+     "jobs: the [b]container[/b]\\x1b is not running"),
+    (Step(error=RuntimeError("boom")), "jobs: internal error; see Activity"),
+])
+def test_the_header_summary(step, summary):
+    app = make_slow_app()
+    app.backend.script("jobs", step)
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        assert app.header.text == f"/c.toml | {summary} | VPN off"
+        assert app.header.render().spans == []
+
+    drive(app, scenario)
+
+
+def entries(app, source):
+    return [text for text in texts(app) if text[len("HH:MM:SS "):].startswith(f"{source}: ")]
+
+
+async def refresh_listing(pilot, app):
+    count = len(app.backend.called("jobs"))
+    await pilot.press("ctrl+r")
+    await until(pilot, lambda: len(app.backend.called("jobs")) > count)
+    await settle(pilot, app)
+
+
+def test_a_repeated_timed_error_is_reported_once():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    failure = DownloadinuxError("the container is not running; start it with dlx up")
+    app.backend.script("jobs", Step(error=failure), Step(error=failure))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await refresh_listing(pilot, app)
+        assert entries(app, "jobs") == [f"12:34:56 jobs: error: {failure}"]
+        assert notes == [(str(failure), dict(severity="error", timeout=10.0, markup=False))]
+
+    drive(app, scenario)
+
+
+def test_a_timed_error_after_a_quiet_success_is_reported_again():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    failure = DownloadinuxError("down")
+    app.backend.script("jobs", Step(error=failure), Step(), Step(error=failure))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await refresh_listing(pilot, app)
+        await refresh_listing(pilot, app)
+        assert entries(app, "jobs") == ["12:34:56 jobs: error: down"] * 2
+        assert [note for note, _ in notes] == ["down", "down"]
+
+    drive(app, scenario)
+
+
+def test_repeated_timed_process_text_is_recorded_once():
+    app = make_slow_app()
+    app.backend.script("jobs", Step(after=("warning: slow",)), Step(after=("warning: slow",)),
+                       Step(after=("warning: slow", "and more")))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await refresh_listing(pilot, app)
+        assert entries(app, "jobs") == ["12:34:56 jobs: warning: slow"]
+        await refresh_listing(pilot, app)
+        assert entries(app, "jobs") == ["12:34:56 jobs: warning: slow"] * 2 + [
+            "12:34:56 jobs: and more"]
+
+    drive(app, scenario)
+
+
+def test_a_superseded_timed_outcome_records_nothing():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    first = app.backend.hold("jobs", before=("held text",), error=DownloadinuxError("stale"))
+
+    async def scenario(pilot):
+        await until(pilot, first.started.is_set)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: len(app.backend.called("jobs")) == 2)
+        await until(pilot, lambda: "0 running" in app.header.text)
+        first.release()
+        await settle(pilot, app)
+        assert entries(app, "jobs") == []
+        assert notes == []
+        assert "0 running" in app.header.text
+
+    drive(app, scenario)
+
+
+def test_process_text_from_other_reads_is_recorded_at_once():
+    app = make_slow_app()
+    held = app.backend.hold("doctor", before=("compose: [b]warn[/b]",))
+
+    async def scenario(pilot):
+        app.read("status", "doctor", done=lambda outcome: None)
+        await until(pilot, held.started.is_set)
+        await until(pilot, lambda: entries(app, "doctor"))
+        assert entries(app, "doctor") == ["12:34:56 doctor: compose: [b]warn[/b]"]
+        assert not held.finished.is_set()
+
+    drive(app, scenario)
+
+
+def test_actions_run_one_at_a_time_in_order():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    cancel = app.backend.hold("cancel", result=["cancelled 1"],
+                              error=DownloadinuxError("job 1 is not running"))
+    retry = app.backend.hold("retry", result="retried", before=("retry text",))
+    export = app.backend.hold("export_to", result="/q.txt")
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act("cancel", [1], report=report)
+        app.act("retry", [2], report=report)
+        app.act("export_to", "video", "/q.txt", report=report)
+        footer = lambda: app.running_line.render().plain
+        assert footer() == "jobs cancel running; 2 waiting"
+        await until(pilot, cancel.started.is_set)
+        await pilot.pause(0.05)
+        assert [name for name in app.backend.names() if name in ACTION_NAMES] == ["cancel"]
+        cancel.release()
+        await until(pilot, retry.started.is_set)
+        await until(pilot, lambda: footer() == "jobs retry running; 1 waiting")
+        assert app.backend.called("cancel")[0].end <= app.backend.called("retry")[0].start
+        retry.release()
+        await until(pilot, export.started.is_set)
+        await until(pilot, lambda: footer() == "jobs export running")
+        export.release()
+        await until(pilot, lambda: footer() == "")
+        await settle(pilot, app)
+        assert entries(app, "jobs cancel") == ["12:34:56 jobs cancel: error: job 1 is not running"]
+        assert entries(app, "jobs retry") == ["12:34:56 jobs retry: done retried"]
+        assert entries(app, "jobs export") == ["12:34:56 jobs export: done /q.txt"]
+        assert entries(app, "retry") == ["12:34:56 retry: retry text"]
+        assert [note for note, _ in notes] == ["job 1 is not running", "note retried", "note /q.txt"]
+        assert notes[1][1] == {"markup": False}
+        threads = {call.thread for call in app.backend.calls if call.name in ACTION_NAMES}
+        assert threading.main_thread() not in threads
+        assert [call.args for call in app.backend.calls if call.name in ACTION_NAMES] == [
+            ([1],), ([2],), ("video", "/q.txt")]
+
+    drive(app, scenario)
+
+
+READS = {"jobs", "show", "log", "follow_job", "follow_lane", "cookies", "inspect", "browsers",
+         "doctor", "config", "vpn_state", "servers"}
+
+
+def test_every_backend_method_is_a_read_or_a_named_action():
+    assert set(tui_app.ACTIONS) == set(METHODS) - READS == ACTION_NAMES
+
+
+ACTION_NAMES = {"cancel", "retry", "export_to", "submit", "import_queue", "import_cookies",
+                "add_browser", "refresh", "set_default", "set_setting", "unset_setting",
+                "set_token", "lifecycle", "vpn_connect", "vpn_disconnect"}
+
+
+@pytest.mark.parametrize("method,args,name,listing,vpn", [
+    ("cancel", ([1],), "jobs cancel", True, False),
+    ("retry", ([1],), "jobs retry", True, False),
+    ("submit", ("video", ["u"]), "dl", True, False),
+    ("import_queue", ("video", "q"), "batch", True, False),
+    ("export_to", ("video", "q"), "jobs export", False, False),
+    ("set_setting", ("vpn.enabled", "true"), "config set", False, True),
+    ("unset_setting", ("vpn.enabled",), "config unset", False, True),
+    ("set_token", ("t",), "config set-token", False, True),
+    ("lifecycle", ("restart",), "restart", False, True),
+    ("lifecycle", ("up",), "up", False, True),
+    ("vpn_connect", ("France",), "vpn connect", False, True),
+    ("vpn_disconnect", (), "vpn disconnect", False, True),
+    ("refresh", ("chrome",), "cookies refresh", False, False),
+])
+def test_each_action_re_reads_its_kinds(method, args, name, listing, vpn):
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act(method, *args, report=report)
+        await until(pilot, lambda: entries(app, name))
+        await pilot.pause(0.02)
+        await settle(pilot, app)
+        assert len(app.backend.called("jobs")) == 1 + listing
+        assert len(app.backend.called("vpn_state")) == 1 + vpn
+        assert app.backend.called(method)[0].args == args
+        unexpected = {"doctor", "config", "cookies"} & set(app.backend.names())
+        assert unexpected == set()  # No view has registered these re-reads.
+
+    drive(app, scenario)
+
+
+def test_registered_re_reads_run_after_their_actions():
+    app = make_slow_app()
+    reads = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        for kind in ("doctor", "config", "cookies"):
+            app.register(kind, lambda kind=kind: reads.append(kind))
+        app.act("set_setting", "vpn.enabled", "true", report=report)
+        await until(pilot, lambda: reads == ["config", "doctor"])
+        app.act("vpn_connect", "", report=report)
+        await until(pilot, lambda: reads == ["config", "doctor", "doctor"])
+        app.act("add_browser", "c", "chrome", None, None, None, False, report=report)
+        await until(pilot, lambda: reads[-1] == "cookies")
+        await pilot.press("4", "ctrl+r")
+        await until(pilot, lambda: reads[-2:] == ["config", "doctor"])
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("error,text", [
+    (DownloadinuxError("job 9 does not exist"), "job 9 does not exist"),
+    (ConfigError("/c.toml: vpn.enabled: expected a boolean"), "/c.toml: vpn.enabled: expected a boolean"),
+    ("missing", None),
+    ("pipe", "<stdin/stdout>: Broken pipe"),
+])
+def test_operation_errors_show_the_cli_text(error, text, tmp_path):
+    if error == "missing":
+        error, text = os_error(tmp_path / "gone"), f"{tmp_path / 'gone'}: No such file or directory"
+    elif error == "pipe":
+        error = broken_pipe()
+    app = make_slow_app()
+    notes = watch_notes(app)
+    app.backend.script("cancel", Step(error=error))
+    app.backend.script("show", Step(error=error))
+    outcomes = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act("cancel", [9], report=report)
+        app.read("pane", "show", 9, done=outcomes.append)
+        await until(pilot, lambda: len(notes) == 2 and outcomes)
+        assert entries(app, "jobs cancel") == [f"12:34:56 jobs cancel: error: {text}"]
+        assert entries(app, "show") == [f"12:34:56 show: error: {text}"]
+        assert notes == [(text, dict(severity="error", timeout=10.0, markup=False))] * 2
+        assert outcomes[0].error == text
+
+    drive(app, scenario)
+
+
+def test_an_internal_error_is_recorded_and_the_app_carries_on():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    app.backend.script("show", Step(error=RuntimeError("boom")))
+    held = app.backend.hold("cancel", error=RuntimeError("boom"))
+    outcomes = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.read("pane", "show", 1, done=outcomes.append)
+        await until(pilot, lambda: outcomes)
+        app.act("cancel", [1], report=report)
+        app.act("retry", [1], report=report)
+        await until(pilot, held.started.is_set)
+        held.release()
+        await until(pilot, lambda: entries(app, "jobs retry"))
+        for source in ("show", "jobs cancel"):
+            [entry] = entries(app, source)
+            first, *rest = entry.split("\n")
+            assert first == f"12:34:56 {source}: internal error: RuntimeError: boom"
+            assert any("Traceback" in line for line in rest)
+            assert all(line.startswith(" " * 9) for line in rest)
+        assert [note for note, _ in notes[:2]] == ["internal error; see Activity"] * 2
+        assert notes[0][1] == {"markup": False}
+        await pilot.press("2")
+        assert app.query_one(TabbedContent).active == "submit"
+
+    drive(app, scenario)
+
+
+class Failing(DownloadinuxApp):
+    BINDINGS = [("x", "fail", "Fail")]
+
+    def action_fail(self):
+        raise RuntimeError("handler")
+
+
+def test_an_exception_in_a_ui_handler_ends_the_app_with_1():
+    app = Failing(FakeBackend, SETTINGS, **SLOW)
+
+    async def scenario(pilot):
+        await pilot.press("x")
+        await pilot.pause()
+
+    with pytest.raises(RuntimeError, match="handler"):
+        drive(app, scenario)
+    assert app.return_code == 1

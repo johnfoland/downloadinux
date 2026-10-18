@@ -18,6 +18,7 @@ import inspect
 import os
 import queue
 import threading
+import time
 
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
@@ -53,16 +54,23 @@ def broken_pipe() -> BrokenPipeError:
 
 @dataclass
 class Call:
+    """One logged call; `start` and `end` are `time.monotonic()` readings."""
+
     name: str
     args: tuple
     thread: threading.Thread
+    start: float
+    end: float | None = None
+
+
+DEFAULT = object()  # A step's result: the method's entry in DEFAULTS, else None.
 
 
 @dataclass
 class Step:
     """One scripted call: texts, an optional hold, then an error or a result."""
 
-    result: object = None
+    result: object = DEFAULT
     error: BaseException | None = None
     hold: bool = False
     before: tuple[str, ...] = ()
@@ -73,9 +81,6 @@ class Step:
 
     def release(self) -> None:
         self.released.set()
-
-    def wait_started(self) -> None:
-        assert self.started.wait(WAIT), "the scripted call never started"
 
 
 _END = object()
@@ -149,8 +154,9 @@ class FakeBackend:
 
     def _call(self, name: str, args: tuple):
         with self._lock:
-            self.calls.append(Call(name, args, threading.current_thread()))
-            step = self.steps[name].popleft() if self.steps[name] else Step(DEFAULTS.get(name))
+            call = Call(name, args, threading.current_thread(), time.monotonic())
+            self.calls.append(call)
+            step = self.steps[name].popleft() if self.steps[name] else Step()
             if step not in self.all_steps:
                 self.all_steps.append(step)
         step.started.set()
@@ -164,12 +170,13 @@ class FakeBackend:
             if step.error is not None:
                 raise step.error
             if name in STREAMS:
-                stream = step.result if step.result is not None else FakeStream()
+                stream = FakeStream() if step.result is DEFAULT else step.result
                 with self._lock:
                     self.streams.append(stream)
                 return stream
-            return step.result
+            return DEFAULTS.get(name) if step.result is DEFAULT else step.result
         finally:
+            call.end = time.monotonic()
             step.finished.set()
 
 

@@ -4,13 +4,18 @@ DEC-58 to DEC-60).
 This is the only module under `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
-the global keys, the confirmation dialog, and Activity.
+the global keys, the confirmation dialog, Activity, the thread-worker reads,
+and the action queue.
 """
 
 from collections import deque
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
+import threading
 import time
+import traceback
 
 from rich.cells import cell_len
 from rich.segment import Segment
@@ -24,10 +29,14 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Static, TabbedContent, TabPane
+from textual.worker import Worker
 
-from downloadinux import credentials, render, settings
+from downloadinux import credentials, errors, render, settings
+from downloadinux.errors import DownloadinuxError
+from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
 from downloadinux.tui.process import process_text
 
@@ -36,6 +45,32 @@ VIEWS = (("jobs", "Jobs"), ("submit", "Submit"), ("cookies", "Cookies"),
          ("status", "Status"), ("activity", "Activity"))
 ACTIVITY_LIMIT = 5000  # TUI §8 *Activity*
 INDENT = " " * len("HH:MM:SS ")
+INTERNAL = "internal error; see Activity"  # TUI §8 *Errors*
+ERROR_TIMEOUT = 10.0
+
+# TUI §2 *Actions*: each action's backend method, name, and re-read kinds.
+# `lifecycle` is named by its command. Kinds: `listing`, `cookies`,
+# `config`, `doctor`, and `vpn` (the header's VPN state).
+SETTINGS_REREADS = ("config", "doctor", "vpn")
+ACTIONS = {
+    "cancel": ("jobs cancel", ("listing",)),
+    "retry": ("jobs retry", ("listing",)),
+    "export_to": ("jobs export", ()),
+    "submit": ("dl", ("listing",)),
+    "import_queue": ("batch", ("listing",)),
+    "import_cookies": ("cookies import", ("cookies",)),
+    "add_browser": ("cookies add-browser", ("cookies",)),
+    "refresh": ("cookies refresh", ("cookies",)),
+    "set_default": ("cookies default", ("cookies",)),
+    "set_setting": ("config set", SETTINGS_REREADS),
+    "unset_setting": ("config unset", SETTINGS_REREADS),
+    "set_token": ("config set-token", SETTINGS_REREADS),
+    "lifecycle": (None, SETTINGS_REREADS),
+    "vpn_connect": ("vpn connect", ("doctor", "vpn")),
+    "vpn_disconnect": ("vpn disconnect", ("doctor", "vpn")),
+}
+# TUI §3 *Refresh*: what ctrl+r re-reads in each view, besides the VPN state.
+VIEW_REFRESH = {"jobs": ("listing",), "cookies": ("cookies",), "status": ("config", "doctor")}
 
 
 def run(config: str | None, overrides: Sequence[str]) -> int:
@@ -50,6 +85,59 @@ def run(config: str | None, overrides: Sequence[str]) -> int:
     app = DownloadinuxApp(lambda record: Backend(config, overrides, record), effective.file)
     app.run()
     return app.return_code or 0
+
+
+def job_summary(jobs: list[dict]) -> str:
+    """The header's SUMMARY, counted by each listed job's `state` (TUI §3)."""
+    states = [job["state"] for job in jobs]
+    failed = states.count("failed") + states.count("interrupted")
+    return (f"{states.count('running')} running · {states.count('queued')} queued · "
+            f"{failed} failed or interrupted")
+
+
+def vpn_text(state: VpnState) -> str:
+    """The header's VPN text (TUI §7 *VPN*, DEC-62)."""
+    if not state.enabled:
+        return "VPN off"
+    if not state.running:
+        return "VPN: container not running"
+    if not state.connected:
+        return "VPN: disconnected"
+    parts = [render.escape(part) for part in (state.country, state.server) if part]
+    return "VPN: connected" + (f" ({', '.join(parts)})" if parts else "")
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """How one backend call ended: its result, an operation error's text
+    (§8, the CLI's text after `downloadinux: error: `), or an internal
+    error's Activity text (its line, then the traceback)."""
+
+    result: object = None
+    error: str | None = None
+    internal: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        return self.error is not None or self.internal is not None
+
+    @property
+    def error_text(self) -> str | None:
+        """§8's text or the internal-error line: what a timed read compares."""
+        return self.error if self.internal is None else self.internal.split("\n", 1)[0]
+
+
+def outcome_of(call: Callable[[], object]) -> Outcome:
+    """Run `call`, catching everything (TUI §2 *Handing results back*, §8)."""
+    try:
+        return Outcome(result=call())
+    except DownloadinuxError as error:
+        return Outcome(error=str(error))
+    except OSError as error:
+        return Outcome(error=str(errors.from_os_error(error)))
+    except BaseException as error:
+        line = f"internal error: {type(error).__name__}: {error}"
+        return Outcome(internal=line + "\n" + "".join(traceback.format_exception(error)))
 
 
 def header_line(path: str, summary: str, vpn: str, width: int) -> str:
@@ -106,16 +194,20 @@ def entry_lines(stamp: str, source: str, text: str) -> tuple[str, ...]:
 class ActivityLog(ScrollView, can_focus=True):
     """Activity's last entries, newest last, rendered as plain lines.
 
-    `clock` returns the `HH:MM:SS` stamp; tests replace it. The view follows
-    the newest entry until the user scrolls up, and `end` follows again.
+    `clock` returns the local time's `HH:MM:SS` stamp; tests replace it. The
+    view follows the newest entry until the user scrolls up, and `end`
+    follows again.
     """
 
     DEFAULT_CSS = "ActivityLog { height: 1fr; }"
 
+    @staticmethod
+    def clock() -> str:
+        return time.strftime("%H:%M:%S")
+
     def __init__(self, limit: int = ACTIVITY_LIMIT, **kwargs):
         super().__init__(**kwargs)
         self.limit = limit
-        self.clock: Callable[[], str] = lambda: time.strftime("%H:%M:%S")
         self.entries: deque[tuple[str, ...]] = deque()
         self.lines: list[str] = []
         self._width = 0
@@ -200,11 +292,76 @@ class Recorded(Message):
         self.text = text
 
 
+@dataclass(eq=False)
+class Read:
+    """One read in flight under `key` (TUI §2 *Reads*).
+
+    `dropped` and `stream` are shared with the read's thread under `lock`;
+    `texts` holds a timed read's process texts until its outcome arrives.
+    """
+
+    key: str
+    method: str
+    timed: bool
+    done: Callable[[Outcome], None]
+    item: Callable[[object], None] | None = None
+    texts: list[tuple[str, str]] = field(default_factory=list)
+    dropped: bool = False
+    stream: object = None
+    worker: Worker | None = None
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def drop(self) -> None:
+        """Drop the outcome; stop the stream, now or as soon as it opens."""
+        with self.lock:
+            self.dropped = True
+            stream = self.stream
+        if stream is not None:
+            stream.stop()
+
+
+@dataclass(eq=False)
+class Action:
+    """One queued action (TUI §2 *Actions*). `report(result)` gives the
+    Activity text and the notification text for a success."""
+
+    name: str
+    method: str
+    args: tuple
+    report: Callable[[object], tuple[str, str]]
+    rereads: tuple[str, ...]
+
+
+class ReadItem(Message):
+    def __init__(self, read: Read, item: object):
+        super().__init__()
+        self.read = read
+        self.item = item
+
+
+class ReadDone(Message):
+    def __init__(self, read: Read, outcome: Outcome):
+        super().__init__()
+        self.read = read
+        self.outcome = outcome
+
+
+class ActionDone(Message):
+    def __init__(self, action: Action, outcome: Outcome):
+        super().__init__()
+        self.action = action
+        self.outcome = outcome
+
+
 class DownloadinuxApp(App):
-    """The TUI's frame (TUI §1 *Entry point*, §3).
+    """The TUI's frame (TUI §1 *Entry point*, §2, §3, §8).
 
     `make_backend(record)` builds the backend; `record(call, text)` is
     thread-safe. The intervals are §3's *Refresh* intervals in seconds.
+
+    Views use three entry points, all called on the UI thread: `read` for
+    a read under a key, `act` to queue an action, and `register` to supply
+    the read behind a re-read kind (§2 *Actions*, §3 *Refresh*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -224,6 +381,7 @@ class DownloadinuxApp(App):
     ]
     # Actions a dialog suspends; ctrl+q's applies everywhere (TUI §3 *Frame*).
     GLOBAL_ACTIONS = frozenset({"show_view", "refresh", "quit", "toggle_help"})
+    TIMED = ("listing", "vpn")
 
     def __init__(self, make_backend: Callable, settings_path: Path, *,
                  jobs_shown: float = 2.0, jobs_hidden: float = 10.0,
@@ -234,49 +392,68 @@ class DownloadinuxApp(App):
         self.jobs_hidden = jobs_hidden
         self.vpn_every = vpn_every
         self.backend = make_backend(self.record)
+        self._local = threading.local()
+        self._reads: dict[str, Read] = {}
+        self._streams: set[Read] = set()
+        self._read_timers: dict[str, Timer] = {}
+        self._ended: dict[str, float] = {}
+        self._reported: dict[str, tuple] = {}
+        self._rereads: dict[str, Callable[[], None]] = {
+            "listing": partial(self._timed_read, "listing"),
+            "vpn": partial(self._timed_read, "vpn"),
+        }
+        self._waiting: deque[Action] = deque()
+        self._action: Action | None = None
+        self._jobs_shown = True
 
     def compose(self) -> ComposeResult:
-        yield HeaderLine(render.escape(str(self.settings_path)), id="header")
+        # Kept, not queried: an outcome posted during shutdown still finds them.
+        self.header = HeaderLine(render.escape(str(self.settings_path)), id="header")
+        self.activity = ActivityLog(id="activity-log")
+        self.running_line = Static(id="running")
+        yield self.header
         with TabbedContent(initial="jobs"):
             for view, title in VIEWS:
                 with TabPane(title, id=view):
-                    if view == "activity":
-                        yield ActivityLog(id="activity-log")
-                    else:
-                        yield Container(classes="placeholder")
-        yield Static(id="running")
+                    yield self.activity if view == "activity" else Container(classes="placeholder")
+        yield self.running_line
         yield Footer()
 
     def on_mount(self) -> None:
         self.begin_capture_print(self, stdout=True, stderr=True)
+        for key in self.TIMED:
+            self._timed_read(key)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         if event.pane.id == "activity":
             self.activity.focus()  # So `end` reaches it (TUI §8 *Activity*).
-
-    @property
-    def header(self) -> HeaderLine:
-        return self.query_one(HeaderLine)
-
-    @property
-    def activity(self) -> ActivityLog:
-        return self.query_one(ActivityLog)
-
-    @property
-    def running_line(self) -> Static:
-        return self.query_one("#running", Static)
+        shown = event.pane.id == "jobs"
+        if shown != self._jobs_shown:
+            self._jobs_shown = shown
+            self._schedule("listing")
 
     def show_running(self, text: str) -> None:
         self.running_line.update(Text(text))
 
-    # Recording (TUI §2 *Handing results back*, §8 *Activity*).
-
-    def record(self, call: str, text: str) -> None:
-        """Hand one process text to the UI thread; safe from any thread."""
+    def _post(self, message: Message) -> None:
+        """Post from any thread; never waits (TUI §2 *Handing results back*)."""
         try:
-            self.post_message(Recorded(call, text))
+            self.post_message(message)
         except RuntimeError:
             pass  # The event loop has closed: the app is gone.
+
+    # Recording (TUI §2 *Reads*, §8 *Activity*, *Errors*).
+
+    def record(self, call: str, text: str) -> None:
+        """Hand one process text to the UI thread; safe from any thread.
+
+        A timed read's texts are held on its own thread until its outcome.
+        """
+        read = getattr(self._local, "read", None)
+        if read is not None and read.timed:
+            read.texts.append((call, text))
+        else:
+            self._post(Recorded(call, text))
 
     def on_recorded(self, message: Recorded) -> None:
         self.activity.add(message.call, message.text)
@@ -285,6 +462,176 @@ class DownloadinuxApp(App):
         text = process_text(event.text)
         if text:
             self.activity.add("output", text)
+
+    def report_error(self, source: str, outcome: Outcome) -> None:
+        """Record a failed outcome under `source` and notify it (§8 *Errors*)."""
+        if outcome.error is not None:
+            self.activity.add(source, f"error: {outcome.error}")
+            self.notify(outcome.error, severity="error", timeout=ERROR_TIMEOUT, markup=False)
+        elif outcome.internal is not None:
+            self.activity.add(source, outcome.internal)
+            self.notify(INTERNAL, markup=False)
+
+    # Reads (TUI §2 *Threads*, *Reads*).
+
+    def read(self, key: str, method: str, *args, done: Callable[[Outcome], None],
+             item: Callable[[object], None] | None = None) -> None:
+        """Run `backend.<method>(*args)` on a thread worker under `key`.
+
+        A newer read under the same key supersedes this one: its outcome is
+        dropped and, for a stream, the stream is stopped. With `item`, the
+        method returns a stream whose items reach `item` one by one; else
+        the outcome reaches `done`, on the UI thread, unless dropped.
+        """
+        previous = self._reads.pop(key, None)
+        if previous is not None:
+            previous.drop()
+        read = Read(key, method, key in self.TIMED, done, item)
+        self._reads[key] = read
+        if read.timed:
+            self._cancel_timer(key)
+        if item is not None:
+            self._streams.add(read)
+        read.worker = self.run_worker(partial(self._run_read, read, args), name=key,
+                                      group="read", thread=True, exit_on_error=False)
+
+    def _run_read(self, read: Read, args: tuple) -> None:
+        self._local.read = read
+        try:
+            call = getattr(self.backend, read.method)
+            outcome = outcome_of(partial(call, *args) if read.item is None
+                                 else partial(self._consume, read, call, args))
+        finally:
+            self._local.read = None
+        self._post(ReadDone(read, outcome))
+
+    def _consume(self, read: Read, call: Callable, args: tuple) -> None:
+        stream = call(*args)
+        with read.lock:
+            read.stream = stream
+            dropped = read.dropped
+        if dropped:
+            stream.stop()
+        for value in stream:
+            if not read.dropped:
+                self._post(ReadItem(read, value))
+
+    def on_read_item(self, message: ReadItem) -> None:
+        if not message.read.dropped:
+            message.read.item(message.item)
+
+    def on_read_done(self, message: ReadDone) -> None:
+        read, outcome = message.read, message.outcome
+        self._streams.discard(read)
+        if read.dropped or self._reads.get(read.key) is not read:
+            return  # Superseded: nothing changes, nothing is scheduled.
+        del self._reads[read.key]
+        if read.timed:
+            self._ended[read.key] = time.monotonic()
+            self._schedule(read.key)
+            reported = (tuple(read.texts), outcome.error_text)
+            if self._reported.get(read.key) != reported:
+                self._reported[read.key] = reported
+                for call, text in read.texts:
+                    self.activity.add(call, text)
+                self.report_error(read.method, outcome)
+        else:
+            self.report_error(read.method, outcome)
+        read.done(outcome)
+
+    # Timed reads (TUI §2 *Reads*, §3 *Refresh*).
+
+    def _interval(self, key: str) -> float:
+        if key == "vpn":
+            return self.vpn_every
+        return self.jobs_shown if self._jobs_shown else self.jobs_hidden
+
+    def _cancel_timer(self, key: str) -> None:
+        timer = self._read_timers.pop(key, None)
+        if timer is not None:
+            timer.stop()
+
+    def _schedule(self, key: str) -> None:
+        """Set the next read to the newest read's end plus the interval now."""
+        self._cancel_timer(key)
+        if key in self._reads or key not in self._ended:
+            return  # The read in flight schedules the next when it ends.
+        delay = self._ended[key] + self._interval(key) - time.monotonic()
+        if delay <= 0:
+            self._timed_read(key)
+        else:
+            # A timer can fire slightly early; rescheduling re-checks the time.
+            self._read_timers[key] = self.set_timer(delay, partial(self._schedule, key))
+
+    def _timed_read(self, key: str) -> None:
+        if key == "listing":
+            self.read("listing", "jobs", False, done=self._listing_done)
+        else:
+            self.read("vpn", "vpn_state", done=self._vpn_done)
+
+    def _listing_done(self, outcome: Outcome) -> None:
+        if outcome.internal is not None:
+            summary = f"jobs: {INTERNAL}"
+        elif outcome.error is not None:
+            summary = f"jobs: {render.escape(outcome.error)}"
+        else:
+            summary = job_summary(outcome.result)
+        self.header.show(summary=summary)
+
+    def _vpn_done(self, outcome: Outcome) -> None:
+        self.header.show(vpn="VPN: unknown" if outcome.failed else vpn_text(outcome.result))
+
+    # Actions (TUI §2 *Actions*).
+
+    def register(self, kind: str, reread: Callable[[], None]) -> None:
+        """Supply the read behind a re-read kind (`cookies`, `config`,
+        `doctor`); until a view registers one, that re-read is skipped."""
+        self._rereads[kind] = reread
+
+    def reread(self, kind: str) -> None:
+        reread = self._rereads.get(kind)
+        if reread is not None:
+            reread()
+
+    def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
+        """Queue `backend.<method>(*args)` as an action, named and re-read
+        by §2's table. `report(result)` gives a success's Activity text
+        and notification text."""
+        name, rereads = ACTIONS[method]
+        self._waiting.append(Action(name or args[0], method, args, report, rereads))
+        self._next_action()
+
+    def _next_action(self) -> None:
+        if self._action is None and self._waiting:
+            self._action = self._waiting.popleft()
+            self.run_worker(partial(self._run_action, self._action), name=self._action.name,
+                            group="action", thread=True, exit_on_error=False)
+        self._show_queue()
+
+    def _show_queue(self) -> None:
+        if self._action is None:
+            self.show_running("")
+        elif self._waiting:
+            self.show_running(f"{self._action.name} running; {len(self._waiting)} waiting")
+        else:
+            self.show_running(f"{self._action.name} running")
+
+    def _run_action(self, action: Action) -> None:
+        call = getattr(self.backend, action.method)
+        self._post(ActionDone(action, outcome_of(partial(call, *action.args))))
+
+    def on_action_done(self, message: ActionDone) -> None:
+        action, outcome = message.action, message.outcome
+        self._action = None
+        if outcome.failed:
+            self.report_error(action.name, outcome)
+        else:
+            text, notice = action.report(outcome.result)
+            self.activity.add(action.name, text)
+            self.notify(notice, markup=False)
+        self._next_action()
+        for kind in action.rereads:
+            self.reread(kind)
 
     # Keys (TUI §3 *Keys*, *Frame*).
 
@@ -303,7 +650,10 @@ class DownloadinuxApp(App):
             self.action_show_help_panel()
 
     def action_refresh(self) -> None:
-        pass
+        """Re-read the shown view and the VPN state now (TUI §3 *Refresh*)."""
+        self.reread("vpn")
+        for kind in VIEW_REFRESH.get(self.query_one(TabbedContent).active, ()):
+            self.reread(kind)
 
     async def action_quit(self) -> None:
         self.exit(return_code=0)
