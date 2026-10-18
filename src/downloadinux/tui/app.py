@@ -1,11 +1,11 @@
 """The Textual app frame (target design, *Python + Textual TUI* §1–§3, §8;
 DEC-58 to DEC-60).
 
-This is the only module under `downloadinux` that imports Textual or Rich.
+With the dialog and view modules it imports (`tui.dialogs`, `tui.status`),
+this is the only code under `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
-the global keys, the confirmation dialog, Activity, the thread-worker reads,
-and the action queue.
+the global keys, Activity, the thread-worker reads, and the action queue.
 """
 
 from collections import deque
@@ -23,7 +23,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.geometry import Size
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -31,14 +31,16 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Static, TabbedContent, TabPane
+from textual.widgets import Footer, Static, TabbedContent, TabPane
 from textual.worker import Worker
 
 from downloadinux import credentials, errors, render, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.dialogs import Confirm
 from downloadinux.tui.process import process_text
+from downloadinux.tui.status import StatusView
 
 # TUI §3 *Frame*: pane IDs and titles, in tab and key order.
 VIEWS = (("jobs", "Jobs"), ("submit", "Submit"), ("cookies", "Cookies"),
@@ -47,6 +49,7 @@ ACTIVITY_LIMIT = 5000  # TUI §8 *Activity*
 INDENT = " " * len("HH:MM:SS ")
 INTERNAL = "internal error; see Activity"  # TUI §8 *Errors*
 ERROR_TIMEOUT = 10.0
+CAPTURE_LIMIT = 10_000  # TUI §2 *Captured writes* (DEC-64)
 
 # TUI §2 *Actions*: each action's backend method, name, and re-read kinds.
 # `lifecycle` is named by its command. Kinds: `listing`, `cookies`,
@@ -122,9 +125,21 @@ class Outcome:
         return self.error is not None or self.internal is not None
 
     @property
+    def shown(self) -> str:
+        """What a view shows for a failed outcome: §8's error text,
+        escaped, or `internal error; see Activity`."""
+        return INTERNAL if self.internal is not None else render.escape(self.error)
+
+    @property
     def error_text(self) -> str | None:
         """§8's text or the internal-error line: what a timed read compares."""
         return self.error if self.internal is None else self.internal.split("\n", 1)[0]
+
+
+def internal_text(error: BaseException) -> str:
+    """An internal error's Activity text: its line, then the traceback (§8)."""
+    line = f"internal error: {type(error).__name__}: {error}"
+    return line + "\n" + "".join(traceback.format_exception(error))
 
 
 def outcome_of(call: Callable[[], object]) -> Outcome:
@@ -136,8 +151,15 @@ def outcome_of(call: Callable[[], object]) -> Outcome:
     except OSError as error:
         return Outcome(error=str(errors.from_os_error(error)))
     except BaseException as error:
-        line = f"internal error: {type(error).__name__}: {error}"
-        return Outcome(internal=line + "\n" + "".join(traceback.format_exception(error)))
+        return Outcome(internal=internal_text(error))
+
+
+def captured_text(text: str) -> str:
+    """One captured entry's text (TUI §2 *Captured writes*, DEC-64): CRLF
+    read as LF, each line cut to what follows its last bare CR, then the
+    process-text rule."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    return process_text("\n".join(line.rpartition("\r")[2] for line in lines))
 
 
 def header_line(path: str, summary: str, vpn: str, width: int) -> str:
@@ -257,43 +279,6 @@ class ActivityLog(ScrollView, can_focus=True):
         return strip.crop(x, x + width).extend_cell_length(width, self.rich_style)
 
 
-class Confirm(ModalScreen[bool]):
-    """A yes/no question; No has the focus (TUI §3 *Dialogs*)."""
-
-    DEFAULT_CSS = """
-    Confirm { align: center middle; }
-    Confirm > Vertical { width: 60; max-width: 100%; height: auto;
-                         border: thick $primary; background: $surface; padding: 0 1; }
-    Confirm Horizontal { height: auto; align-horizontal: right; }
-    """
-    BINDINGS = [
-        Binding("y", "answer(True)", "Yes"),
-        Binding("n", "answer(False)", "No"),
-        Binding("escape", "answer(False)", "No"),
-    ]
-
-    def __init__(self, question: str):
-        super().__init__()
-        self.question = question
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(Text(self.question), id="question")
-            with Horizontal():
-                yield Button("Yes", id="yes")
-                yield Button("No", id="no")
-
-    def on_mount(self) -> None:
-        self.query_one("#no", Button).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.dismiss(event.button.id == "yes")
-
-    def action_answer(self, value: bool) -> None:
-        self.dismiss(value)
-
-
 class Recorded(Message):
     """Process text from a backend call's thread (TUI §2 *Handing results back*)."""
 
@@ -372,9 +357,16 @@ class DownloadinuxApp(App):
     `make_backend(record)` builds the backend; `record(call, text)` is
     thread-safe. The intervals are §3's *Refresh* intervals in seconds.
 
-    Views use three entry points, all called on the UI thread: `read` for
-    a read under a key, `act` to queue an action, and `register` to supply
-    the read behind a re-read kind (§2 *Actions*, §3 *Refresh*).
+    Views use these entry points, all called on the UI thread (§2 *View
+    entry points*): `read` for a read under a key, `drop` to drop the read
+    in flight under a key when the pane it fills closes, `act` to queue an
+    action, whose result function may raise `DownloadinuxError` to report
+    the action as an operation error, and `register` to supply the read
+    behind a re-read kind (§2 *Actions*, §3 *Refresh*).
+
+    `listing` is the latest job listing's `Outcome`, None before the
+    first: what the header counts, and what Status's `down` and `restart`
+    questions count (§7 *Container*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -418,6 +410,8 @@ class DownloadinuxApp(App):
         self._waiting: deque[Action] = deque()
         self._action: Action | None = None
         self._jobs_shown = True
+        self.listing: Outcome | None = None
+        self._captured = {False: "", True: ""}  # By `events.Print.stderr` (DEC-64).
         self._asking = False  # The quit question is open (TUI §8 *Quitting*).
         self._quitting = False
 
@@ -430,7 +424,12 @@ class DownloadinuxApp(App):
         with TabbedContent(initial="jobs"):
             for view, title in VIEWS:
                 with TabPane(title, id=view):
-                    yield self.activity if view == "activity" else Container(classes="placeholder")
+                    if view == "activity":
+                        yield self.activity
+                    elif view == "status":
+                        yield StatusView(id="status-view")
+                    else:
+                        yield Container(classes="placeholder")
         yield self.running_line
         yield Footer()
 
@@ -474,8 +473,22 @@ class DownloadinuxApp(App):
         self.activity.add(message.call, message.text)
 
     def on_print(self, event: events.Print) -> None:
-        text = process_text(event.text)
-        if text:
+        """Record captured writes by lines (TUI §2 *Captured writes*, DEC-64).
+
+        Text after the last LF waits for a later write on its stream, unless
+        it reaches the limit; whatever waits at exit is discarded."""
+        waiting = self._captured[event.stderr] + event.text
+        lines, newline, waiting = waiting.rpartition("\n")
+        if newline:
+            self._record_output(lines + newline)  # The LF ends a CRLF.
+        if len(waiting) >= CAPTURE_LIMIT:
+            self._record_output(waiting)
+            waiting = ""
+        self._captured[event.stderr] = waiting
+
+    def _record_output(self, text: str) -> None:
+        text = captured_text(text)
+        if text.strip():
             self.activity.add("output", text)
 
     def report_error(self, source: str, outcome: Outcome) -> None:
@@ -512,6 +525,14 @@ class DownloadinuxApp(App):
             self._streams.add(read)
         read.worker = self.run_worker(partial(self._run_read, read, args), name=key,
                                       group="read", thread=True, exit_on_error=False)
+
+    def drop(self, key: str) -> None:
+        """Drop the read in flight under `key`, as a newer read would: its
+        outcome is dropped and a stream is stopped (§2 *View entry points*).
+        Nothing happens when no read is in flight there."""
+        read = self._reads.pop(key, None)
+        if read is not None:
+            read.drop()
 
     def _run_read(self, read: Read, args: tuple) -> None:
         self._local.read = read
@@ -588,12 +609,8 @@ class DownloadinuxApp(App):
             self.read("vpn", "vpn_state", done=self._vpn_done)
 
     def _listing_done(self, outcome: Outcome) -> None:
-        if outcome.internal is not None:
-            summary = f"jobs: {INTERNAL}"
-        elif outcome.error is not None:
-            summary = f"jobs: {render.escape(outcome.error)}"
-        else:
-            summary = job_summary(outcome.result)
+        self.listing = outcome
+        summary = f"jobs: {outcome.shown}" if outcome.failed else job_summary(outcome.result)
         self.header.show(summary=summary)
 
     def _vpn_done(self, outcome: Outcome) -> None:
@@ -614,7 +631,10 @@ class DownloadinuxApp(App):
     def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
         """Queue `backend.<method>(*args)` as an action, named and re-read
         by §2's table. `report(result)` gives a success's Activity text
-        and notification text. Once quitting has started, nothing is queued."""
+        and notification text, or raises `DownloadinuxError` to report the
+        action as that operation error (§2 *View entry points*); any other
+        exception it raises is an internal error. Once quitting has started,
+        nothing is queued."""
         if self._quitting:
             return
         name, rereads = ACTIONS[method]
@@ -644,12 +664,18 @@ class DownloadinuxApp(App):
     def on_action_done(self, message: ActionDone) -> None:
         action, outcome = message.action, message.outcome
         self._action = None
+        if not outcome.failed:
+            try:
+                text, notice = action.report(outcome.result)
+            except DownloadinuxError as error:
+                outcome = Outcome(error=str(error))
+            except Exception as error:
+                outcome = Outcome(internal=internal_text(error))
+            else:
+                self.activity.add(action.name, text)
+                self.notify(notice, markup=False)
         if outcome.failed:
             self.report_error(action.name, outcome)
-        else:
-            text, notice = action.report(outcome.result)
-            self.activity.add(action.name, text)
-            self.notify(notice, markup=False)
         if self._quitting:
             self._finish_quitting()  # No re-reads (TUI §8 *Quitting*).
             return
@@ -665,7 +691,12 @@ class DownloadinuxApp(App):
         return True
 
     def action_show_view(self, view: str) -> None:
-        self.query_one(TabbedContent).active = view
+        tabs = self.query_one(TabbedContent)
+        if view != tabs.active:
+            # Hiding the focused widget makes Textual focus a neighbour,
+            # which can sit in the same pane and so show that pane again.
+            self.set_focus(None)
+        tabs.active = view
 
     def action_toggle_help(self) -> None:
         if self.screen.query("HelpPanel"):

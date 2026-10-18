@@ -2,8 +2,9 @@
 
 Status: Stages 1–3 are implemented; Stage 4's shared host operations are
 implemented, as are the TUI's Textual-free backend, process runners, and
-stream handle (PR #110) and its app frame (PR #112). The views (Jobs,
-Submit, Cookies, Status) and the launch remain planned.
+stream handle (PR #110), its app frame (PR #112), and its Status view
+(PR #115). The Jobs, Submit, and Cookies views and the launch remain
+planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -44,8 +45,8 @@ renderers and the `config set`/`config unset` writes (DEC-58, DEC-61).
 PR #105 implements `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` (DEC-60, DEC-62), completing the shared host
 operations. PR #110 implements the Textual-free backend, process runners,
-and stream handle, and PR #112 the app frame; the views (Jobs, Submit,
-Cookies, Status) and the launch remain planned.
+and stream handle, PR #112 the app frame, and PR #115 the Status view;
+the Jobs, Submit, and Cookies views and the launch remain planned.
 
 ## Agreed decisions
 
@@ -3338,8 +3339,9 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
-handle are implemented (PR #110), and so is the app frame (PR #112). The
-views (Jobs, Submit, Cookies, Status) and the launch remain planned. Its
+handle are implemented (PR #110), and so are the app frame (PR #112) and
+the Status view (PR #115). The Jobs, Submit, and Cookies views and the
+launch remain planned. Its
 settings writes, `config set` and `config unset`, are under *Configuration
 and paths* (DEC-61), and are implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
@@ -3368,7 +3370,9 @@ in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
 output stays byte for byte what it is. The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
-implemented (PR #112); the views and the launch remain planned.
+implemented (PR #112), as is the Status view in `downloadinux.tui.status`
+with its dialogs in `downloadinux.tui.dialogs` (PR #115); the other views
+and the launch remain planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3656,7 +3660,8 @@ raises before any stop reaches the consumer after that recording.
 
 The backend, runners, and stream handle are implemented (PR #110), and the
 app's thread workers, reads, timed reads, and action queue are implemented
-(PR #112).
+(PR #112). The two further view entry points and captured writes by lines
+(DEC-64) are implemented (PR #115).
 
 ### 3. Layout, navigation, and keys (DEC-60)
 
@@ -3755,8 +3760,8 @@ carries meaning alone: each job condition (§4) has its own text as well as
 its own style.
 
 The frame, header, footer line, global keys, help, and confirmation dialog
-are implemented (PR #112); the views' own keys, refresh, and dialogs are
-not.
+are implemented (PR #112), and so are Status's keys, refresh, and dialogs
+(PR #115); the other views' are not.
 
 ### 4. Jobs view
 
@@ -4007,8 +4012,8 @@ every operation does and runs its container commands captured, with `-T`
   `ranked` is. `list_servers` and `server_choices` share one fetch.
 
 `host_vpn` and `operations.server_choices` are implemented (PR #105),
-and the TUI's VPN header is (PR #112); its dialogs, picker, and controls are
-not.
+and the TUI's VPN header is (PR #112), as are its dialogs, picker, and
+controls (PR #115).
 
 `o` opens a connect dialog: a target field holding `vpn.server` from the
 latest `config show` read (empty means the fastest server), and a *Choose a
@@ -4131,6 +4136,9 @@ the VPN (nordvpn exit N); see Activity`.
 *Keys.* `x`, `t`, `U`, `D`, `R`, `o`, and `O` are the Status pane's
 bindings, and `enter` is the settings table's: they apply while the focus is
 in the Status pane and no dialog is open, and the footer lists them there.
+
+The Status view, with its tables, dialogs, picker, and keys, is implemented
+(PR #115).
 
 ### 8. Errors, Activity, and quitting
 
