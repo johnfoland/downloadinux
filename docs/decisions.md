@@ -1538,7 +1538,12 @@ scope and the batch, export, lane, and token extras. Clarified on 2026-10-16: a 
 read records and notifies an outcome only when it differs from the previous
 one (§2), so a container that stays stopped is reported once, not every two
 seconds; the header, footer line, key scope, and quitting order are pinned
-in §3 and §8.
+in §3 and §8. Clarified on 2026-10-18: the Jobs view's layout, listing
+status line and mode switch, condition styles, details reads, marks, cancel
+question, multi-job notification counts, retry dialog (with its own
+cookie-list read and the `--user-agent` check), and export dialog are
+pinned in §4, with `jobs list`'s cells and empty text shared through
+`render` (§1).
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 
