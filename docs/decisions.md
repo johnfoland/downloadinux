@@ -1543,7 +1543,15 @@ status line and mode switch, condition styles, details reads, marks, cancel
 question, multi-job notification counts, retry dialog (with its own
 cookie-list read and the `--user-agent` check), and export dialog are
 pinned in §4, with `jobs list`'s cells and empty text shared through
-`render` (§1).
+`render` (§1). Clarified again on 2026-10-18: the log pane's title, read
+key, notice and end-line texts (`dl`'s job and wait notices shared through
+`render`), attempt stepping, failure line and its reopening on `ctrl+r` or
+a recovered listing, and lane mode are pinned in §4, with `tui.logtext`'s
+interface, its line-replacing bare CR, and its dropped-lines texts. A
+listing that shows the cursor job retried reopens the pane on the new
+attempt, with a notice, while it shows the current attempt: unlike the
+CLI's follow (DEC-57), the TUI keeps every earlier attempt one `[` away,
+so the switch loses nothing and is not silent.
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 

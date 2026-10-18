@@ -3376,7 +3376,10 @@ moved the same way: `render.job_cells(job)`, the tuple of one listed job's
 `jobs list` cells (ID, STATE, PRESET, QUEUE, ATTEMPT, URL) that
 `render_jobs` builds its rows from, and `render.no_jobs(all)`, `jobs
 list`'s empty text (`No jobs.` with `--all`, else `No queued, running,
-failed, or interrupted jobs.`). The Textual-free backend, process
+failed, or interrupted jobs.`). Its log pane adds two more, moved from the
+CLI's following output the same way: `render.follow_job(job)`, `Job I:
+URL`, and `render.follow_wait(id, wait)`, `job I waiting for VPN`, `job I
+waiting for throttle until T`, or `job I resumed`. The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
 implemented (PR #112), as is the Status view in `downloadinux.tui.status`
@@ -3713,7 +3716,8 @@ keys that apply: the view and global keys under it do nothing.
 
 *Refresh.* The job listing (§4) is read every 2 seconds while Jobs is shown
 and every 10 seconds otherwise, each interval counted from the end of the
-previous read, and at once after any job action or `ctrl+r` in Jobs.
+previous read, and at once after any job action or `ctrl+r` in Jobs;
+`ctrl+r` in Jobs also reopens a log pane that shows a failure (§4).
 `doctor` and `config show` are read when Status is first shown, on
 `ctrl+r` there, and after a settings, token, or lifecycle action; never on a
 timer, since `doctor` makes several Docker calls. The cookie list is read
@@ -3784,8 +3788,9 @@ mounts in the `jobs` pane. It is a vertical stack: the listing's status
 line, the listing table, and below them, side by side, the details pane and
 the log pane. Below the status line the table takes one third of the height
 and the two panes the rest (`height: 1fr` and `2fr`); the details pane takes
-one third of the width, at least 32 columns, and the log pane the rest
-(`width: 1fr; min-width: 32` and `width: 2fr`). The table scrolls itself,
+one third of the width, at least 32 columns, and the log column the rest
+(`width: 1fr; min-width: 32` and `width: 2fr`): the log pane's one-line
+title above the log pane. The table scrolls itself,
 keeping its cursor row in sight. The details and log panes show unwrapped
 lines as plain text and scroll both ways while focused. Showing Jobs, at
 launch included, focuses the table; `tab` and `shift+tab` move the focus
@@ -3866,6 +3871,65 @@ titled `Log: PRESET lane`: each job's `Job I: URL` notice, waits, bytes, and
 end, then `PRESET lane is idle` at its done, after which the pane stays as it
 is. Cursor moves leave lane mode alone; `escape` returns to the cursor job.
 
+In detail: the title line reads `Log` while the pane has no source (no rows
+outside lane mode), and the pane is then empty. Every source the pane reads
+(a job's follow, an earlier attempt's `log`, a lane's follow, and the
+`show` after a failed follow) runs under the read key `log`, so opening a
+source supersedes the one before it and stops its stream (§2), and an
+emptied listing outside lane mode drops it. Opening a source empties the
+pane, starts a new log text (*Log text*), and follows the end from the
+pane's left edge.
+
+*Job mode.* N is the attempt the pane shows and M the greater of N and the
+listing record's `attempt`; the title, `Log: job I, attempt N of M`, is
+updated by every listing. The cursor job's current attempt is opened with
+`follow_job(I)`, N being the record's `attempt` until the `FollowJob` event
+gives the attempt followed. A `FollowJob` event adds `Job I: URL`, and a
+`FollowWait` event `job I waiting for VPN`, `job I waiting for throttle
+until T`, or `job I resumed`: `dl`'s notices, from the shared renderers
+`render.follow_job(job)` and `render.follow_wait(id, wait)` that the CLI
+also prints from. A `FollowLog` event adds its bytes; a `FollowEnd` event
+adds `attempt N ended: STATE`, then ` (exit status S)` when the record's
+`exit_status` is not null and `: ERROR`, escaped, when its `error` is not
+null; `FollowDone` adds nothing. When the cursor comes to another job (a key
+or a listing), the pane opens that job's current attempt. While it shows
+the cursor job's current attempt, a listing whose record for that job has
+an `attempt` above N reopens it, the new pane's first line reading
+`attempt N was retried; now showing attempt A`, A being the record's
+`attempt` (N+1 after one retry).
+
+`[` opens attempt N−1 when N is above 1, and `]` attempt N+1 when N is
+below M; otherwise each does nothing. An attempt below the record's
+`attempt` is read with `log(I, N)`: the pane shows `Job I: URL` from the
+listing record, then the bytes, then, when the stream ends, `attempt N
+(earlier)`. Reaching the record's `attempt` with `]` follows it as above.
+`escape` on an earlier attempt opens the current one, and otherwise, in job
+mode, does nothing.
+
+*Failures.* When a job's follow fails, its error is recorded and notified as
+any read's (§8), and `show(I)` is read under `log`. If that record's
+`attempt` is above N, the pane reopens the current attempt with the retried
+line above. Otherwise, and when the `show` fails (also recorded and notified
+as any read's), the pane keeps its lines and adds `log failed: REASON`,
+REASON the follow's error as in the listing's status line. An earlier
+attempt's or a lane's failure adds the same line with its own error, with
+no `show`. After a failure line, `ctrl+r` in Jobs, or a successful listing
+whose previous listing outcome failed, reopens the same source (the current
+attempt, the same earlier attempt, or the same lane); a pane without a
+failure line is not reopened by either.
+
+*Lane mode.* `v` and `g` open `follow_lane("video")` and
+`follow_lane("gallery")`, also when that lane is already shown, titled
+`Log: video lane` and `Log: gallery lane`. Each job's `FollowJob`, waits,
+bytes, and `FollowEnd` add their lines as in job mode, and `FollowDone` adds
+`PRESET lane is idle`, after which the pane stays. Cursor moves and
+listings leave lane mode alone, and `[` and `]` do nothing in it. `escape`
+opens the cursor job's current attempt, or with no rows leaves the pane
+empty and titled `Log`.
+
+Notices are styled `cyan`, `log failed:` lines `bold red`, and the
+dropped-lines line (*Log text*) `dim`; byte lines have no style.
+
 *Log text.* `downloadinux.tui.logtext` turns log bytes into pane lines. It
 decodes UTF-8 incrementally, replacing invalid bytes with U+FFFD, so a
 character split across chunks survives. LF and CRLF end a line. A bare CR
@@ -3876,9 +3940,33 @@ DEC-55's human output shows it, so escape sequences are visible and never
 interpreted. An unterminated last line is shown as it stands. The pane keeps
 the last 10,000 lines, and once it has dropped any, its first line reads
 `(earlier lines dropped; dlx jobs logs I shows the whole log)`. Notices are
-separate, styled lines and never change how bytes are rendered. The pane
+separate, styled lines that never pass through the byte rules. The pane
 keeps its view at the end while new lines arrive unless the user has
 scrolled up; `end` returns to following.
+
+In detail: `logtext.LogText(marker, limit=10_000)` holds one source's
+lines. `feed(data)` adds log bytes, `notice(text, style)` adds a notice,
+and `lines` is the list of `(text, style)` pairs to show, a byte line's
+style empty. Bytes are decoded with Python's incremental UTF-8 decoder and
+`errors="replace"`. LF, and CR LF, end a line, a CR at a chunk's end
+waiting for the next chunk to tell. A bare CR leaves the line's text shown
+until the next character other than LF arrives, which discards it, so the
+text after a line's last bare CR is the whole line. Each piece between tabs
+is escaped with `render.escape`. A notice first finishes the bytes: the
+decoder is flushed (an incomplete sequence becomes U+FFFD), an unterminated
+line stays as it stands, and the next bytes start a new line. The notice is
+then its own line and never passes through the byte rules. The limit counts
+byte lines, an unterminated one included, and notices; once any line is
+dropped, `lines` starts with the marker, styled `dim` and not counted. The
+marker is `(earlier lines dropped; dlx jobs logs I shows the whole log)`
+for a current attempt, `(earlier lines dropped; dlx jobs logs I --attempt N
+shows the whole log)` for an earlier attempt, and `(earlier lines dropped;
+dlx jobs logs ID shows a job's whole log)` for a lane.
+
+The pane follows the end as Activity does (§8): while it follows, new
+lines, showing Jobs, and a resize keep its last line in view; scrolling up
+stops following and leaves the view where it is; the pane's own `end` key
+scrolls to the last line and follows again.
 
 *Cancel and retry.* `space` marks jobs; `c`, `r`, and `R` act on the marked
 jobs in ID order, else on the cursor job, and clear the marks. Marks on jobs
