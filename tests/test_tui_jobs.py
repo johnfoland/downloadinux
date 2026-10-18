@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 from test_host_jobs import publish
-from textual.widgets import Input, OptionList, Static, TabbedContent
+from textual.widgets import Input, OptionList, RadioButton, RadioSet, Static, TabbedContent
 
 from downloadinux import cookie_store, cookie_writer, host_jobs, launch, render
 from downloadinux.errors import ConfigError
 from downloadinux.tui.app import ActivityLog, DownloadinuxApp
 from downloadinux.tui.backend import Selection
 from downloadinux.tui.dialogs import Confirm
-from downloadinux.tui.jobs import JobsView, RetryDialog
+from downloadinux.tui.jobs import ExportDialog, JobsView, RetryDialog
 from downloadinux.tui.widgets import TextPane, ViewTable
 from tui_support import FakeBackend, Step, drive, job_view, not_running, record, until
 
@@ -1364,5 +1364,167 @@ def test_view_and_global_keys_do_nothing_while_the_dialog_is_open():
         assert app.screen is dialog
         assert app.query_one(TabbedContent).active == "jobs"
         assert len(app.backend.calls) == calls
+
+    drive(app, scenario)
+
+
+# Export (§4 *Export*).
+
+def exports(app) -> list[tuple]:
+    return [call.args for call in app.backend.called("export_to")]
+
+
+def test_the_export_dialog():
+    app = make_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        dialog = app.screen
+        assert isinstance(dialog, ExportDialog)
+        assert dialog.query_one("#heading", Static).content.plain == "Export failed work"
+        buttons = list(dialog.query(RadioButton))
+        assert [(str(button.label), button.value) for button in buttons] == [
+            ("video", True), ("gallery", False)]
+        assert dialog.query_one("#path", Input).value == ""
+
+    drive(app, scenario)
+
+
+def test_export_sends_the_chosen_preset_and_path_as_entered():
+    app = make_app()
+    app.backend.script("export_to", Step(result=host_jobs.ExportFile(Path("/w/q.txt"), 2)))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        dialog = app.screen
+        dialog.query(RadioButton).last().value = True
+        await pilot.pause()
+        assert dialog.query_one(RadioSet).pressed_index == 1
+        dialog.query_one("#path", Input).focus()
+        dialog.query_one("#path", Input).value = " ~/q.txt"
+        await pilot.press("enter")
+        await settle(pilot, app, "export_to")
+        assert exports(app) == [("gallery", " ~/q.txt")]
+        assert app.screen is app.screen_stack[0]
+
+    drive(app, scenario)
+
+
+def test_ok_submits_the_export_dialog():
+    app = make_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        app.screen.query_one("#path", Input).value = "q.txt"
+        await pilot.click("#ok")
+        await settle(pilot, app, "export_to")
+        assert exports(app) == [("video", "q.txt")]
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("preset", ["video", "gallery"])
+@pytest.mark.parametrize("count,text", [
+    (3, "Exported 3 URLs to /w/q\\x1b.txt."),
+    (0, "No failed, cancelled, or interrupted {} jobs to export."),
+])
+def test_the_export_results(preset, count, text):
+    app = make_app()
+    app.backend.script("export_to", Step(result=host_jobs.ExportFile(Path("/w/q\x1b.txt"), count)))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        if preset == "gallery":
+            app.screen.query(RadioButton).last().value = True
+            await pilot.pause()
+        app.screen.query_one("#path", Input).value = "q.txt"
+        app.screen.submit()
+        await settle(pilot, app, "export_to")
+        expected = text.format(preset)
+        assert notes == [expected]
+        assert activity(app, "jobs export") == [f"12:34:56 jobs export: {expected}"]
+
+    drive(app, scenario)
+
+
+def real_error(call):
+    try:
+        call()
+    except Exception as error:
+        return error
+    raise AssertionError("no error")
+
+
+def test_an_existing_path_is_an_error(tmp_path):
+    existing = tmp_path / "queue.txt"
+    existing.write_text("")
+    error = real_error(lambda: host_jobs.export_to("video", str(existing)))
+    assert str(error) == f"{existing} exists; not overwriting it"
+    app = make_app()
+    app.backend.script("export_to", Step(error=error))
+    notes = []
+    app.notify = lambda message, **options: notes.append((message, options))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        app.screen.query_one("#path", Input).value = str(existing)
+        app.screen.submit()
+        await settle(pilot, app, "export_to")
+        assert notes == [(str(error), dict(severity="error", timeout=10.0, markup=False))]
+        assert activity(app, "jobs export") == [f"12:34:56 jobs export: error: {error}"]
+
+    drive(app, scenario)
+
+
+def test_an_empty_path_is_the_operations_error():
+    error = real_error(lambda: host_jobs.export_to("video", ""))
+    assert isinstance(error, ConfigError)
+    assert str(error) == "export path must be a nonempty path without NUL"
+    app = make_app()
+    app.backend.script("export_to", Step(error=error))
+    notes = []
+    app.notify = lambda message, **options: notes.append((message, options))
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        app.screen.submit()
+        await settle(pilot, app, "export_to")
+        assert exports(app) == [("video", "")]
+        assert notes == [(str(error), dict(severity="error", timeout=10.0, markup=False))]
+
+    drive(app, scenario)
+
+
+def test_escape_closes_the_export_dialog_and_no_listing_follows_an_export():
+    app = make_app()
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("e")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+        assert exports(app) == []
+        await pilot.press("e")
+        await pilot.pause()
+        app.screen.query_one("#path", Input).value = "q.txt"
+        app.screen.submit()
+        await settle(pilot, app, "export_to")
+        await pilot.pause(0.1)
+        assert len(app.backend.called("jobs")) == 1
 
     drive(app, scenario)

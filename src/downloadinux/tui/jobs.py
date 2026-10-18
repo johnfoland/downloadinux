@@ -1,6 +1,6 @@
 """The Jobs view (target design, *Python + Textual TUI* §4; DEC-60): the job
 listing with its status line and mode, the cursor job's details, the log
-pane, marks, cancel, and retry.
+pane, marks, cancel, retry, and export.
 
 `JobsView` fills the app's `jobs` pane. The app's timed `listing` read
 asks it for its mode (`all`) and hands it each listing outcome
@@ -15,7 +15,8 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Input, OptionList, Static, TabbedContent, TabPane
+from textual.widgets import (DataTable, Input, OptionList, RadioButton, RadioSet, Static,
+                             TabbedContent, TabPane)
 
 from downloadinux import host_jobs, launch, render
 from downloadinux.errors import ConfigError
@@ -108,6 +109,40 @@ def retried(lines: list[host_jobs.RetryLine]) -> tuple[str, str]:
                         [retry_kind(line) for line in lines], RETRY_COUNTS)
 
 
+def exported(preset: str, result: host_jobs.ExportFile) -> tuple[str, str]:
+    """`jobs export`'s result text, the Activity entry and the
+    notification (§4 *Export*)."""
+    if result.count:
+        text = f"Exported {result.count} URLs to {render.escape(str(result.path))}."
+    else:
+        text = f"No failed, cancelled, or interrupted {preset} jobs to export."
+    return text, text
+
+
+class ExportDialog(FormDialog):
+    """`e`'s dialog (§4 *Export*): a preset choice and a `Path` field,
+    submitted as `(PRESET, PATH)` with the path as entered."""
+
+    PRESETS = ("video", "gallery")
+
+    def __init__(self):
+        super().__init__("Export failed work")
+
+    def fields(self) -> ComposeResult:
+        with RadioSet(id="preset"):
+            for index, preset in enumerate(self.PRESETS):
+                yield RadioButton(preset, value=index == 0)
+        yield Static(Text("Path"))
+        yield Input(id="path")
+
+    def on_mount(self) -> None:
+        self.query_one(RadioSet).focus()
+
+    def value(self) -> tuple[str, str]:
+        index = self.query_one(RadioSet).pressed_index
+        return self.PRESETS[max(index, 0)], self.query_one(Input).value
+
+
 class RetryDialog(FormDialog):
     """`R`'s dialog (§4 *Cancel and retry*): the cookie choices, a status
     line, and a `User-agent` field. It reads the cookie list under
@@ -174,7 +209,8 @@ class RetryDialog(FormDialog):
 
 
 class JobsView(Vertical):
-    """The Jobs pane (§4 *Layout*, *Listing*, *Details*).
+    """The Jobs pane (§4 *Layout*, *Listing*, *Details*, *Cancel and
+    retry*, *Export*).
 
     A status line, the listing table, and below them the details pane and
     the log pane. Showing it focuses the table; `tab` and `shift+tab` cycle
@@ -197,6 +233,7 @@ class JobsView(Vertical):
         Binding("c", "cancel", "Cancel"),
         Binding("r", "retry", "Retry"),
         Binding("R", "retry_with", "Retry with…"),
+        Binding("e", "export", "Export"),
     ]
 
     def __init__(self, **kwargs):
@@ -350,6 +387,16 @@ class JobsView(Vertical):
     def _retry(self, ids: list[int], selection: Selection) -> None:
         self._clear_marks()
         self.app.act("retry", ids, selection, report=retried)
+
+    # Export (§4 *Export*).
+
+    def action_export(self) -> None:
+        self.app.push_screen(ExportDialog(), self._export)
+
+    def _export(self, chosen: tuple[str, str] | None) -> None:
+        if chosen is not None:  # None: the dialog was closed.
+            preset, path = chosen
+            self.app.act("export_to", preset, path, report=partial(exported, preset))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()  # `enter` on a listing row does nothing (§4).

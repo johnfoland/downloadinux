@@ -5,8 +5,10 @@ renderers and `config set`/`config unset` implemented (PR #103), and
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 implemented (PR #105), completing the shared host operations. The TUI's
 Textual-free backend, process runners, and stream handle are implemented
-(PR #110), as are its app frame (PR #112) and its Status view (PR #115);
-the Jobs, Submit, and Cookies views and the launch remain planned.
+(PR #110), as are its app frame (PR #112), its Status view (PR #115), and
+its Jobs view's listing, details, marks, cancel, retry, and export
+(PR #118); the Jobs view's log pane, the Submit and Cookies views, and the
+launch remain planned.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -35,9 +37,10 @@ DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
 are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` are implemented (PR #105), completing the
 shared host operations. The Textual-free backend, process runners, and
-stream handle are implemented (PR #110), as are the app frame (PR #112)
-and the Status view (PR #115); the Jobs, Submit, and Cookies views and the
-launch remain planned.
+stream handle are implemented (PR #110), as are the app frame (PR #112),
+the Status view (PR #115), and the Jobs view's listing, details, marks,
+cancel, retry, and export (PR #118); the Jobs view's log pane, the Submit
+and Cookies views, and the launch remain planned.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -199,8 +202,9 @@ The worker shipped additively first; the coordinated `dl`, `batch`, and
 completion evidence in the gate. Stage 3 is implemented; Stage 4's shared
 host operations are implemented (PRs #103, #105), as are its Textual-free
 backend, process runners, and stream handle (PR #110) and its app frame
-(PR #112) and Status view (PR #115). The TUI's Jobs, Submit, and Cookies
-views and its launch remain planned.
+(PR #112), Status view (PR #115), and Jobs view's listing, details, marks,
+cancel, retry, and export (PR #118). The Jobs view's log pane, the Submit
+and Cookies views, and the launch remain planned.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -241,8 +245,10 @@ shared renderers and settings writes are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations. The Textual-free backend,
 process runners, and stream handle are implemented (PR #110), as are the
-app frame (PR #112) and the Status view (PR #115); the Jobs, Submit, and
-Cookies views and the launch remain planned. The app uses `downloadinux.tui` on `textual==8.2.8` and is
+app frame (PR #112), the Status view (PR #115), and the Jobs view's
+listing, details, marks, cancel, retry, and export (PR #118); the Jobs
+view's log pane, the Submit and Cookies views, and the launch remain
+planned. The app uses `downloadinux.tui` on `textual==8.2.8` and is
 to open on bare `dlx` on a terminal (help otherwise).
 It is a front over the CLI's host operations through one backend: no new
 worker client, store access, or host
@@ -356,5 +362,7 @@ the writes and the shared renderers are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations. The Textual-free backend,
 process runners, and stream handle are implemented (PR #110), as are the
-app frame (PR #112) and the Status view (PR #115); the Jobs, Submit, and
-Cookies views and the launch remain planned.
+app frame (PR #112), the Status view (PR #115), and the Jobs view's
+listing, details, marks, cancel, retry, and export (PR #118); the Jobs
+view's log pane, the Submit and Cookies views, and the launch remain
+planned.
