@@ -407,12 +407,11 @@ def test_the_timed_reads_use_the_mode():
         for mode in (True, False):
             count = len(app.backend.called("jobs"))
             await pilot.press("a")
-            # A read that started before the key is superseded; every read
-            # from the key's own on lists in the new mode.
+            # At most one read, in flight at the key and then superseded,
+            # lists in the old mode; the fake logs calls in the order their
+            # threads reach it, so it may log after the key's own read.
             await until(pilot, lambda: modes(count).count((mode,)) >= 3)
-            after = modes(count)
-            first = after.index((mode,))
-            assert first <= 1 and after[first:] == [(mode,)] * len(after[first:])
+            assert modes(count).count((not mode,)) <= 1
 
     drive(app, scenario)
 
