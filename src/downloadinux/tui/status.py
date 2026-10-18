@@ -1,6 +1,6 @@
 """The Status view (target design, *Python + Textual TUI* §7; DEC-60 to
-DEC-62): `doctor`'s checks, `config show`'s report, and the settings
-editor.
+DEC-62): `doctor`'s checks, `config show`'s report, the settings editor,
+the NordVPN token, and the container's lifecycle.
 
 `StatusView` fills the app's `status` pane and reaches the host
 operations only through the app's view entry points (§2 *View entry
@@ -13,10 +13,10 @@ from rich.text import Text
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.geometry import Region
-from textual.widgets import DataTable, Static, TabbedContent, TabPane
+from textual.widgets import DataTable, Input, Static, TabbedContent, TabPane
 
 from downloadinux import health, operations, render, settings
-from downloadinux.tui.dialogs import ChoiceDialog, TextDialog
+from downloadinux.tui.dialogs import ChoiceDialog, Confirm, TextDialog
 
 # §7 *Health table*: each status's cell and style, as `doctor` colours its marks.
 STATUS_CELLS = {
@@ -27,6 +27,13 @@ STATUS_CELLS = {
 }
 RESTART = "restart the container to apply it (R)"  # §7 *Editing*
 RESTART_TABLES = ("paths.", "container.", "vpn.")
+# §7 *Container*: the questions before `down` and `restart`, and each result.
+QUESTIONS = {
+    "down": "Stop the container? {running} Queued jobs wait until it starts again.",
+    "restart": "Restart the container? {running} Queued jobs carry on.",
+}
+LIFECYCLE_DONE = {"up": "The container is up.", "down": "The container is down.",
+                  "restart": "The container restarted."}
 
 
 def plain(text: str) -> Text:
@@ -50,6 +57,43 @@ def write_text(write: operations.SettingWrite, overridden: bool) -> str:
     if write.written and write.key.startswith(RESTART_TABLES):
         lines.append(RESTART)
     return "\n".join(lines)
+
+
+def token_text(result: tuple) -> str:
+    """`set_token`'s result text, `config set-token`'s texts (§7 *Token*)."""
+    path, login = result
+    lines, warning = render.login_messages(login)
+    lines = [render.token_stored(path), *lines]
+    if warning is not None:
+        lines.append(f"warning: {warning}")
+    return "\n".join(lines)
+
+
+def running_text(listing) -> str:
+    """RUNNING in the `down` and `restart` questions (§7 *Container*),
+    counted from the latest listing `Outcome` as the header counts."""
+    if listing is None or listing.failed:
+        return "The job listing is unavailable."
+    count = sum(job["state"] == "running" for job in listing.result)
+    if count == 0:
+        return "No job is running."
+    if count == 1:
+        return "1 running job will be interrupted."
+    return f"{count} running jobs will be interrupted."
+
+
+class TokenDialog(TextDialog):
+    """`t`'s dialog (§7 *Token*): one masked field, submitted stripped,
+    and emptied whenever the dialog closes."""
+
+    def __init__(self):
+        super().__init__("NordVPN token", password=True)
+
+    def value(self) -> str:
+        return super().value().strip()
+
+    def closing(self) -> None:
+        self.query_one(Input).value = ""
 
 
 class ViewTable(DataTable):
@@ -95,6 +139,10 @@ class StatusView(VerticalScroll):
     """
     BINDINGS = [
         Binding("x", "unset", "Unset"),
+        Binding("t", "token", "Token"),
+        Binding("U", "lifecycle('up')", "Up"),
+        Binding("D", "lifecycle('down')", "Down"),
+        Binding("R", "lifecycle('restart')", "Restart"),
     ]
 
     def __init__(self, **kwargs):
@@ -221,3 +269,29 @@ class StatusView(VerticalScroll):
     def _written(overridden: bool, write: operations.SettingWrite) -> tuple[str, str]:
         text = write_text(write, overridden)
         return text, text
+
+    # The token and the container (§7 *Token*, *Container*).
+
+    def action_token(self) -> None:
+        def submitted(token: str | None) -> None:
+            if token is not None:
+                self.app.act("set_token", token, report=self._token_stored)
+
+        self.app.push_screen(TokenDialog(), submitted)
+
+    @staticmethod
+    def _token_stored(result: tuple) -> tuple[str, str]:
+        text = token_text(result)
+        return text, text
+
+    def action_lifecycle(self, command: str) -> None:
+        if command not in QUESTIONS:
+            self._run_lifecycle(command)
+            return
+        question = QUESTIONS[command].format(running=running_text(self.app.listing))
+        self.app.push_screen(Confirm(question),
+                             lambda yes: yes and self._run_lifecycle(command))
+
+    def _run_lifecycle(self, command: str) -> None:
+        done = LIFECYCLE_DONE[command]
+        self.app.act("lifecycle", command, report=lambda result: (done, done))

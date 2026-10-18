@@ -8,8 +8,8 @@ from textual.widgets import DataTable, Input, OptionList, Static, TabbedContent
 from downloadinux import health, operations, render
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.tui.app import ActivityLog, DownloadinuxApp
-from downloadinux.tui.dialogs import ChoiceDialog, TextDialog
-from downloadinux.tui.status import StatusView
+from downloadinux.tui.dialogs import ChoiceDialog, Confirm, TextDialog
+from downloadinux.tui.status import StatusView, TokenDialog
 from tui_support import FakeBackend, Step, drive, until
 
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
@@ -604,5 +604,247 @@ def test_table_keys_move_the_cursor_and_the_view_follows(tmp_path):
         await pilot.press("down", "up")
         await pilot.pause()
         assert row_visible(scroll, settings_table, settings_table.cursor_row)
+
+    drive(app, scenario)
+
+
+# Token (§7 *Token*).
+
+TOKEN = "0123456789abcdef" * 4  # A well-formed fake token: 64 lowercase hex.
+CONNECT = operations.Connect(("us", "1234"), True)
+
+
+def screen_text(app) -> str:
+    """Every rendered line of every screen on the stack, and each widget's
+    own rendering, joined."""
+    parts = []
+    for screen in app.screen_stack:
+        parts += [strip.text for strip in screen._compositor.render_strips()]
+        for widget in screen.walk_children(with_self=True):
+            rendered = widget.render()
+            parts.append(rendered.plain if hasattr(rendered, "plain") else str(rendered))
+    return "\n".join(parts)
+
+
+def assert_token_absent(app, notes, token):
+    assert token not in screen_text(app)
+    assert not any(token in line for entry in app.activity.entries for line in entry)
+    assert not any(token in line for line in app.activity.lines)
+    assert not any(token in note for note, _ in notes)
+    assert not any(token in note.message for note in app._notifications)
+    assert token not in str(app.running_line.render()) and token not in app.header.text
+
+
+async def submit_token(pilot, app, typed):
+    await pilot.press("t")
+    dialog = app.screen
+    assert isinstance(dialog, TokenDialog)
+    field = dialog.query_one(Input)
+    assert field.password and field.value == ""
+    field.value = typed
+    await pilot.pause()
+    return dialog, field
+
+
+@pytest.mark.parametrize("login,lines", [
+    (operations.LoginResult(operations.Login.VPN_OFF),
+     ["vpn.enabled is false: the token is kept for when the VPN is enabled."]),
+    (operations.LoginResult(operations.Login.NOT_RUNNING),
+     ["The container is not running; it logs in with the token at the next dlx up."]),
+    (operations.LoginResult(operations.Login.LOGGED_IN), ["Logged in."]),
+    (operations.LoginResult(operations.Login.LOGGED_IN, CONNECT),
+     ["Logged in.", "Connected to us 1234."]),
+    (operations.LoginResult(operations.Login.LOGGED_IN, operations.Connect((), False)),
+     ["Logged in.", "warning: could not connect to the fastest server; try dlx vpn on"]),
+])
+def test_t_stores_the_stripped_token_and_reports_config_set_token_texts(tmp_path, login, lines):
+    credentials = tmp_path / "credentials.toml"
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("set_token", Step(result=(credentials, login)))
+    expected = "\n".join([f"Stored the NordVPN token in {credentials}", *lines])
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await submit_token(pilot, app, f"  {TOKEN}  ")
+        assert TOKEN not in screen_text(app)  # Masked while it is typed.
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "config set-token"))
+        assert app.backend.called("set_token")[0].args == (TOKEN,)
+        assert field.value == ""
+        first, *rest = expected.split("\n")
+        assert entries(app, "config set-token") == ["\n".join(
+            [f"12:34:56 config set-token: {first}", *(" " * 9 + line for line in rest)])]
+        assert (expected, {"markup": False}) in notes
+        await settle(pilot, app)
+        assert_token_absent(app, notes, TOKEN)
+
+    drive(app, scenario)
+
+
+def test_a_malformed_token_shows_the_real_error_and_never_the_token(tmp_path):
+    typed = "not-a-token-" + "z" * 20
+    try:
+        operations.set_token(typed, str(tmp_path / "config.toml"))
+    except DownloadinuxError as error:
+        refused = error
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("set_token", Step(error=refused))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await submit_token(pilot, app, typed)
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "config set-token"))
+        assert app.backend.called("set_token")[0].args == (typed,)
+        assert entries(app, "config set-token") == [
+            f"12:34:56 config set-token: error: {operations.malformed_token_message(typed)}"]
+        assert notes[0] == (str(refused), dict(severity="error", timeout=10.0, markup=False))
+        assert_token_absent(app, notes, typed)
+
+    drive(app, scenario)
+
+
+def test_a_refused_login_shows_the_real_error(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("set_token", Step(error=DownloadinuxError(operations.REFUSED)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await submit_token(pilot, app, TOKEN)
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "config set-token"))
+        assert entries(app, "config set-token") == [
+            f"12:34:56 config set-token: error: {operations.REFUSED}"]
+        assert_token_absent(app, notes, TOKEN)
+
+    drive(app, scenario)
+
+
+def test_the_token_field_is_emptied_on_escape_and_empty_when_reopened(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await submit_token(pilot, app, TOKEN)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert field.value == "" and not isinstance(app.screen, TokenDialog)
+        assert "set_token" not in app.backend.names()
+        dialog, field = await submit_token(pilot, app, TOKEN)  # Opens empty again.
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "config set-token"))
+        await pilot.press("t")
+        assert app.screen.query_one(Input).value == ""
+        await pilot.press("escape")
+        await settle(pilot, app)
+        assert_token_absent(app, notes, TOKEN)
+
+    drive(app, scenario)
+
+
+# Container (§7 *Container*).
+
+def running_jobs(count):
+    return [{"id": i, "state": "running", "cancel_requested": False, "wait": None}
+            for i in range(count)] + [{"id": 99, "state": "queued", "cancel_requested": False,
+                                       "wait": None}]
+
+
+def test_u_starts_the_container_at_once(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("lifecycle", Step(before=("Container downloadinux-1 Started",)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await pilot.press("U")
+        await until(pilot, lambda: entries(app, "up"))
+        assert app.backend.called("lifecycle")[0].args == ("up",)
+        assert entries(app, "up") == ["12:34:56 up: The container is up."]
+        assert entries(app, "lifecycle") == ["12:34:56 lifecycle: Container downloadinux-1 Started"]
+        assert ("The container is up.", {"markup": False}) in notes
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("listing,running", [
+    (dict(result=running_jobs(0)), "No job is running."),
+    (dict(result=running_jobs(1)), "1 running job will be interrupted."),
+    (dict(result=running_jobs(3)), "3 running jobs will be interrupted."),
+    (dict(error=DownloadinuxError("the container is not running; start it with dlx up")),
+     "The job listing is unavailable."),
+    (dict(hold=True), "The job listing is unavailable."),  # No listing yet.
+])
+@pytest.mark.parametrize("key,command,question", [
+    ("D", "down", "Stop the container? {} Queued jobs wait until it starts again."),
+    ("R", "restart", "Restart the container? {} Queued jobs carry on."),
+])
+def test_down_and_restart_ask_naming_the_running_jobs(tmp_path, listing, running, key, command,
+                                                      question):
+    app = make_app()
+    app.backend.script("jobs", Step(**listing))
+
+    async def scenario(pilot):
+        if not listing.get("hold"):
+            await until(pilot, lambda: app.listing is not None)
+        await pilot.press("4")
+        await until(pilot, lambda: app.backend.called("config"))
+        await settle(pilot, app, "doctor", "config")
+        await pilot.press(key)
+        dialog = app.screen
+        assert isinstance(dialog, Confirm)
+        assert str(dialog.query_one("#question", Static).render()) == question.format(running)
+        assert app.focused is dialog.query_one("#no")
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("key,command,done", [
+    ("D", "down", "The container is down."),
+    ("R", "restart", "The container restarted."),
+])
+def test_a_yes_runs_the_command_and_no_runs_nothing(tmp_path, key, command, done):
+    app = make_app()
+    notes = watch_notes(app)
+    held = app.backend.hold("lifecycle")
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await pilot.press(key, "n")
+        await pilot.pause()
+        assert not isinstance(app.screen, Confirm)
+        await pilot.press(key, "escape")
+        await settle(pilot, app)
+        assert "lifecycle" not in app.backend.names()
+        await pilot.press(key, "y")
+        await until(pilot, held.started.is_set)
+        assert app.backend.called("lifecycle")[0].args == (command,)
+        assert str(app.running_line.render()) == f"{command} running"
+        held.release()
+        await until(pilot, lambda: entries(app, command))
+        assert entries(app, command) == [f"12:34:56 {command}: {done}"]
+        assert (done, {"markup": False}) in notes
+
+    drive(app, scenario)
+
+
+def test_a_failed_compose_command_shows_as_an_error(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("lifecycle", Step(error=DownloadinuxError("docker: Compose down failed (exit 1)"),
+                                         before=("Error response from daemon",)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await pilot.press("D", "y")
+        await until(pilot, lambda: entries(app, "down"))
+        assert entries(app, "down") == ["12:34:56 down: error: docker: Compose down failed (exit 1)"]
+        assert entries(app, "lifecycle") == ["12:34:56 lifecycle: Error response from daemon"]
+        assert notes[0] == ("docker: Compose down failed (exit 1)",
+                            dict(severity="error", timeout=10.0, markup=False))
 
     drive(app, scenario)

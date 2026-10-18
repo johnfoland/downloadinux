@@ -363,6 +363,10 @@ class DownloadinuxApp(App):
     action, whose result function may raise `DownloadinuxError` to report
     the action as an operation error, and `register` to supply the read
     behind a re-read kind (§2 *Actions*, §3 *Refresh*).
+
+    `listing` is the latest job listing's `Outcome`, None before the
+    first: what the header counts, and what Status's `down` and `restart`
+    questions count (§7 *Container*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -406,6 +410,7 @@ class DownloadinuxApp(App):
         self._waiting: deque[Action] = deque()
         self._action: Action | None = None
         self._jobs_shown = True
+        self.listing: Outcome | None = None
         self._captured = {False: "", True: ""}  # By `events.Print.stderr` (DEC-64).
         self._asking = False  # The quit question is open (TUI §8 *Quitting*).
         self._quitting = False
@@ -604,6 +609,7 @@ class DownloadinuxApp(App):
             self.read("vpn", "vpn_state", done=self._vpn_done)
 
     def _listing_done(self, outcome: Outcome) -> None:
+        self.listing = outcome
         summary = f"jobs: {outcome.shown}" if outcome.failed else job_summary(outcome.result)
         self.header.show(summary=summary)
 
