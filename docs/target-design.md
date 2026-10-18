@@ -3367,7 +3367,12 @@ them directly. The human renderers the CLI and TUI share (the escaping rule,
 retry lines, the cookie source and inspection text, `config show`'s and
 `doctor`'s text, and `config set-token`'s login messages) are implemented
 in `downloadinux.render`, moved from `cli.py` unchanged: every existing CLI
-output stays byte for byte what it is. The Textual-free backend, process
+output stays byte for byte what it is. The Jobs view (§4) adds two more,
+moved the same way: `render.job_cells(job)`, the tuple of one listed job's
+`jobs list` cells (ID, STATE, PRESET, QUEUE, ATTEMPT, URL) that
+`render_jobs` builds its rows from, and `render.no_jobs(all)`, `jobs
+list`'s empty text (`No jobs.` with `--all`, else `No queued, running,
+failed, or interrupted jobs.`). The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
 implemented (PR #112), as is the Status view in `downloadinux.tui.status`
@@ -3511,8 +3516,8 @@ callback posts the same way. The outcome (a result, an operation error, or an
 unexpected exception) is then handled on the UI thread.
 
 *Reads.* Each read has a key naming the place its result goes: `listing`
-for the job listing, `vpn` for the header's VPN state, and one per view pane
-the views add. A read started under a key supersedes the one in flight
+for the job listing (`jobs(all)` in the Jobs view's mode, §4), `vpn` for
+the header's VPN state, and one per view pane the views add. A read started under a key supersedes the one in flight
 under it: the older one's outcome is dropped when it arrives, and if it is
 a stream, it is stopped (*Stopping a stream*). A dropped outcome changes
 nothing on screen. The two timed reads are `listing` (§3's job intervals)
@@ -3765,6 +3770,20 @@ are implemented (PR #112), and so are Status's keys, refresh, and dialogs
 
 ### 4. Jobs view
 
+*Layout.* The view is `downloadinux.tui.jobs.JobsView`, which the app
+mounts in the `jobs` pane. It is a vertical stack: the listing's status
+line, the listing table, and below them, side by side, the details pane and
+the log pane. Below the status line the table takes one third of the height
+and the two panes the rest (`height: 1fr` and `2fr`); the details pane takes
+one third of the width, at least 32 columns, and the log pane the rest
+(`width: 1fr; min-width: 32` and `width: 2fr`). The table scrolls itself,
+keeping its cursor row in sight. The details and log panes show unwrapped
+lines as plain text and scroll both ways while focused. Showing Jobs, at
+launch included, focuses the table; `tab` and `shift+tab` move the focus
+between the table, details, and log. Jobs's keys (§3) are the view's
+bindings: they apply while the focus is in the view and no dialog is open,
+and the footer lists them there.
+
 *Listing.* A table of the default listing (`jobs list`'s jobs) or, after
 `a`, every job, in ID order, with `jobs list`'s columns (ID, STATE, PRESET,
 QUEUE, ATTEMPT, URL), cells from the shared renderer, and a mark column.
@@ -3778,9 +3797,44 @@ job ID across reads; when that job leaves the listing, it moves to the next
 listed ID, else the last row. A failed read keeps the last table, marked
 `stale: REASON`, and the next successful read clears the mark.
 
+In detail: the app's timed `listing` read (§2) calls `jobs(all)` with the
+view's mode, the default listing at launch, and hands each listing outcome
+to the view (`JobsView.listed(outcome)`) after the header has it. `a`
+switches the mode, empties the table and the marks, and starts a listing
+read at once, superseding any in flight. Above the table the status line
+reads TITLE: `Queued, running, failed, or interrupted jobs` for the default
+listing, `All jobs` after `a`. A successful listing with no jobs leaves the
+table with no rows, and the line reads `render.no_jobs(all)` instead of
+TITLE. Before the mode's first outcome the line reads `TITLE: reading…`.
+After a failed read it reads the last successful read's line followed by
+`; stale: REASON`, or `TITLE; stale: REASON` over an empty table when the
+mode has had no successful read; REASON is §8's error text, escaped, or
+`internal error; see Activity`. The mark column has an empty heading and
+holds `*` on a marked job, else nothing. The other cells are
+`render.job_cells(job)`, as plain text. The STATE cell takes its
+condition's style: `running` bold green, `running: cancelling` bold yellow,
+`queued: throttle until T` magenta, `queued: vpn` blue, `queued` cyan,
+`failed` bold red, `interrupted` red, `cancelled` yellow, and `succeeded`
+green. The condition comes from the record (`state`, `wait`, and
+`cancel_requested`, as `render.job_state` reads them), never from the cell's
+text. At the first listing with rows the cursor is on the first row; after
+that it follows its job ID as above, the next listed ID being the smallest
+listed ID above it.
+
 *Details.* The cursor job's `jobs show` text (shared renderer), read when
 the cursor moves to it and again whenever a listing shows any field of its
 record changed.
+
+In detail: the details pane shows `render.render_job(view)` for the cursor
+job, read with `show(id)` under the key `details`. A read starts when the
+cursor comes to a job (a key, or a listing that moved it), and when a
+listing's record for the cursor job differs from the record the listing
+held when that job's details were last read. While the first read for a job
+runs, the pane reads `Job I: reading…`; a later read for the same job keeps
+the shown text until it ends. A failed read shows `Job I: REASON` (REASON
+as in the status line), its error recorded and notified as any read's
+(§8). With no rows the pane is empty, and a `details` read in flight is
+dropped (§2 *View entry points*).
 
 *Log pane.* By default it shows the cursor job's current attempt through
 `follow_job`: a `Job I: URL` notice, the log's bytes, wait notices as they
@@ -3827,6 +3881,44 @@ keeps each job's), then sends one `retry` with that selection. Each outcome
 is recorded in Activity with the matching `jobs cancel` or `jobs retry` line,
 and the notification summarizes them.
 
+In detail: `space` toggles the cursor job's mark. With no marks and no rows,
+`c`, `r`, and `R` do nothing. The marks are cleared when the action is
+queued: at once for `r` and for a `c` that asks nothing, on yes for a `c`
+that asks, and when `R`'s dialog is submitted. A declined question or a
+closed dialog keeps them. The cancel question is asked when any target
+job's `state` in the table is `running` (`running: cancelling` included):
+`Cancel job I? It is running; its download stops.` for one target, and
+`Cancel N jobs? M of them are running; their downloads stop.` for several,
+`1 of them is running; its download stops.` when M is 1. `c` and `r` send
+`cancel(IDS)` and `retry(IDS, Selection())`, IDS in ID order. The Activity
+text is the CLI's lines, one per outcome in order (`render.cancel_line`,
+`render.retry_line`). The notification is that line when there is one, and
+otherwise the count of each kind present, in the order below, joined with
+`, ` and ending `.`. For cancel: `N cancelled`, `N cancel requested`, `N
+not cancellable` (refused), and `N unknown`. For retry: `N queued again`
+(requeued), `N held by another job` (shadowed), `N not retryable` (refused,
+or no outcome with a record), and `N unknown` (unknown, or no outcome and
+no record). So two cancels and a running one give `2 cancelled, 1 cancel
+requested.`
+
+`R`'s dialog is titled `Retry job I` or `Retry N jobs`. It holds a list of
+cookie choices, `Each job's own`, `Anonymous`, and each source in the cookie
+list by name (escaped), with the cursor on `Each job's own`; a status line;
+and a `User-agent` field, empty. `enter` on a choice keeps it highlighted
+and moves the focus to the field. Opening the dialog reads `cookies()` under
+the key `retry-cookies`, and closing it drops that read. While the read
+runs, the status line reads `Reading cookie sources…` and only the first two
+choices are offered; a failed read keeps those two, shows REASON (as in the
+listing's status line) in the status line, and is recorded and notified as
+any read's error (§8); a success empties the status line and adds the
+sources. Submitting (`enter` in the field, or OK) sends `retry(IDS,
+SELECTION)`: `Selection()`, `Selection(anonymous=True)`, or
+`Selection(source=NAME)` for the highlighted choice, each with `user_agent`
+the field's text when it is nonempty, else None. A nonempty text is first
+checked as `--user-agent` is (`launch.user_agent_option`); a refusal leaves
+the dialog open with that error's text in its status line, and nothing is
+sent.
+
 *Export.* `e` opens a dialog for a preset and a required path. The host
 operation, `host_jobs.export_to(preset, path, config=None, overrides=(),
 host=Host(), *, capture=None, feed=None)`, expands the path's leading `~` and
@@ -3857,6 +3949,15 @@ no-clobber write is `files.write_atomic` with `replace=False` and a new
 `export_to` sets false: a missing directory is then the OS error naming the
 export path. The host operation and shared export text are implemented
 (PR #105); the TUI dialog and result texts are not.
+
+The dialog is titled `Export failed work`. It holds a preset choice (a
+`RadioSet`: `video`, pressed, then `gallery`) and a `Path` field, empty.
+`enter` in the field, or OK, sends `export_to(PRESET, PATH)` with the
+field's text as entered; an empty path is the operation's configuration
+error. The result is `Exported N URLs to PATH.` or `No failed, cancelled, or
+interrupted PRESET jobs to export.`, PRESET the chosen preset and PATH
+`ExportFile.path`, escaped; an existing path is the operation's error. The
+text is the Activity entry and the notification.
 
 ### 5. Submit view
 
