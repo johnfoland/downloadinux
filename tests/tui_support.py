@@ -38,7 +38,8 @@ STREAMS = ("log", "follow_job", "follow_lane")
 # `config`'s default is the real report for a settings file that does not exist.
 MISSING = "/nonexistent-downloadinux/config.toml"
 DEFAULTS = {"jobs": [], "vpn_state": VpnState(False, False, False, None, None),
-            "doctor": health.Result(()), "config": operations.show_config(MISSING)}
+            "doctor": health.Result(()), "config": operations.show_config(MISSING),
+            "cookies": {"default": None, "sources": []}}
 WAIT = 5.0  # The longest any helper waits on a thread, so a failure cannot hang.
 
 

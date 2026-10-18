@@ -1,6 +1,6 @@
 """The Jobs view (target design, *Python + Textual TUI* §4; DEC-60): the job
-listing with its status line and mode, the cursor job's details, and the
-log pane.
+listing with its status line and mode, the cursor job's details, the log
+pane, marks, cancel, and retry.
 
 `JobsView` fills the app's `jobs` pane. The app's timed `listing` read
 asks it for its mode (`all`) and hands it each listing outcome
@@ -8,15 +8,19 @@ asks it for its mode (`all`) and hands it each listing outcome
 view entry points (§2 *View entry points*).
 """
 
+from collections import Counter
 from functools import partial
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Static, TabbedContent, TabPane
+from textual.widgets import DataTable, Input, OptionList, Static, TabbedContent, TabPane
 
-from downloadinux import render
+from downloadinux import host_jobs, launch, render
+from downloadinux.errors import ConfigError
+from downloadinux.tui.backend import Selection
+from downloadinux.tui.dialogs import Confirm, FormDialog
 from downloadinux.tui.widgets import TextPane, ViewTable
 
 # §4 *Listing*: the status line's TITLE in each mode.
@@ -47,12 +51,126 @@ def condition(job: dict) -> str:
     return job["state"]
 
 
+# §4 *Cancel and retry*: each outcome kind's count text, in notification order.
+CANCEL_COUNTS = (("cancelled", "cancelled"), ("requested", "cancel requested"),
+                 ("refused", "not cancellable"), ("unknown", "unknown"))
+RETRY_COUNTS = (("requeued", "queued again"), ("shadowed", "held by another job"),
+                ("refused", "not retryable"), ("unknown", "unknown"))
+RETRY_CHOICES = ("Each job's own", "Anonymous")
+
+
+def mark(marked: bool) -> Text:
+    return Text("*" if marked else "", end="")
+
+
 def row_cells(job: dict, marked: bool) -> tuple[Text, ...]:
     """The mark cell, then `render.job_cells` as plain text, STATE styled
     by its condition (§4 *Listing*)."""
     cells = [Text(cell, end="") for cell in render.job_cells(job)]
     cells[1].style = STYLES[condition(job)]
-    return (Text("*" if marked else "", end=""), *cells)
+    return (mark(marked), *cells)
+
+
+def cancel_question(ids: list[int], running: int) -> str:
+    """The question before cancelling running jobs (§4 *Cancel and retry*)."""
+    if len(ids) == 1:
+        return f"Cancel job {ids[0]}? It is running; its download stops."
+    if running == 1:
+        return f"Cancel {len(ids)} jobs? 1 of them is running; its download stops."
+    return f"Cancel {len(ids)} jobs? {running} of them are running; their downloads stop."
+
+
+def outcome_text(lines: list[str], kinds: list[str], counts: tuple) -> tuple[str, str]:
+    """An action's Activity text, the CLI's lines in order, and its
+    notification: the one line, else the count of each kind present."""
+    if len(lines) == 1:
+        return lines[0], lines[0]
+    present = Counter(kinds)
+    notice = ", ".join(f"{present[kind]} {text}" for kind, text in counts if present[kind])
+    return "\n".join(lines), notice + "."
+
+
+def cancelled(outcomes: list[dict]) -> tuple[str, str]:
+    return outcome_text([render.cancel_line(outcome) for outcome in outcomes],
+                        [outcome["outcome"] for outcome in outcomes], CANCEL_COUNTS)
+
+
+def retry_kind(line: host_jobs.RetryLine) -> str:
+    """A retry line's kind: a job with no outcome was not retryable when it
+    has a record, else unknown."""
+    if line.outcome is None:
+        return "unknown" if line.record is None else "refused"
+    return line.outcome["outcome"]
+
+
+def retried(lines: list[host_jobs.RetryLine]) -> tuple[str, str]:
+    return outcome_text([render.retry_line(line) for line in lines],
+                        [retry_kind(line) for line in lines], RETRY_COUNTS)
+
+
+class RetryDialog(FormDialog):
+    """`R`'s dialog (§4 *Cancel and retry*): the cookie choices, a status
+    line, and a `User-agent` field. It reads the cookie list under
+    `retry-cookies` when it opens and drops that read when it closes; it
+    submits a `Selection`, refusing a user-agent `--user-agent` refuses."""
+
+    KEY = "retry-cookies"
+
+    def __init__(self, ids: list[int]):
+        super().__init__(f"Retry job {ids[0]}" if len(ids) == 1 else f"Retry {len(ids)} jobs")
+        self.sources: tuple[str, ...] = ()  # The listed sources, unescaped.
+
+    def fields(self) -> ComposeResult:
+        yield OptionList(*(Text(choice, end="") for choice in RETRY_CHOICES), id="choices")
+        yield Static(id="retry-status")
+        yield Static(Text("User-agent"))
+        yield Input(id="user-agent")
+
+    def on_mount(self) -> None:
+        options = self.query_one(OptionList)
+        options.highlighted = 0
+        options.focus()
+        self._status("Reading cookie sources…")
+        self.app.read(self.KEY, "cookies", done=self._listed)
+
+    def _status(self, text: str) -> None:
+        self.query_one("#retry-status", Static).update(Text(text, end=""))
+
+    @property
+    def status(self) -> str:
+        return self.query_one("#retry-status", Static).content.plain
+
+    def _listed(self, outcome) -> None:
+        if outcome.failed:
+            self._status(outcome.shown)
+            return
+        self._status("")
+        self.sources = tuple(source["name"] for source in outcome.result["sources"])
+        self.query_one(OptionList).add_options(
+            [Text(render.escape(name), end="") for name in self.sources])
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.query_one(Input).focus()
+
+    def value(self) -> Selection:
+        text = self.query_one(Input).value
+        user_agent = launch.user_agent_option(text) if text else None
+        index = self.query_one(OptionList).highlighted or 0
+        if index == 0:
+            return Selection(user_agent=user_agent)
+        if index == 1:
+            return Selection(anonymous=True, user_agent=user_agent)
+        return Selection(source=self.sources[index - 2], user_agent=user_agent)
+
+    def submit(self) -> None:
+        try:
+            super().submit()
+        except ConfigError as error:
+            self._status(render.escape(str(error)))
+
+    def closing(self) -> None:
+        self.app.drop(self.KEY)
 
 
 class JobsView(Vertical):
@@ -74,7 +192,11 @@ class JobsView(Vertical):
     BINDINGS = [
         Binding("tab", "cycle(1)", show=False),
         Binding("shift+tab", "cycle(-1)", show=False),
+        Binding("space", "toggle_mark", "Mark"),
         Binding("a", "toggle_all", "All/default"),
+        Binding("c", "cancel", "Cancel"),
+        Binding("r", "retry", "Retry"),
+        Binding("R", "retry_with", "Retry with…"),
     ]
 
     def __init__(self, **kwargs):
@@ -174,6 +296,60 @@ class JobsView(Vertical):
         # the cursor row would leave the view.
         table.scroll_to(*scrolled, animate=False, immediate=True, force=True)
         table.move_cursor(row=row, animate=False)
+
+    # Marks, cancel, and retry (§4 *Cancel and retry*).
+
+    def action_toggle_mark(self) -> None:
+        id = self.cursor_id()
+        if id is None:
+            return
+        self.marks ^= {id}
+        self.table.update_cell(str(id), "mark", mark(id in self.marks))
+
+    def targets(self) -> list[int]:
+        """The marked jobs in ID order, else the cursor job, else none."""
+        if self.marks:
+            return sorted(self.marks)
+        id = self.cursor_id()
+        return [] if id is None else [id]
+
+    def _clear_marks(self) -> None:
+        for id in self.marks:
+            self.table.update_cell(str(id), "mark", mark(False))
+        self.marks.clear()
+
+    def action_cancel(self) -> None:
+        ids = self.targets()
+        if not ids:
+            return
+        running = sum(self.jobs[id]["state"] == "running" for id in ids)
+        if not running:
+            self._cancel(ids)
+            return
+        self.app.push_screen(Confirm(cancel_question(ids, running)),
+                             lambda yes: yes and self._cancel(ids))
+
+    def _cancel(self, ids: list[int]) -> None:
+        self._clear_marks()
+        self.app.act("cancel", ids, report=cancelled)
+
+    def action_retry(self) -> None:
+        ids = self.targets()
+        if ids:
+            self._retry(ids, Selection())
+
+    def action_retry_with(self) -> None:
+        ids = self.targets()
+        if ids:
+            self.app.push_screen(RetryDialog(ids), partial(self._retry_chosen, ids))
+
+    def _retry_chosen(self, ids: list[int], selection: Selection | None) -> None:
+        if selection is not None:  # None: the dialog was closed.
+            self._retry(ids, selection)
+
+    def _retry(self, ids: list[int], selection: Selection) -> None:
+        self._clear_marks()
+        self.app.act("retry", ids, selection, report=retried)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()  # `enter` on a listing row does nothing (§4).

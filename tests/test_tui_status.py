@@ -1180,7 +1180,8 @@ def test_status_keys_apply_and_show_only_while_the_focus_is_in_status(tmp_path):
             assert STATUS_KEYS <= shown
         await pilot.press("1")
         await pilot.pause()
-        assert not STATUS_KEYS & set(app.active_bindings)
+        # Jobs binds `R` too (TUI §3 *Keys*); none of Status's are active.
+        assert not any(isinstance(active.node, StatusView) for active in app.active_bindings.values())
         await pilot.press(*sorted(STATUS_KEYS))
         await settle(pilot, app)
         assert app.screen is app.screen_stack[0]

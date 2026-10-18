@@ -3,11 +3,15 @@
 from pathlib import Path
 
 import pytest
-from textual.widgets import TabbedContent
+from test_host_jobs import publish
+from textual.widgets import Input, OptionList, Static, TabbedContent
 
-from downloadinux import host_jobs, render
+from downloadinux import cookie_store, cookie_writer, host_jobs, launch, render
+from downloadinux.errors import ConfigError
 from downloadinux.tui.app import ActivityLog, DownloadinuxApp
-from downloadinux.tui.jobs import JobsView
+from downloadinux.tui.backend import Selection
+from downloadinux.tui.dialogs import Confirm
+from downloadinux.tui.jobs import JobsView, RetryDialog
 from downloadinux.tui.widgets import TextPane, ViewTable
 from tui_support import FakeBackend, Step, drive, job_view, not_running, record, until
 
@@ -779,5 +783,586 @@ def test_a_clears_the_details_and_drops_a_held_read():
         await until(pilot, held.finished.is_set)
         await settle(pilot, app)
         assert view(app).details.lines == []
+
+    drive(app, scenario)
+
+
+# Marks (§4 *Cancel and retry*).
+
+def marks(app) -> list[int]:
+    return [int(row[1]) for row in rows(app) if row[0] == "*"]
+
+
+def test_space_toggles_the_cursor_jobs_mark():
+    app = make_app([record(1), record(2)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space")
+        assert marks(app) == [1]
+        await pilot.press("down", "space")
+        assert marks(app) == [1, 2]
+        await pilot.press("space")
+        assert marks(app) == [1]
+        assert view(app).marks == {1}
+
+    drive(app, scenario)
+
+
+def test_marks_survive_a_re_read_and_drop_with_their_job():
+    app = make_app([record(1), record(2), record(3)], [record(1), record(2), record(3)],
+                   [record(1), record(3)], [record(1), record(2), record(3)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "down", "space")
+        for count, expected in ((2, [1, 2]), (3, [1]), (4, [1])):
+            await pilot.press("ctrl+r")
+            await listed(pilot, app, count)
+            assert marks(app) == expected
+
+    drive(app, scenario)
+
+
+def test_a_clears_the_marks():
+    app = make_app([record(1)], [record(1)], [record(1)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "a")
+        await listed(pilot, app, 2)
+        assert view(app).marks == set()
+        assert marks(app) == []
+        await pilot.press("a")
+        await listed(pilot, app, 3)
+        assert marks(app) == []
+
+    drive(app, scenario)
+
+
+# Targets (§4 *Cancel and retry*).
+
+def retries(app) -> list[tuple]:
+    return [call.args for call in app.backend.called("retry")]
+
+
+def test_the_targets_are_the_marks_in_id_order():
+    app = make_app([record(1), record(4), record(9)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("end", "space", "home", "space", "down", "space", "r")
+        await settle(pilot, app, "retry")
+        assert retries(app) == [([1, 4, 9], Selection())]
+        assert marks(app) == []
+
+    drive(app, scenario)
+
+
+def test_without_marks_the_target_is_the_cursor_job():
+    app = make_app([record(1), record(4)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("down", "r")
+        await settle(pilot, app, "retry")
+        assert retries(app) == [([4], Selection())]
+
+    drive(app, scenario)
+
+
+def test_with_no_rows_c_r_and_shift_r_do_nothing():
+    app = make_app([])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("c", "r", "R", "space")
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+        assert not app.backend.called("cancel") and not app.backend.called("retry")
+
+    drive(app, scenario)
+
+
+# Cancel (§4 *Cancel and retry*).
+
+def cancels(app) -> list[tuple]:
+    return [call.args for call in app.backend.called("cancel")]
+
+
+def test_cancel_asks_nothing_when_nothing_targeted_is_running():
+    app = make_app([record(1, state="queued"), record(2, state="running"), record(3)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "end", "space", "c")
+        await settle(pilot, app, "cancel")
+        assert app.screen is app.screen_stack[0]
+        assert cancels(app) == [([1, 3],)]
+        assert marks(app) == []
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("states,question", [
+    (["running"], "Cancel job 1? It is running; its download stops."),
+    (["queued", "running", "failed"],
+     "Cancel 3 jobs? 1 of them is running; its download stops."),
+    (["running", "queued", "running"],
+     "Cancel 3 jobs? 2 of them are running; their downloads stop."),
+    (["running", "running", "running"],
+     "Cancel 3 jobs? 3 of them are running; their downloads stop."),
+])
+def test_cancel_asks_before_cancelling_a_running_job(states, question):
+    app = make_app([record(id, state=state) for id, state in enumerate(states, 1)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        if len(states) > 1:
+            for _ in states:
+                await pilot.press("space", "down")
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, Confirm)
+        assert app.screen.question == question
+        assert app.focused.id == "no"
+
+    drive(app, scenario)
+
+
+def test_cancelling_counts_as_running():
+    app = make_app([record(1, state="running", cancel_requested=True)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.question == "Cancel job 1? It is running; its download stops."
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("keys", [("n",), ("escape",)])
+def test_declining_sends_nothing_and_keeps_the_marks(keys):
+    app = make_app([record(1, state="running"), record(2)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "down", "space", "c")
+        await pilot.pause()
+        await pilot.press(*keys)
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+        assert cancels(app) == []
+        assert marks(app) == [1, 2]
+
+    drive(app, scenario)
+
+
+def test_yes_sends_cancel_and_clears_the_marks():
+    app = make_app([record(1, state="running"), record(2)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "down", "space", "c")
+        await pilot.pause()
+        await pilot.press("y")
+        await settle(pilot, app, "cancel")
+        assert cancels(app) == [([1, 2],)]
+        assert marks(app) == []
+
+    drive(app, scenario)
+
+
+# Outcome texts (§4 *Cancel and retry*).
+
+def notes_of(app) -> list[str]:
+    notes = []
+    app.notify = lambda message, **options: notes.append(message)
+    return notes
+
+
+def activity(app, source) -> list[str]:
+    return [text for text in ("\n".join(entry) for entry in app.activity.entries)
+            if text.startswith(f"12:34:56 {source}: ")]
+
+
+def cancel_outcome(id, kind, state):
+    return {"id": id, "outcome": kind, "state": state}
+
+
+CANCEL_KINDS = [
+    ("cancelled", "cancelled", "job 1 cancelled"),
+    ("requested", "running", "job 1: cancel requested; it ends when its downloader exits"),
+    ("refused", "succeeded", "job 1 is succeeded; only queued or running jobs can be cancelled"),
+    ("unknown", None, "unknown job ID 1"),
+]
+
+
+@pytest.mark.parametrize("kind,state,line", CANCEL_KINDS)
+def test_each_cancel_kind_as_a_single_line(kind, state, line):
+    app = make_app([record(1, state="queued")])
+    app.backend.script("cancel", Step(result=[cancel_outcome(1, kind, state)]))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("c")
+        await settle(pilot, app, "cancel")
+        assert notes == [line]
+        assert activity(app, "jobs cancel") == [f"12:34:56 jobs cancel: {line}"]
+
+    drive(app, scenario)
+
+
+def retry_line(id, kind, state="failed", holder=None, attempt=1, listed=True):
+    """A real `RetryLine` shape: the listed record, and the reply's outcome
+    (None for a job that was not sent)."""
+    record_ = record(id, state=state, attempt=attempt) if listed else None
+    outcome = None if kind is None else {"id": id, "outcome": kind, "state": state,
+                                         "holder": holder}
+    return host_jobs.RetryLine(id, record_, outcome)
+
+
+RETRY_KINDS = [
+    (retry_line(1, "requeued", attempt=2), "job 1 queued again as attempt 3"),
+    (retry_line(1, "shadowed", holder=7),
+     "job 1 not retried: job 7 already holds its preset and URL"),
+    (retry_line(1, "refused", state="running"),
+     "job 1 is running; only failed, cancelled, or interrupted jobs can be retried"),
+    (retry_line(1, None, state="succeeded"),
+     "job 1 is succeeded; only failed, cancelled, or interrupted jobs can be retried"),
+    (retry_line(1, None, listed=False), "unknown job ID 1"),
+]
+
+
+@pytest.mark.parametrize("line,text", RETRY_KINDS)
+def test_each_retry_kind_as_a_single_line(line, text):
+    app = make_app([record(1)])
+    app.backend.script("retry", Step(result=[line]))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("r")
+        await settle(pilot, app, "retry")
+        assert render.retry_line(line) == text
+        assert notes == [text]
+        assert activity(app, "jobs retry") == [f"12:34:56 jobs retry: {text}"]
+
+    drive(app, scenario)
+
+
+def test_several_cancel_outcomes_are_counted_in_order():
+    outcomes = [cancel_outcome(1, "unknown", None), cancel_outcome(2, "refused", "failed"),
+                cancel_outcome(3, "requested", "running"), cancel_outcome(4, "cancelled", "queued"),
+                cancel_outcome(5, "cancelled", "queued")]
+    app = make_app([record(id, state="queued") for id in range(1, 6)])
+    app.backend.script("cancel", Step(result=outcomes))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        for _ in range(5):
+            await pilot.press("space", "down")
+        await pilot.press("c")
+        await settle(pilot, app, "cancel")
+        assert notes == ["2 cancelled, 1 cancel requested, 1 not cancellable, 1 unknown."]
+        lines = [render.cancel_line(outcome) for outcome in outcomes]
+        assert activity(app, "jobs cancel") == [
+            "\n".join([f"12:34:56 jobs cancel: {lines[0]}", *(" " * 9 + line for line in lines[1:])])]
+
+    drive(app, scenario)
+
+
+def test_the_pinned_cancel_example():
+    outcomes = [cancel_outcome(1, "cancelled", "queued"), cancel_outcome(2, "requested", "running"),
+                cancel_outcome(3, "cancelled", "queued")]
+    app = make_app([record(1, state="queued"), record(2, state="queued"), record(3, state="queued")])
+    app.backend.script("cancel", Step(result=outcomes))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "down", "space", "down", "space", "c")
+        await settle(pilot, app, "cancel")
+        assert notes == ["2 cancelled, 1 cancel requested."]
+
+    drive(app, scenario)
+
+
+def test_several_retry_outcomes_are_counted_in_order():
+    lines = [retry_line(1, None, listed=False), retry_line(2, "unknown"),
+             retry_line(3, None, state="succeeded"), retry_line(4, "refused", state="running"),
+             retry_line(5, "shadowed", holder=9), retry_line(6, "requeued"),
+             retry_line(7, "requeued")]
+    app = make_app([record(id) for id in range(1, 8)])
+    app.backend.script("retry", Step(result=lines))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("r")
+        await settle(pilot, app, "retry")
+        assert notes == ["2 queued again, 1 held by another job, 2 not retryable, 2 unknown."]
+        texts = [render.retry_line(line) for line in lines]
+        assert activity(app, "jobs retry") == [
+            "\n".join([f"12:34:56 jobs retry: {texts[0]}", *(" " * 9 + text for text in texts[1:])])]
+
+    drive(app, scenario)
+
+
+def test_zero_kinds_are_left_out():
+    app = make_app([record(1), record(2)])
+    app.backend.script("retry", Step(result=[retry_line(1, "requeued"), retry_line(2, None,
+                                                                                   listed=False)]))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("r")
+        await settle(pilot, app, "retry")
+        assert notes == ["1 queued again, 1 unknown."]
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("key,method", [("c", "cancel"), ("r", "retry")])
+def test_the_listing_is_read_again_after_each_action(key, method):
+    app = make_app([record(1, state="queued")])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press(key)
+        await listed(pilot, app, 2)
+        [action] = app.backend.called(method)
+        assert app.backend.called("jobs")[1].start > action.end
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("key,method,name", [("c", "cancel", "jobs cancel"),
+                                             ("r", "retry", "jobs retry")])
+def test_an_action_error_is_an_error_notification(key, method, name):
+    app = make_app([record(1, state="queued")])
+    error = not_running()
+    app.backend.script(method, Step(error=error))
+    notes = []
+    app.notify = lambda message, **options: notes.append((message, options))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press(key)
+        await settle(pilot, app, method)
+        assert notes == [(str(error), dict(severity="error", timeout=10.0, markup=False))]
+        assert activity(app, name) == [f"12:34:56 {name}: error: {error}"]
+
+    drive(app, scenario)
+
+
+# The retry dialog (§4 *Cancel and retry*).
+
+def cookie_list(tmp_path) -> dict:
+    """A real `list_metadata` dict with the sources `alpha` and `beta`."""
+    root = tmp_path / "cookies"
+    publish(root, "alpha", "one")
+    publish(root, "beta", "two")
+    return cookie_store.list_metadata(cookie_writer.ensure_store(root))
+
+
+def choices(dialog) -> list[str]:
+    options = dialog.query_one(OptionList)
+    return [options.get_option_at_index(i).prompt.plain for i in range(options.option_count)]
+
+
+@pytest.mark.parametrize("count,title", [(1, "Retry job 1"), (3, "Retry 3 jobs")])
+def test_the_retry_dialog_title(count, title):
+    app = make_app([record(id) for id in range(1, count + 1)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        if count > 1:
+            for _ in range(count):
+                await pilot.press("space", "down")
+        await pilot.press("R")
+        await pilot.pause()
+        assert isinstance(app.screen, RetryDialog)
+        assert app.screen.query_one("#heading", Static).content.plain == title
+        assert app.screen.query_one("#user-agent", Input).value == ""
+
+    drive(app, scenario)
+
+
+def test_the_dialog_reads_the_cookie_list_and_adds_the_sources(tmp_path):
+    app = make_app([record(1)])
+    held = app.backend.hold("cookies", result=cookie_list(tmp_path))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await until(pilot, held.started.is_set)
+        await pilot.pause()
+        dialog = app.screen
+        assert dialog.status == "Reading cookie sources…"
+        assert choices(dialog) == ["Each job's own", "Anonymous"]
+        assert dialog.query_one(OptionList).highlighted == 0
+        held.release()
+        await settle(pilot, app, "cookies")
+        assert dialog.status == ""
+        assert choices(dialog) == ["Each job's own", "Anonymous", "alpha", "beta"]
+
+    drive(app, scenario)
+
+
+def test_source_names_are_escaped():
+    app = make_app([record(1)])
+    app.backend.script("cookies", Step(result={"default": None,
+                                                "sources": [{"name": "a[b]\x1b"}]}))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await settle(pilot, app, "cookies")
+        assert choices(app.screen)[2] == "a[b]\\x1b"
+
+    drive(app, scenario)
+
+
+def test_a_failed_cookie_read_keeps_two_choices_and_reports_it():
+    app = make_app([record(1)])
+    app.backend.script("cookies", Step(error=not_running()))
+    notes = []
+    app.notify = lambda message, **options: notes.append(message)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await settle(pilot, app, "cookies")
+        reason = "the container is not running; start it with dlx up"
+        assert app.screen.status == reason
+        assert choices(app.screen) == ["Each job's own", "Anonymous"]
+        assert activity(app, "cookies") == [f"12:34:56 cookies: error: {reason}"]
+        assert notes == [reason]
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("downs,selection", [
+    (0, Selection()), (1, Selection(anonymous=True)), (3, Selection(source="beta")),
+])
+@pytest.mark.parametrize("user_agent", ["", "Agent/2 [b]"])
+def test_submitting_sends_the_selection(tmp_path, downs, selection, user_agent):
+    app = make_app([record(1), record(2)])
+    app.backend.script("cookies", Step(result=cookie_list(tmp_path)))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "down", "space", "R")
+        await settle(pilot, app, "cookies")
+        await pilot.press(*["down"] * downs, "enter")
+        assert app.focused is app.screen.query_one("#user-agent", Input)
+        assert app.screen.query_one(OptionList).highlighted == downs
+        app.focused.value = user_agent
+        await pilot.press("enter")
+        await settle(pilot, app, "retry")
+        expected = Selection(selection.source, selection.anonymous, user_agent or None)
+        assert retries(app) == [([1, 2], expected)]
+        assert marks(app) == []
+        assert app.screen is app.screen_stack[0]
+
+    drive(app, scenario)
+
+
+def test_ok_submits_the_dialog():
+    app = make_app([record(1)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await settle(pilot, app, "cookies")
+        await pilot.click("#ok")
+        await settle(pilot, app, "retry")
+        assert retries(app) == [([1], Selection())]
+
+    drive(app, scenario)
+
+
+def test_a_refused_user_agent_keeps_the_dialog_open():
+    try:
+        launch.user_agent_option("a\rb")
+    except ConfigError as error:
+        refusal = str(error)
+    app = make_app([record(1), record(2)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "R")
+        await settle(pilot, app, "cookies")
+        dialog = app.screen
+        dialog.query_one("#user-agent", Input).value = "a\rb"
+        dialog.submit()
+        await pilot.pause()
+        assert app.screen is dialog
+        assert dialog.status == refusal == launch.USER_AGENT_USAGE
+        assert retries(app) == []
+        assert marks(app) == [1]
+
+    drive(app, scenario)
+
+
+def test_escape_sends_nothing_and_keeps_the_marks():
+    app = make_app([record(1), record(2)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("space", "R")
+        await settle(pilot, app, "cookies")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+        assert retries(app) == []
+        assert marks(app) == [1]
+
+    drive(app, scenario)
+
+
+def test_closing_during_a_held_cookie_read_drops_it(tmp_path):
+    app = make_app([record(1)])
+    held = app.backend.hold("cookies", result=cookie_list(tmp_path))
+    notes = notes_of(app)
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await until(pilot, held.started.is_set)
+        dialog = app.screen
+        await pilot.press("escape")
+        await pilot.pause()
+        held.release()
+        await until(pilot, held.finished.is_set)
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is app.screen_stack[0]
+        assert app.return_code is None
+        assert notes == []
+        assert activity(app, "cookies") == []
+
+    drive(app, scenario)
+
+
+def test_view_and_global_keys_do_nothing_while_the_dialog_is_open():
+    app = make_app([record(1, state="queued")])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press("R")
+        await settle(pilot, app, "cookies")
+        dialog = app.screen
+        calls = len(app.backend.calls)
+        await pilot.press("c", "1", "2", "3", "4", "5", "ctrl+r")
+        await pilot.pause()
+        assert app.screen is dialog
+        assert app.query_one(TabbedContent).active == "jobs"
+        assert len(app.backend.calls) == calls
 
     drive(app, scenario)
