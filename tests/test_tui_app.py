@@ -354,6 +354,77 @@ def test_activity_follows_until_scrolled_up_and_end_follows_again():
     drive(app, scenario)
 
 
+def bottom_line(log) -> str:
+    return log.render_line(log.size.height - 1).text.rstrip()
+
+
+def test_activity_shown_after_entries_arrive_opens_at_the_end():
+    app = make_app()
+
+    async def scenario(pilot):
+        log = app.activity
+        for number in range(100):
+            log.add("n", str(number))
+        await pilot.pause()
+        await pilot.press("5")
+        await pilot.pause()
+        assert log.max_scroll_y > 0 and log.scroll_y == log.max_scroll_y
+        assert bottom_line(log) == "12:34:56 n: 99"
+
+    drive(app, scenario)
+
+
+def test_activity_stays_at_the_end_across_resizes_while_following():
+    app = make_app()
+
+    async def scenario(pilot):
+        log = app.activity
+        await pilot.press("5")
+        for number in range(100):
+            log.add("n", str(number))
+        await pilot.pause()
+        for size in ((80, 10), (80, 24), (60, 8), (100, 30)):
+            await pilot.resize_terminal(*size)
+            await pilot.pause()
+            assert log.scroll_y == log.max_scroll_y, size
+            assert bottom_line(log) == "12:34:56 n: 99", size
+
+    drive(app, scenario)
+
+
+def test_a_scrolled_up_activity_stays_put_when_hidden_shown_and_resized():
+    app = make_app()
+
+    async def scenario(pilot):
+        log = app.activity
+        await pilot.press("5")
+        for number in range(100):
+            log.add("n", str(number))
+        await pilot.pause()
+        log.scroll_to(y=10, animate=False, immediate=True)
+        await pilot.pause()
+        top = log.render_line(0).text.rstrip()
+        assert top == "12:34:56 n: 10"
+        for keys, size in ((("1", "5"), None), ((), (80, 10)), ((), (80, 24))):
+            for key in keys:
+                await pilot.press(key)
+                await pilot.pause()
+            if size:
+                await pilot.resize_terminal(*size)
+                await pilot.pause()
+            assert log.scroll_y == 10 and not log._follow
+            assert log.render_line(0).text.rstrip() == top
+        await pilot.press("end")
+        await pilot.pause()
+        assert log._follow and log.scroll_y == log.max_scroll_y
+        await pilot.resize_terminal(80, 10)
+        await pilot.pause()
+        assert log.scroll_y == log.max_scroll_y
+        assert bottom_line(log) == "12:34:56 n: 99"
+
+    drive(app, scenario)
+
+
 def test_record_adds_process_text_from_any_thread():
     app = make_app()
 

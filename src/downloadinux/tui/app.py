@@ -222,10 +222,21 @@ class ActivityLog(ScrollView, can_focus=True):
             del self.lines[:len(self.entries.popleft())]
         self._width = max(self._width, *(cell_len(line) for line in lines))
         self.virtual_size = Size(self._width, len(self.lines))
+        self._follow_end()
+        self.refresh()
+
+    def on_show(self) -> None:
+        self._follow_end()
+
+    def on_resize(self) -> None:
+        self._follow_end()
+
+    def _follow_end(self) -> None:
+        """Scroll to the end after the next refresh while following: new
+        entries, a show, and a resize all move the end (TUI §8 *Activity*)."""
         if self._follow and not self._scrolling:
             self._scrolling = True
             self.call_after_refresh(self._to_end)
-        self.refresh()
 
     def _to_end(self) -> None:
         self._scrolling = False
