@@ -47,6 +47,7 @@ ACTIVITY_LIMIT = 5000  # TUI §8 *Activity*
 INDENT = " " * len("HH:MM:SS ")
 INTERNAL = "internal error; see Activity"  # TUI §8 *Errors*
 ERROR_TIMEOUT = 10.0
+CAPTURE_LIMIT = 10_000  # TUI §2 *Captured writes* (DEC-64)
 
 # TUI §2 *Actions*: each action's backend method, name, and re-read kinds.
 # `lifecycle` is named by its command. Kinds: `listing`, `cookies`,
@@ -127,6 +128,12 @@ class Outcome:
         return self.error if self.internal is None else self.internal.split("\n", 1)[0]
 
 
+def internal_text(error: BaseException) -> str:
+    """An internal error's Activity text: its line, then the traceback (§8)."""
+    line = f"internal error: {type(error).__name__}: {error}"
+    return line + "\n" + "".join(traceback.format_exception(error))
+
+
 def outcome_of(call: Callable[[], object]) -> Outcome:
     """Run `call`, catching everything (TUI §2 *Handing results back*, §8)."""
     try:
@@ -136,8 +143,15 @@ def outcome_of(call: Callable[[], object]) -> Outcome:
     except OSError as error:
         return Outcome(error=str(errors.from_os_error(error)))
     except BaseException as error:
-        line = f"internal error: {type(error).__name__}: {error}"
-        return Outcome(internal=line + "\n" + "".join(traceback.format_exception(error)))
+        return Outcome(internal=internal_text(error))
+
+
+def captured_text(text: str) -> str:
+    """One captured entry's text (TUI §2 *Captured writes*, DEC-64): CRLF
+    read as LF, each line cut to what follows its last bare CR, then the
+    process-text rule."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    return process_text("\n".join(line.rpartition("\r")[2] for line in lines))
 
 
 def header_line(path: str, summary: str, vpn: str, width: int) -> str:
@@ -372,9 +386,12 @@ class DownloadinuxApp(App):
     `make_backend(record)` builds the backend; `record(call, text)` is
     thread-safe. The intervals are §3's *Refresh* intervals in seconds.
 
-    Views use three entry points, all called on the UI thread: `read` for
-    a read under a key, `act` to queue an action, and `register` to supply
-    the read behind a re-read kind (§2 *Actions*, §3 *Refresh*).
+    Views use these entry points, all called on the UI thread (§2 *View
+    entry points*): `read` for a read under a key, `drop` to drop the read
+    in flight under a key when the pane it fills closes, `act` to queue an
+    action, whose result function may raise `DownloadinuxError` to report
+    the action as an operation error, and `register` to supply the read
+    behind a re-read kind (§2 *Actions*, §3 *Refresh*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -418,6 +435,7 @@ class DownloadinuxApp(App):
         self._waiting: deque[Action] = deque()
         self._action: Action | None = None
         self._jobs_shown = True
+        self._captured = {False: "", True: ""}  # By `events.Print.stderr` (DEC-64).
         self._asking = False  # The quit question is open (TUI §8 *Quitting*).
         self._quitting = False
 
@@ -474,8 +492,22 @@ class DownloadinuxApp(App):
         self.activity.add(message.call, message.text)
 
     def on_print(self, event: events.Print) -> None:
-        text = process_text(event.text)
-        if text:
+        """Record captured writes by lines (TUI §2 *Captured writes*, DEC-64).
+
+        Text after the last LF waits for a later write on its stream, unless
+        it reaches the limit; whatever waits at exit is discarded."""
+        waiting = self._captured[event.stderr] + event.text
+        lines, newline, waiting = waiting.rpartition("\n")
+        if newline:
+            self._record_output(lines + newline)  # The LF ends a CRLF.
+        if len(waiting) >= CAPTURE_LIMIT:
+            self._record_output(waiting)
+            waiting = ""
+        self._captured[event.stderr] = waiting
+
+    def _record_output(self, text: str) -> None:
+        text = captured_text(text)
+        if text.strip():
             self.activity.add("output", text)
 
     def report_error(self, source: str, outcome: Outcome) -> None:
@@ -512,6 +544,14 @@ class DownloadinuxApp(App):
             self._streams.add(read)
         read.worker = self.run_worker(partial(self._run_read, read, args), name=key,
                                       group="read", thread=True, exit_on_error=False)
+
+    def drop(self, key: str) -> None:
+        """Drop the read in flight under `key`, as a newer read would: its
+        outcome is dropped and a stream is stopped (§2 *View entry points*).
+        Nothing happens when no read is in flight there."""
+        read = self._reads.pop(key, None)
+        if read is not None:
+            read.drop()
 
     def _run_read(self, read: Read, args: tuple) -> None:
         self._local.read = read
@@ -614,7 +654,10 @@ class DownloadinuxApp(App):
     def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
         """Queue `backend.<method>(*args)` as an action, named and re-read
         by §2's table. `report(result)` gives a success's Activity text
-        and notification text. Once quitting has started, nothing is queued."""
+        and notification text, or raises `DownloadinuxError` to report the
+        action as that operation error (§2 *View entry points*); any other
+        exception it raises is an internal error. Once quitting has started,
+        nothing is queued."""
         if self._quitting:
             return
         name, rereads = ACTIONS[method]
@@ -644,12 +687,18 @@ class DownloadinuxApp(App):
     def on_action_done(self, message: ActionDone) -> None:
         action, outcome = message.action, message.outcome
         self._action = None
+        if not outcome.failed:
+            try:
+                text, notice = action.report(outcome.result)
+            except DownloadinuxError as error:
+                outcome = Outcome(error=str(error))
+            except Exception as error:
+                outcome = Outcome(internal=internal_text(error))
+            else:
+                self.activity.add(action.name, text)
+                self.notify(notice, markup=False)
         if outcome.failed:
             self.report_error(action.name, outcome)
-        else:
-            text, notice = action.report(outcome.result)
-            self.activity.add(action.name, text)
-            self.notify(notice, markup=False)
         if self._quitting:
             self._finish_quitting()  # No re-reads (TUI §8 *Quitting*).
             return

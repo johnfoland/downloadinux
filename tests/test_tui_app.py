@@ -6,6 +6,7 @@ import re
 import sys
 import threading
 import time
+import traceback
 
 import pytest
 from textual.widgets import HelpPanel, Input, TabbedContent
@@ -483,6 +484,210 @@ def test_prints_are_recorded_as_output():
     drive(app, scenario)
 
 
+# Captured writes by lines (TUI §2 *Captured writes*, DEC-64; issue #113).
+
+def outputs(app) -> list[str]:
+    return [text[len("12:34:56 output: "):] for text in entries(app, "output")]
+
+
+def output_lines(app) -> list[str]:
+    """Every recorded output line, in order, without stamps or indents."""
+    return [line.removeprefix(" " * 9) for text in outputs(app) for line in text.split("\n")]
+
+
+async def handled(pilot):
+    """Let the app handle the Print events the scenario's writes posted."""
+    await pilot.pause()
+    await pilot.pause()
+
+
+def test_a_print_with_several_arguments_is_one_entry():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        print("progress", 50, "%")
+        sys.stdout.write("a\nb\n")
+        await handled(pilot)
+        assert outputs(app) == ["progress 50 %", "a\n" + " " * 9 + "b"]
+
+    drive(app, scenario)
+
+
+def test_a_traceback_written_line_by_line_is_one_entry_per_line():
+    app = make_slow_app()
+    try:
+        raise ValueError("bad [b]")
+    except ValueError as error:
+        lines = "".join(traceback.format_exception(error)).splitlines(keepends=True)
+
+    async def scenario(pilot):
+        for line in lines:
+            sys.stderr.write(line)
+        await handled(pilot)
+        written = "".join(lines).rstrip("\n").split("\n")
+        assert outputs(app) == [line for line in written if line.strip()]
+        assert len(outputs(app)) == len(written) > 3
+        assert outputs(app)[-1] == "ValueError: bad [b]"
+
+    drive(app, scenario)
+
+
+def test_a_thread_traceback_has_no_whitespace_only_entry(monkeypatch):
+    # Python's own hook, which writes the traceback to sys.stderr; pytest
+    # replaces it with one that warns instead.
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
+    app = make_slow_app()
+
+    def fail():
+        raise RuntimeError("in a thread")
+
+    async def scenario(pilot):
+        thread = threading.Thread(target=fail, name="failing")
+        thread.start()
+        thread.join()
+        await until(pilot, lambda: any("RuntimeError: in a thread" in text
+                                       for text in outputs(app)))
+        assert outputs(app)[0].startswith("Exception in thread failing")
+        assert all(text.strip() for text in outputs(app))
+        assert all(line.strip() for text in outputs(app) for line in text.split("\n"))
+
+    drive(app, scenario)
+
+
+# Each text, written whole, records these lines; however it is split
+# across writes, the same lines are recorded in the same order. (A blank
+# line can start a later entry and is then skipped, so none has one.)
+SPLIT_TEXTS = [
+    ("x\r\n", ["x"]),
+    ("10%\r20%\r100%\n", ["100%"]),
+    ("ab\r\ncd\n", ["ab", "cd"]),
+    ("a\rb\r\nc\n", ["b", "c"]),
+    ("e\x1b\r\nt\n", ["e\\x1b", "t"]),
+    ("\rq\r\n", ["q"]),
+    ("abc\nd\n", ["abc", "d"]),
+]
+
+
+def splits(text):
+    """Every way to cut `text` into two or three nonempty writes."""
+    for i in range(1, len(text)):
+        yield [text[:i], text[i:]]
+        for j in range(i + 1, len(text)):
+            yield [text[:i], text[i:j], text[j:]]
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_every_split_records_the_same_lines(stream):
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        out = getattr(sys, stream)
+        for text, expected in SPLIT_TEXTS:
+            for pieces in [[text], *splits(text)]:
+                app.activity.entries.clear()
+                for piece in pieces:
+                    out.write(piece)
+                    await handled(pilot)
+                assert output_lines(app) == expected, pieces
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("writes,expected", [
+    (["x\r", "\n"], ["x"]),
+    (["10%\r20%\r100%\n"], ["100%"]),
+    (["ab", "c\nd", "\n"], ["abc", "d"]),
+    (["   \n"], []),
+    (["\t\n"], []),
+    (["\n"], []),
+    (["a\n \nb\n"], ["a\n" + " " * 10 + "\n" + " " * 9 + "b"]),
+])
+def test_writes_by_lines(writes, expected):
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        for write in writes:
+            sys.stdout.write(write)
+            await handled(pilot)
+        assert outputs(app) == expected
+
+    drive(app, scenario)
+
+
+def test_each_stream_keeps_its_own_waiting_text():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        sys.stdout.write("a")
+        sys.stderr.write("b")
+        sys.stdout.write("\n")
+        await handled(pilot)
+        assert outputs(app) == ["a"]
+        sys.stderr.write("\n")
+        await handled(pilot)
+        assert outputs(app) == ["a", "b"]
+
+    drive(app, scenario)
+
+
+def test_waiting_text_is_recorded_at_10000_characters():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        sys.stdout.write("x" * 9999)
+        await handled(pilot)
+        assert outputs(app) == []
+        sys.stdout.write("y")
+        await handled(pilot)
+        assert outputs(app) == ["x" * 9999 + "y"]
+        sys.stdout.write("\n")
+        await handled(pilot)
+        assert len(outputs(app)) == 1
+
+    drive(app, scenario)
+
+
+def test_one_write_past_the_limit_is_recorded_whole():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        sys.stdout.write("a\n" + "z" * 12000)
+        await handled(pilot)
+        assert outputs(app) == ["a", "z" * 12000]
+
+    drive(app, scenario)
+
+
+def test_a_write_from_another_thread_joins_its_stream():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        thread = threading.Thread(target=sys.stdout.write, args=("par",))
+        thread.start()
+        thread.join()
+        await handled(pilot)
+        sys.stdout.write("t\n")
+        await until(pilot, lambda: outputs(app))
+        assert outputs(app) == ["part"]
+
+    drive(app, scenario)
+
+
+def test_a_partial_line_waiting_at_quit_is_discarded():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        sys.stdout.write("done\npartial")
+        await handled(pilot)
+        await pilot.press("q")
+        await until(pilot, lambda: app.return_code == 0)
+        assert outputs(app) == ["done"]
+
+    drive(app, scenario)
+    assert app.return_code == 0
+    assert not any("partial" in text for text in texts(app))
+
+
 # Reads, timers, the header, actions, and errors (TUI §2, §3, §7, §8).
 
 SLOW = dict(jobs_shown=30.0, jobs_hidden=30.0, vpn_every=30.0)  # No timer fires.
@@ -610,6 +815,64 @@ def test_a_stream_superseded_before_it_opens_is_stopped_when_it_opens():
         held.release()
         await until(pilot, lambda: old.stops == 1 and old.ended.is_set())
         assert items == []
+
+    drive(app, scenario)
+
+
+def test_a_dropped_read_never_delivers_its_outcome():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    held = app.backend.hold("servers", before=("fetching",),
+                            error=DownloadinuxError("could not reach"))
+    outcomes = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.read("servers", "servers", "New_York", "228", done=outcomes.append)
+        await until(pilot, held.started.is_set)
+        app.drop("servers")
+        held.release()
+        await settle(pilot, app, "servers")
+        assert outcomes == [] and notes == []
+        assert entries(app, "servers") == ["12:34:56 servers: fetching"]
+        app.read("servers", "servers", "Paris", "74", done=outcomes.append)
+        await until(pilot, lambda: outcomes)
+        assert not outcomes[0].failed
+
+    drive(app, scenario)
+
+
+def test_a_dropped_stream_is_stopped():
+    app = make_slow_app()
+    stream = FakeStream()
+    app.backend.script("log", Step(result=stream))
+    items, outcomes = [], []
+
+    async def scenario(pilot):
+        app.read("log", "log", 4, None, item=items.append, done=outcomes.append)
+        await until(pilot, lambda: app.backend.called("log"))
+        stream.feed(b"a")
+        await until(pilot, lambda: items == [b"a"])
+        app.drop("log")
+        assert stream.stops == 1
+        await until(pilot, stream.ended.is_set)
+        await settle(pilot, app, "log")
+        assert items == [b"a"] and outcomes == []
+
+    drive(app, scenario)
+
+
+def test_dropping_a_key_with_nothing_in_flight_does_nothing():
+    app = make_slow_app()
+    outcomes = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.drop("servers")
+        app.read("pane", "show", 1, done=outcomes.append)
+        app.drop("servers")
+        await until(pilot, lambda: outcomes)
+        assert not outcomes[0].failed
 
     drive(app, scenario)
 
@@ -1021,6 +1284,54 @@ def test_an_internal_error_is_recorded_and_the_app_carries_on():
             assert all(line.startswith(" " * 9) for line in rest)
         assert [note for note, _ in notes[:2]] == ["internal error; see Activity"] * 2
         assert notes[0][1] == {"markup": False}
+        await pilot.press("2")
+        assert app.query_one(TabbedContent).active == "submit"
+
+    drive(app, scenario)
+
+
+def test_a_result_function_may_report_an_operation_error():
+    app = make_slow_app()
+    notes = watch_notes(app)
+    reread = []
+
+    def refuse(result):
+        raise DownloadinuxError("x [b]")
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.register("doctor", lambda: reread.append("doctor"))
+        app.act("vpn_connect", "us", report=refuse)
+        app.act("cancel", [1], report=report)
+        await until(pilot, lambda: entries(app, "jobs cancel"))
+        await settle(pilot, app)
+        assert entries(app, "vpn connect") == ["12:34:56 vpn connect: error: x [b]"]
+        assert notes[0] == ("x [b]", dict(severity="error", timeout=10.0, markup=False))
+        assert notes[1] == ("note None", {"markup": False})
+        assert reread == ["doctor"]
+        assert len(app.backend.called("vpn_state")) == 2
+        assert len(app.backend.called("jobs")) == 2
+
+    drive(app, scenario)
+
+
+def test_any_other_exception_from_a_result_function_is_internal():
+    app = make_slow_app()
+    notes = watch_notes(app)
+
+    def broken(result):
+        raise RuntimeError("bad report")
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act("cancel", [1], report=broken)
+        app.act("retry", [1], report=report)
+        await until(pilot, lambda: entries(app, "jobs retry"))
+        [entry] = entries(app, "jobs cancel")
+        first, *rest = entry.split("\n")
+        assert first == "12:34:56 jobs cancel: internal error: RuntimeError: bad report"
+        assert any("Traceback" in line for line in rest)
+        assert notes[0] == ("internal error; see Activity", {"markup": False})
         await pilot.press("2")
         assert app.query_one(TabbedContent).active == "submit"
 
