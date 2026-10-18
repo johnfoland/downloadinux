@@ -5,6 +5,7 @@ description = "Host CLI for the downloadinux download container"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "textual==8.2.8",
     "tomlkit>=0.13",
     "yt-dlp==2026.8.19",
 ]

@@ -22,6 +22,13 @@ class MissingAssetError(DownloadinuxError):
     """An install asset the command needs is absent from the checkout."""
 
 
+def from_os_error(error: OSError) -> DownloadinuxError:
+    """An OS failure as an operation error, `FILENAME: STRERROR`, with
+    `<stdin/stdout>` when it names no file (target design, *Python + Textual
+    TUI* §8 *Errors*). The CLI and the TUI both report it this way."""
+    return DownloadinuxError(f"{error.filename or '<stdin/stdout>'}: {error.strerror}")
+
+
 class _Detached(Exception):
     """A follow signal, deferred until stream cleanup finishes (DEC-55)."""
 

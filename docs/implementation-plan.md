@@ -5,7 +5,8 @@ renderers and `config set`/`config unset` implemented (PR #103), and
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 implemented (PR #105), completing the shared host operations. The TUI's
 Textual-free backend, process runners, and stream handle are implemented
-(PR #110); its app, views, and launch remain planned.
+(PR #110), as is its app frame (PR #112); the views (Jobs, Submit, Cookies,
+Status) and the launch remain planned.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -34,8 +35,8 @@ DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
 are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` are implemented (PR #105), completing the
 shared host operations. The Textual-free backend, process runners, and
-stream handle are implemented (PR #110); the app, views, and launch remain
-planned.
+stream handle are implemented (PR #110), as is the app frame (PR #112);
+the views (Jobs, Submit, Cookies, Status) and the launch remain planned.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -196,8 +197,9 @@ The worker shipped additively first; the coordinated `dl`, `batch`, and
 `watch` cutover and retirement are implemented, and PR #97 joins their
 completion evidence in the gate. Stage 3 is implemented; Stage 4's shared
 host operations are implemented (PRs #103, #105), as are its Textual-free
-backend, process runners, and stream handle (PR #110). The TUI's app,
-views, and launch remain planned.
+backend, process runners, and stream handle (PR #110) and its app frame
+(PR #112). The TUI's views (Jobs, Submit, Cookies, Status) and launch
+remain planned.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -237,9 +239,10 @@ Settled contract: target design *Python + Textual TUI* §1–§8 and
 shared renderers and settings writes are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations. The Textual-free backend,
-process runners, and stream handle are implemented (PR #110); the app,
-views, and launch remain planned. The planned app uses `downloadinux.tui`
-on `textual==8.2.8` and opens on bare `dlx` on a terminal (help otherwise).
+process runners, and stream handle are implemented (PR #110), as is the app
+frame (PR #112); the views (Jobs, Submit, Cookies, Status) and the launch
+remain planned. The app uses `downloadinux.tui` on `textual==8.2.8` and is
+to open on bare `dlx` on a terminal (help otherwise).
 It is a front over the CLI's host operations through one backend: no new
 worker client, store access, or host
 state (DEC-58). Every call runs in a thread worker; changes go through one
@@ -351,5 +354,6 @@ launch, threading and process rules, views, keys, VPN controls, and the
 the writes and the shared renderers are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations. The Textual-free backend,
-process runners, and stream handle are implemented (PR #110); the app,
-views, and launch remain planned.
+process runners, and stream handle are implemented (PR #110), as is the app
+frame (PR #112); the views (Jobs, Submit, Cookies, Status) and the launch
+remain planned.

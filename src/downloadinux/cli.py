@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from downloadinux import (
     cookie_selectors, cookie_store, host_downloads, host_follow, host_jobs, launch, migrate, operations, presets, render, servers, settings, worker,
 )
-from downloadinux.errors import DownloadinuxError, _Detached
+from downloadinux.errors import DownloadinuxError, _Detached, from_os_error
 
 PROG = "downloadinux"
 # Parser nesting depth: the top level, a command, a command's subcommand.
@@ -913,8 +913,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _report_error(error)
     except OSError as error:
         # Host application: OS failures are operation errors, including
-        # reads, atomic writes, and subprocess creation (review-checklist §1).
-        failure = DownloadinuxError(
-            f"{error.filename or '<stdin/stdout>'}: {error.strerror}"
-        )
-        return _report_error(failure)
+        # reads, atomic writes, and subprocess creation (TUI §8 *Errors*).
+        return _report_error(from_os_error(error))

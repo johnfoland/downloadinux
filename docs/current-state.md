@@ -289,8 +289,9 @@ and doctor. The dated review and the Stage 1/2 observations above remain history
 
 The Python + Textual TUI (Stage 4) is settled (DEC-58 to DEC-62, issue #98).
 Its Textual-free backend, process runners, and stream handle are implemented
-(PR #110); the app, views, and launch remain planned. Its
-`config set`/`config unset` writes and shared renderers are implemented (PR #103),
+(PR #110), as is its app frame (PR #112); the views (Jobs, Submit, Cookies,
+Status) and the launch remain planned. Its `config set`/`config unset`
+writes and shared renderers are implemented (PR #103),
 as are `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations.
 [History retention #65](https://github.com/johnfoland/downloadinux/issues/65) and
