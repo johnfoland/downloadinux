@@ -1622,3 +1622,27 @@ rejected because the question names the action the user saw running.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §8
 *Quitting*. Added on 2026-10-18 in #112; clarifies DEC-60's quitting order.
+
+## DEC-64: The TUI records captured Python-level writes by lines (2026-10)
+
+Textual 8.2.8's print capture hands the app each `write()` call as it
+happens, so one `print("progress", 50, "%")` arrives as six writes. The app
+keeps one buffer per stream and records, whenever a buffer holds an LF, the
+text through its last LF as one Activity entry under `output`: CRLF read as
+LF, each line cut to what follows its last bare CR, then the process-text
+rule; an entry left empty or only whitespace is not recorded. Text after
+the last LF waits for a later write, or is recorded once it reaches 10,000
+characters, and is discarded at exit with the rest of Activity.
+
+Recording each write as its own entry, as the first implementation did
+(PR #112), was rejected: a single print became several entries, some only a
+space. Merging the lines that arrive close together in time (so a traceback
+printed line by line would be one entry) was rejected because the result
+would depend on thread scheduling, and tests could not pin it. Flushing a
+waiting partial line at quit was rejected: Activity is not saved, so nobody
+would see it. Keeping a CR-redrawn line whole, with every intermediate
+state escaped, was rejected because it buries the final state that a
+terminal would show.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §2
+(*Captured writes*) and §8 *Activity*. Added on 2026-10-18 for issue #113.
