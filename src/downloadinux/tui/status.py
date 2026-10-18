@@ -23,6 +23,7 @@ from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnChange
 from downloadinux.tui.dialogs import DIALOG_CSS, ChoiceDialog, Confirm, TextDialog
 from downloadinux.tui.process import process_text
+from downloadinux.tui.widgets import ViewTable, plain
 
 # §7 *Health table*: each status's cell and style, as `doctor` colours its marks.
 STATUS_CELLS = {
@@ -40,11 +41,6 @@ QUESTIONS = {
 }
 LIFECYCLE_DONE = {"up": "The container is up.", "down": "The container is down.",
                   "restart": "The container restarted."}
-
-
-def plain(text: str) -> Text:
-    """Outside text, escaped and never read as markup (TUI §3 *Frame*)."""
-    return Text(render.escape(text), end="")
 
 
 def files_lines(report: dict) -> list[str]:
@@ -222,35 +218,6 @@ class ServerPicker(ModalScreen):
     def _close(self, host: str | None) -> None:
         self.app.drop(self.KEY)
         self.dismiss(host)
-
-
-class ViewTable(DataTable):
-    """A view's row table (TUI §3 *Keys*): the arrow keys, `j`/`k`,
-    `home`/`end`, and the page keys move its cursor. It is as tall as its
-    rows, so a page is the view's height, and the view scrolls to the
-    cursor (§7 *Layout*)."""
-
-    BINDINGS = [
-        Binding("j", "cursor_down", show=False),
-        Binding("k", "cursor_up", show=False),
-        Binding("home", "to_row(0)", show=False),
-        Binding("end", "to_row(-1)", show=False),
-        Binding("pageup", "page(-1)", show=False),
-        Binding("pagedown", "page(1)", show=False),
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(cursor_type="row", **kwargs)
-
-    def action_to_row(self, row: int) -> None:
-        if self.row_count:
-            self.move_cursor(row=row % self.row_count)
-
-    def action_page(self, direction: int) -> None:
-        if self.row_count:
-            page = max(1, self.parent.size.height - self.header_height - 1)
-            row = self.cursor_row + direction * page
-            self.move_cursor(row=min(max(row, 0), self.row_count - 1))
 
 
 class StatusView(VerticalScroll):

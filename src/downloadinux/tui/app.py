@@ -1,8 +1,9 @@
 """The Textual app frame (target design, *Python + Textual TUI* §1–§3, §8;
 DEC-58 to DEC-60).
 
-With the dialog and view modules it imports (`tui.dialogs`, `tui.status`),
-this is the only code under `downloadinux` that imports Textual or Rich.
+With the dialog, widget, and view modules it imports (`tui.dialogs`,
+`tui.widgets`, `tui.jobs`, `tui.status`), this is the only code under
+`downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
 the global keys, Activity, the thread-worker reads, and the action queue.
@@ -39,6 +40,7 @@ from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
 from downloadinux.tui.dialogs import Confirm
+from downloadinux.tui.jobs import JobsView
 from downloadinux.tui.process import process_text
 from downloadinux.tui.status import StatusView
 
@@ -366,7 +368,9 @@ class DownloadinuxApp(App):
 
     `listing` is the latest job listing's `Outcome`, None before the
     first: what the header counts, and what Status's `down` and `restart`
-    questions count (§7 *Container*).
+    questions count (§7 *Container*). The timed `listing` read lists in
+    the Jobs view's mode and hands each outcome to the view after the
+    header (§4 *Listing*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -419,6 +423,7 @@ class DownloadinuxApp(App):
         # Kept, not queried: an outcome posted during shutdown still finds them.
         self.header = HeaderLine(render.escape(str(self.settings_path)), id="header")
         self.activity = ActivityLog(id="activity-log")
+        self.jobs_view = JobsView(id="jobs-view")
         self.running_line = Static(id="running")
         yield self.header
         with TabbedContent(initial="jobs"):
@@ -426,6 +431,8 @@ class DownloadinuxApp(App):
                 with TabPane(title, id=view):
                     if view == "activity":
                         yield self.activity
+                    elif view == "jobs":
+                        yield self.jobs_view
                     elif view == "status":
                         yield StatusView(id="status-view")
                     else:
@@ -604,7 +611,7 @@ class DownloadinuxApp(App):
 
     def _timed_read(self, key: str) -> None:
         if key == "listing":
-            self.read("listing", "jobs", False, done=self._listing_done)
+            self.read("listing", "jobs", self.jobs_view.all, done=self._listing_done)
         else:
             self.read("vpn", "vpn_state", done=self._vpn_done)
 
@@ -612,6 +619,7 @@ class DownloadinuxApp(App):
         self.listing = outcome
         summary = f"jobs: {outcome.shown}" if outcome.failed else job_summary(outcome.result)
         self.header.show(summary=summary)
+        self.jobs_view.listed(outcome)
 
     def _vpn_done(self, outcome: Outcome) -> None:
         self.header.show(vpn="VPN: unknown" if outcome.failed else vpn_text(outcome.result))

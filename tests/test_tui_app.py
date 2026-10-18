@@ -19,7 +19,7 @@ from downloadinux.tui.app import (ActivityLog, Confirm, DownloadinuxApp, header_
                                   job_summary, vpn_text)
 from downloadinux.tui.backend import Backend
 from tui_support import (METHODS, FakeBackend, FakeStream, Step, broken_pipe, drive,
-                         os_error, until)
+                         os_error, record, until)
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "downloadinux"
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
@@ -133,7 +133,8 @@ def test_only_the_app_and_its_widget_modules_import_textual_or_rich():
     pattern = re.compile(r"^\s*(import|from) (textual|rich)", re.MULTILINE)
     hits = {path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py")
             if pattern.search(path.read_text())}
-    assert hits == {"tui/app.py", "tui/dialogs.py", "tui/status.py"}
+    assert hits == {"tui/app.py", "tui/dialogs.py", "tui/jobs.py", "tui/status.py",
+                    "tui/widgets.py"}
 
 
 # Frame and header (TUI §3 *Frame*).
@@ -228,7 +229,7 @@ def test_a_text_field_takes_typing_keys_and_ctrl_q_still_quits():
 
     async def scenario(pilot):
         field = Input()
-        await app.query_one("#jobs .placeholder").mount(field)
+        await app.jobs_view.mount(field)
         field.focus()
         await pilot.press("q", "1", "question_mark", "5")
         assert field.value == "q1?5"
@@ -716,7 +717,7 @@ async def settle(pilot, app, *names):
 
 
 def job(id, state, cancel=False, wait=None):
-    return {"id": id, "state": state, "cancel_requested": cancel, "wait": wait}
+    return record(id, state=state, cancel_requested=cancel, wait=wait)
 
 
 def test_keys_and_redraws_continue_while_a_read_is_held():
