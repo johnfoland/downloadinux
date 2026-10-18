@@ -3,13 +3,14 @@
 from pathlib import Path
 
 import pytest
-from textual.widgets import DataTable, Input, OptionList, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, OptionList, Static, TabbedContent
 
-from downloadinux import health, operations, render
+from downloadinux import health, operations, render, servers
 from downloadinux.errors import ConfigError, DownloadinuxError
 from downloadinux.tui.app import ActivityLog, DownloadinuxApp
 from downloadinux.tui.dialogs import ChoiceDialog, Confirm, TextDialog
-from downloadinux.tui.status import StatusView, TokenDialog
+from downloadinux.host_vpn import VpnChange
+from downloadinux.tui.status import ConnectDialog, ServerPicker, StatusView, TokenDialog
 from tui_support import FakeBackend, Step, drive, until
 
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
@@ -846,5 +847,345 @@ def test_a_failed_compose_command_shows_as_an_error(tmp_path):
         assert entries(app, "lifecycle") == ["12:34:56 lifecycle: Error response from daemon"]
         assert notes[0] == ("docker: Compose down failed (exit 1)",
                             dict(severity="error", timeout=10.0, markup=False))
+
+    drive(app, scenario)
+
+
+# VPN dialogs (§7 *VPN dialogs*; DEC-62).
+
+def choices(*hosts, cities=("Atlanta", "New_York")):
+    return servers.ServerChoices(tuple(servers.ServerLoad(host, load) for host, load in hosts),
+                                 cities)
+
+
+async def open_connect(pilot, app):
+    await pilot.press("o")
+    dialog = app.screen
+    assert isinstance(dialog, ConnectDialog)
+    return dialog, dialog.query_one(Input)
+
+
+async def open_picker(pilot, app, dialog):
+    dialog.query_one("#choose", Button).press()
+    await until(pilot, lambda: isinstance(app.screen, ServerPicker))
+    return app.screen
+
+
+def picker_rows(picker) -> list[str]:
+    options = picker.query_one(OptionList)
+    return [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
+
+
+def picker_status(picker) -> str:
+    return str(picker.query_one("#picker-status", Static).render())
+
+
+def test_the_connect_dialog_is_prefilled_from_the_config_read(tmp_path):
+    report = report_for(tmp_path, '[vpn]\nserver = "us 1234"\n')
+    app = make_app(report)
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        assert field.value == "us 1234"
+        assert [str(button.label) for button in dialog.query(Button)] == ["Choose a server", "OK"]
+        field.value = "  France   "
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "vpn connect"))
+        assert app.backend.called("vpn_connect")[0].args == ("  France   ",)
+
+    drive(app, scenario)
+
+
+def test_the_connect_dialog_is_empty_when_the_config_read_failed(tmp_path):
+    app = make_app()
+    app.backend.script("config", Step(error=ConfigError("bad")))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        assert field.value == ""
+        dialog.query_one("#ok", Button).press()
+        await until(pilot, lambda: entries(app, "vpn connect"))
+        assert app.backend.called("vpn_connect")[0].args == ("",)
+
+    drive(app, scenario)
+
+
+def test_the_picker_fetches_lists_servers_and_fills_the_target(tmp_path):
+    app = make_app()
+    held = app.backend.hold("servers", result=choices(("us1234", 12), ("us99[b]", 7)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, held.started.is_set)
+        assert app.backend.called("servers")[0].args == ("New_York", "228")
+        assert picker.query_one("#city", Input).value == "New_York"
+        assert picker.query_one("#country", Input).value == "228"
+        assert picker_status(picker) == "Fetching…"
+        held.release()
+        await until(pilot, lambda: picker_rows(picker))
+        assert picker_rows(picker) == ["us1234  load 12%", "us99[b]  load 7%"]
+        assert picker_status(picker) == ""
+        picker.query_one(OptionList).focus()
+        await pilot.press("down", "enter")
+        await until(pilot, lambda: app.screen is dialog)
+        assert field.value == "us99[b]"
+        await settle(pilot, app)
+        assert "vpn_connect" not in app.backend.names()
+
+    drive(app, scenario)
+
+
+def test_a_city_without_servers_lists_cities_and_enter_fetches_that_city(tmp_path):
+    app = make_app()
+    app.backend.script("servers", Step(result=choices(cities=("Atlanta", "Los_Angeles"))),
+                       Step(result=choices(("us5", 3))))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, lambda: picker_rows(picker))
+        assert picker_status(picker) == "No servers in New_York"
+        assert picker_rows(picker) == ["Atlanta", "Los_Angeles"]
+        picker.query_one(OptionList).focus()
+        await pilot.press("down", "enter")
+        await until(pilot, lambda: len(app.backend.called("servers")) == 2)
+        assert app.backend.called("servers")[1].args == ("Los_Angeles", "228")
+        assert picker.query_one("#city", Input).value == "Los_Angeles"
+        await until(pilot, lambda: picker_rows(picker) == ["us5  load 3%"])
+        assert app.screen is picker
+
+    drive(app, scenario)
+
+
+def test_a_failed_fetch_shows_the_real_servers_error(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("servers", Step(result=choices(("us1", 1))),
+                       Step(error=DownloadinuxError(servers.UNREACHABLE)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, lambda: picker_rows(picker))
+        picker.query_one("#fetch", Button).press()
+        await until(pilot, lambda: picker_status(picker) == servers.UNREACHABLE)
+        assert picker_rows(picker) == []
+        assert entries(app, "servers") == [f"12:34:56 servers: error: {servers.UNREACHABLE}"]
+        assert notes == [(servers.UNREACHABLE, dict(severity="error", timeout=10.0, markup=False))]
+
+    drive(app, scenario)
+
+
+def test_edited_fields_then_fetch_and_a_newer_fetch_supersedes(tmp_path):
+    app = make_app()
+    first = app.backend.hold("servers", result=choices(("old1", 1)))
+    second = app.backend.hold("servers", result=choices(("fr7", 7)))
+    app.backend.script("servers", *[Step(result=choices(("de3", 3)))] * 2)
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, first.started.is_set)
+        picker.query_one("#city", Input).value = "Paris"
+        picker.query_one("#country", Input).value = "74"
+        picker.query_one("#fetch", Button).press()
+        await until(pilot, second.started.is_set)
+        assert app.backend.called("servers")[1].args == ("Paris", "74")
+        first.release()
+        await until(pilot, first.finished.is_set)
+        await pilot.pause(0.05)
+        assert picker_rows(picker) == [] and picker_status(picker) == "Fetching…"
+        second.release()
+        await until(pilot, lambda: picker_rows(picker) == ["fr7  load 7%"])
+        picker.query_one("#city", Input).value = "Berlin"
+        picker.query_one("#country", Input).focus()
+        picker.query_one("#country", Input).value = "81"
+        await pilot.press("enter")
+        await until(pilot, lambda: picker_rows(picker) == ["de3  load 3%"])
+        assert app.backend.called("servers")[2].args == ("Berlin", "81")
+        picker.query_one("#city", Input).focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: len(app.backend.called("servers")) == 4)
+        assert app.backend.called("servers")[3].args == ("Berlin", "81")
+        await settle(pilot, app, "servers")
+
+    drive(app, scenario)
+
+
+def test_escape_closes_the_picker_and_keeps_the_target(tmp_path):
+    report = report_for(tmp_path, '[vpn]\nserver = "us 1234"\n')
+    app = make_app(report)
+    app.backend.script("servers", Step(result=choices(("us1", 1))))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, lambda: picker_rows(picker))
+        await pilot.press("escape")
+        await until(pilot, lambda: app.screen is dialog)
+        assert field.value == "us 1234"
+
+    drive(app, scenario)
+
+
+def test_closing_the_picker_drops_its_fetch(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    held = app.backend.hold("servers", before=("fetching",),
+                            error=DownloadinuxError(servers.UNREACHABLE))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        picker = await open_picker(pilot, app, dialog)
+        await until(pilot, held.started.is_set)
+        await pilot.press("escape")
+        await until(pilot, lambda: app.screen is dialog)
+        before = (list(texts(app)), list(notes), field.value)
+        held.release()
+        await settle(pilot, app, "servers")
+        assert (texts(app), notes, field.value) == (before[0], before[1], before[2])
+        assert app.screen is dialog
+        assert not any(text.endswith(servers.UNREACHABLE) for text in texts(app))
+
+    drive(app, scenario)
+
+
+# VPN results (§7 *VPN dialogs*; §2 *View entry points*).
+
+@pytest.mark.parametrize("typed,shown", [
+    ("  us   1234 ", "us 1234"), ("", "the fastest server"), ("[b]x", "[b]x"),
+])
+def test_connect_reports_the_target(tmp_path, typed, shown):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("vpn_connect", Step(result=VpnChange(0, "Connecting to United States #1234\n")))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        field.value = typed
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "vpn connect"))
+        assert app.backend.called("vpn_connect")[0].args == (typed,)
+        assert texts(app)[-2:] == ["12:34:56 vpn_connect: Connecting to United States #1234",
+                                   f"12:34:56 vpn connect: Connected to {shown}."]
+        assert (f"Connected to {shown}.", {"markup": False}) in notes
+
+    drive(app, scenario)
+
+
+def test_an_empty_output_adds_no_entry_and_connect_re_reads_doctor_and_the_vpn(tmp_path):
+    app = make_app()
+    app.backend.script("vpn_connect", Step(result=VpnChange(0, "\n")))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        doctor, vpn = len(app.backend.called("doctor")), len(app.backend.called("vpn_state"))
+        await pilot.press("o", "enter")
+        await until(pilot, lambda: entries(app, "vpn connect"))
+        await until(pilot, lambda: len(app.backend.called("doctor")) == doctor + 1)
+        await settle(pilot, app)
+        assert entries(app, "vpn_connect") == []
+        assert len(app.backend.called("vpn_state")) == vpn + 1
+        assert len(app.backend.called("config")) == 1
+
+    drive(app, scenario)
+
+
+def test_a_nonzero_connect_is_an_error_after_its_output(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("vpn_connect", Step(result=VpnChange(1, "Whoops! [b]\x1b\n")))
+    text = "could not connect to us 1234 (nordvpn exit 1); see Activity"
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        dialog, field = await open_connect(pilot, app)
+        field.value = "us 1234"
+        await pilot.press("enter")
+        await until(pilot, lambda: entries(app, "vpn connect"))
+        assert texts(app)[-2:] == ["12:34:56 vpn_connect: Whoops! [b]\\x1b",
+                                   f"12:34:56 vpn connect: error: {text}"]
+        assert notes[-1] == (text, dict(severity="error", timeout=10.0, markup=False))
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("change,entry,error", [
+    (None, "The VPN is already disconnected.", False),
+    (VpnChange(0, "You are disconnected from NordVPN.\n"),
+     "Disconnected; queued jobs wait for the VPN.", False),
+    (VpnChange(2, "failed\n"), "could not disconnect the VPN (nordvpn exit 2); see Activity", True),
+])
+def test_disconnect_results(tmp_path, change, entry, error):
+    app = make_app()
+    notes = watch_notes(app)
+    app.backend.script("vpn_disconnect", Step(result=change))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await pilot.press("O")
+        await until(pilot, lambda: entries(app, "vpn disconnect"))
+        assert app.backend.called("vpn_disconnect")[0].args == ()
+        assert entries(app, "vpn disconnect") == [
+            f"12:34:56 vpn disconnect: {'error: ' if error else ''}{entry}"]
+        output = [] if change is None else [
+            f"12:34:56 vpn_disconnect: {change.output.rstrip()}"]
+        assert entries(app, "vpn_disconnect") == output
+        if output:
+            assert texts(app).index(output[0]) < texts(app).index(entries(app, "vpn disconnect")[0])
+        options = dict(severity="error", timeout=10.0, markup=False) if error else {"markup": False}
+        assert notes[-1] == (entry, options)
+
+    drive(app, scenario)
+
+
+def test_a_refusal_shows_the_real_running_job_error(tmp_path):
+    app = make_app()
+    notes = watch_notes(app)
+    refusal = "1 job is running; let it finish or cancel it before disconnecting the VPN"
+    app.backend.script("vpn_disconnect", Step(error=DownloadinuxError(refusal)))
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        await pilot.press("O")
+        await until(pilot, lambda: entries(app, "vpn disconnect"))
+        assert entries(app, "vpn disconnect") == [f"12:34:56 vpn disconnect: error: {refusal}"]
+        assert notes[-1] == (refusal, dict(severity="error", timeout=10.0, markup=False))
+
+    drive(app, scenario)
+
+
+# Keys (§7 *Keys*).
+
+STATUS_KEYS = {"x", "t", "U", "D", "R", "o", "O"}
+
+
+def test_status_keys_apply_and_show_only_while_the_focus_is_in_status(tmp_path):
+    app = make_app()
+
+    async def scenario(pilot):
+        await show_status(pilot, app)
+        for focus in ("settings", "health"):
+            table(app, focus).focus()
+            await pilot.pause()
+            shown = {key for key, active in app.active_bindings.items() if active.binding.show}
+            assert STATUS_KEYS <= shown
+        await pilot.press("1")
+        await pilot.pause()
+        assert not STATUS_KEYS & set(app.active_bindings)
+        await pilot.press(*sorted(STATUS_KEYS))
+        await settle(pilot, app)
+        assert app.screen is app.screen_stack[0]
+        assert not {"unset_setting", "lifecycle", "vpn_disconnect"} & set(app.backend.names())
 
     drive(app, scenario)

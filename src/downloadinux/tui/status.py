@@ -1,6 +1,7 @@
 """The Status view (target design, *Python + Textual TUI* §7; DEC-60 to
 DEC-62): `doctor`'s checks, `config show`'s report, the settings editor,
-the NordVPN token, and the container's lifecycle.
+the NordVPN token, the container's lifecycle, and the VPN's connect dialog,
+server picker, and disconnect.
 
 `StatusView` fills the app's `status` pane and reaches the host
 operations only through the app's view entry points (§2 *View entry
@@ -10,13 +11,18 @@ points*).
 from functools import partial
 
 from rich.text import Text
+from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
-from textual.widgets import DataTable, Input, Static, TabbedContent, TabPane
+from textual.screen import ModalScreen
+from textual.widgets import Button, DataTable, Input, OptionList, Static, TabbedContent, TabPane
 
-from downloadinux import health, operations, render, settings
-from downloadinux.tui.dialogs import ChoiceDialog, Confirm, TextDialog
+from downloadinux import health, operations, render, servers, settings
+from downloadinux.errors import DownloadinuxError
+from downloadinux.host_vpn import VpnChange
+from downloadinux.tui.dialogs import DIALOG_CSS, ChoiceDialog, Confirm, TextDialog
+from downloadinux.tui.process import process_text
 
 # §7 *Health table*: each status's cell and style, as `doctor` colours its marks.
 STATUS_CELLS = {
@@ -96,6 +102,128 @@ class TokenDialog(TextDialog):
         self.query_one(Input).value = ""
 
 
+def target_text(target: str) -> str:
+    """TARGET in the VPN texts: the target's words joined by single spaces,
+    escaped, or `the fastest server` (§7 *VPN dialogs*)."""
+    words = " ".join(target.split())
+    return render.escape(words) if words else "the fastest server"
+
+
+class ConnectDialog(TextDialog):
+    """`o`'s dialog (§7 *VPN dialogs*): a `Target` field, *Choose a
+    server*, and OK. The picker opens over it and fills `Target`."""
+
+    def __init__(self, target: str):
+        super().__init__("Connect the VPN", target)
+
+    def fields(self) -> ComposeResult:
+        yield Static(Text("Target"))
+        yield from super().fields()
+
+    def buttons(self) -> ComposeResult:
+        yield Button("Choose a server", id="choose")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "choose":  # OK is the base class's.
+            event.stop()
+            event.prevent_default()
+            self.app.push_screen(ServerPicker(), self._chosen)
+
+    def _chosen(self, host: str | None) -> None:
+        if host is not None:
+            self.query_one(Input).value = host
+
+
+class ServerPicker(ModalScreen):
+    """The server picker (§7 *VPN dialogs*), over the connect dialog.
+
+    It fetches through the read `servers(CITY, COUNTRY)` under the key
+    `servers` when it opens and on *Fetch* or `enter` in either field, the
+    newer fetch superseding, and drops that read when it closes (§2 *View
+    entry points*). `enter` on a server dismisses with its host; on a city,
+    it fills `City` and fetches again. `escape` dismisses with None.
+    """
+
+    DEFAULT_CSS = DIALOG_CSS.format(name="ServerPicker") + """
+    ServerPicker OptionList { height: auto; max-height: 12; }
+    """
+    BINDINGS = [Binding("escape", "close", "Close")]
+    KEY = "servers"
+
+    def __init__(self):
+        super().__init__()
+        self.listed: tuple[str, ...] = ()  # The list's items, unescaped.
+        self.cities = False  # The list holds cities rather than servers.
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Choose a server"), id="heading")
+            yield Static(Text("City"))
+            yield Input(servers.DEFAULT_CITY, id="city")
+            yield Static(Text("Country ID"))
+            yield Input(servers.DEFAULT_COUNTRY, id="country")
+            with Horizontal():
+                yield Button("Fetch", id="fetch")
+            yield Static(id="picker-status")
+            yield OptionList(id="servers")
+
+    def on_mount(self) -> None:
+        self.fetch()
+
+    def fetch(self) -> None:
+        city = self.query_one("#city", Input).value
+        country = self.query_one("#country", Input).value
+        self._show("Fetching…")
+        self.app.read(self.KEY, "servers", city, country, done=partial(self._fetched, city))
+
+    def _show(self, status: str, listed: tuple[str, ...] = (), rows: tuple[str, ...] = (), *,
+              cities: bool = False) -> None:
+        self.query_one("#picker-status", Static).update(Text(status, end=""))
+        self.listed, self.cities = listed, cities
+        options = self.query_one(OptionList)
+        options.clear_options()
+        options.add_options([Text(row, end="") for row in rows])
+        if rows:
+            options.highlighted = 0
+
+    def _fetched(self, city: str, outcome) -> None:
+        if outcome.failed:
+            self._show(outcome.shown)
+        elif outcome.result.ranked:
+            ranked = outcome.result.ranked
+            self._show("", tuple(server.host for server in ranked),
+                       tuple(render.escape(f"{server.host}  load {server.load}%")
+                             for server in ranked))
+        else:
+            cities = outcome.result.cities
+            self._show(f"No servers in {render.escape(city)}", cities,
+                       tuple(render.escape(name) for name in cities), cities=True)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.fetch()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.fetch()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        chosen = self.listed[event.option_index]
+        if self.cities:
+            self.query_one("#city", Input).value = chosen
+            self.fetch()
+        else:
+            self._close(chosen)
+
+    def action_close(self) -> None:
+        self._close(None)
+
+    def _close(self, host: str | None) -> None:
+        self.app.drop(self.KEY)
+        self.dismiss(host)
+
+
 class ViewTable(DataTable):
     """A view's row table (TUI §3 *Keys*): the arrow keys, `j`/`k`,
     `home`/`end`, and the page keys move its cursor. It is as tall as its
@@ -143,12 +271,15 @@ class StatusView(VerticalScroll):
         Binding("U", "lifecycle('up')", "Up"),
         Binding("D", "lifecycle('down')", "Down"),
         Binding("R", "lifecycle('restart')", "Restart"),
+        Binding("o", "connect", "Connect"),
+        Binding("O", "disconnect", "Disconnect"),
     ]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.started = False
         self.settings: dict[str, dict] = {}  # The latest successful read's rows, by key.
+        self.server = ""  # `vpn.server` from the latest successful configuration read.
 
     def compose(self):
         yield Static(Text("Health: reading…"), id="health-status")
@@ -211,6 +342,7 @@ class StatusView(VerticalScroll):
         report = outcome.result
         self._status("settings", "Settings")
         self.settings = {row["key"]: row for row in report["settings"]}
+        self.server = self.settings["vpn.server"]["value"]
         for row in report["settings"]:
             table.add_row(plain(row["key"]), plain(render.toml_text(row["value"])),
                           plain(row["source"]), key=row["key"])
@@ -295,3 +427,39 @@ class StatusView(VerticalScroll):
     def _run_lifecycle(self, command: str) -> None:
         done = LIFECYCLE_DONE[command]
         self.app.act("lifecycle", command, report=lambda result: (done, done))
+
+    # The VPN (§7 *VPN dialogs*; DEC-62).
+
+    def action_connect(self) -> None:
+        def submitted(target: str | None) -> None:
+            if target is not None:
+                self.app.act("vpn_connect", target, report=partial(self._connected, target))
+
+        self.app.push_screen(ConnectDialog(self.server), submitted)
+
+    def action_disconnect(self) -> None:
+        self.app.act("vpn_disconnect", report=self._disconnected)
+
+    def _output(self, method: str, change: VpnChange) -> None:
+        """Record the command's output before the action's outcome."""
+        if process_text(change.output):
+            self.app.activity.add(method, change.output)
+
+    def _connected(self, target: str, change: VpnChange) -> tuple[str, str]:
+        self._output("vpn_connect", change)
+        if change.status != 0:
+            raise DownloadinuxError(f"could not connect to {target_text(target)} "
+                                    f"(nordvpn exit {change.status}); see Activity")
+        text = f"Connected to {target_text(target)}."
+        return text, text
+
+    def _disconnected(self, change: VpnChange | None) -> tuple[str, str]:
+        if change is None:
+            text = "The VPN is already disconnected."
+            return text, text
+        self._output("vpn_disconnect", change)
+        if change.status != 0:
+            raise DownloadinuxError(f"could not disconnect the VPN (nordvpn exit "
+                                    f"{change.status}); see Activity")
+        text = "Disconnected; queued jobs wait for the VPN."
+        return text, text
