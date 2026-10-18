@@ -3550,6 +3550,16 @@ shown (doctor and configuration before Status is first shown, the cookie
 list before Cookies or Submit is) is skipped: that view reads when it is
 first shown.
 
+*View entry points.* The app gives views `read`, `act`, and `register`
+(the read behind a re-read kind), and two more. A view may drop the read in
+flight under a key when the pane that read fills closes (§7's server
+picker): its outcome is dropped and a stream is stopped, as a supersession
+does. And a view's result function, which turns an action's result into its
+Activity and notification text, may instead raise a `DownloadinuxError`
+(`vpn connect`'s nonzero status, §7): the action's outcome is then recorded
+and notified as §8's operation error under the action's name, with that
+error's text.
+
 *Processes.* `downloadinux.tui.process` provides the runners the backend
 passes to every operation that takes them (`runner`, `capture`, `feed`, and
 `spawn`; DEC-53, DEC-55). Each child process gets standard input from
@@ -3597,9 +3607,26 @@ would catch is covered otherwise: child processes' standard error is
 captured by the runners above, and Python-level writes to `sys.stdout` and
 `sys.stderr` while the app runs are captured by Textual itself. The app
 receives them through Textual's public `begin_capture_print` (both streams)
-and records them in Activity under `output`, by the process-text rule. Only a
-write made below Python straight to descriptor 2 can still reach the screen,
-until the next redraw replaces it.
+and records them in Activity under `output` by lines (DEC-64), since Textual
+hands over each `write()` call as it comes, so one `print` arrives in
+pieces. Only a write made below Python straight to descriptor 2 can still
+reach the screen, until the next redraw replaces it.
+
+*Captured writes (DEC-64).* The app keeps one text buffer for standard
+output and one for standard error, and appends each captured write to its
+stream's buffer. Whenever a buffer holds an LF, the text up to and including
+its last LF is taken out and recorded as one Activity entry under `output`,
+after two steps: CRLF is read as LF, and within each line the text before
+its last bare CR is discarded, so a line redrawn with CR records only what a
+terminal would last show; the text then follows the process-text rule. An
+entry whose text is then empty or only whitespace is not recorded. The text
+after the last LF waits for a later write. A waiting text that reaches
+10,000 characters is recorded by the same steps and the buffer emptied. The
+text still waiting when the app exits is discarded with Activity, which is
+not saved (§8). So `print("progress", 50, "%")` is one entry, a write of
+several lines is one entry, and a writer that sends one line per write, as
+a traceback printed by `threading.excepthook` does, gives one entry per
+line.
 
 *Stopping a stream.* A log pane that changes its source (another job,
 attempt, or lane; §4) or a quitting app stops its stream: the TUI's spawn
@@ -3979,8 +4006,9 @@ every operation does and runs its container commands captured, with `-T`
   value, as `servers` prints them; `cities` is filled whether or not
   `ranked` is. `list_servers` and `server_choices` share one fetch.
 
-`host_vpn` and `operations.server_choices` are implemented (PR #105);
-the TUI's VPN header, dialogs, picker, and controls are not.
+`host_vpn` and `operations.server_choices` are implemented (PR #105),
+and the TUI's VPN header is (PR #112); its dialogs, picker, and controls are
+not.
 
 `o` opens a connect dialog: a target field holding `vpn.server` from the
 latest `config show` read (empty means the fastest server), and a *Choose a
@@ -4009,6 +4037,100 @@ and jobs* §4), so after a disconnect no further job starts until the VPN is
 back. The CLI's `dlx vpn` stays a plain pass-through without the check, and
 the killswitch, `vpn ip`, login and logout, and every other `nordvpn`
 setting stay CLI-only; `doctor` reports the killswitch and the exit IP.
+
+*Layout.* The Status pane is one vertically scrolling container holding,
+in order, the health status line and table, the settings status line and
+table, and the files block. Each table is as tall as its rows, so the view
+scrolls rather than the tables, and moving a table's cursor scrolls it into
+view. Showing Status focuses the settings table; `tab` and `shift+tab` move
+between the two tables. When Status is first shown, the app registers the
+`doctor` and `config` re-read kinds (§2) as the reads `doctor()` under the
+key `doctor` and `config()` under the key `config`, and starts both. A
+status line reads `Health` or `Settings` after a success, `Health:
+reading…` or `Settings: reading…` while its read is in flight, and `Health:
+TEXT` or `Settings: TEXT` after a failure, TEXT being §8's error text or
+`internal error; see Activity`. A failure empties its table (the settings
+failure also the files block); a success replaces the rows, and the
+settings table keeps its cursor on the same key.
+
+*Health table.* Columns `ID`, `STATUS`, `DETAIL`, and `FIX`, one row per
+check in `doctor`'s order: the check's ID; its mark and status, `✓ ok`, `!
+warn`, `✗ fail`, or `- skip`, styled green, yellow, red, or dim as `doctor`
+colours its marks; its summary; and its fix, or empty. Each cell is escaped
+with `render.escape`.
+
+*Settings table and files.* Columns `KEY`, `VALUE`, and `SOURCE`, one row
+per setting in `config show`'s order: the key, the value as `config show`
+prints it (`render.toml_text`) escaped, and the source. The files block is
+`config show`'s text from its `settings file:` line to its end (the two
+files, the token's state, and the mounts), each line escaped.
+
+*Editing.* `enter` on a settings row opens the edit dialog, titled with the
+key. For a boolean it lists `true` and `false`, and for a setting with
+choices it lists those choices, with the cursor on the current value; `enter`
+on one submits it. Otherwise it is one text field holding the row's value as
+`render.toml_text` gives it, unescaped. Submitting runs `set_setting(KEY,
+TEXT)` with the chosen item or the field's text as entered, an empty field
+included. `x` runs `unset_setting(KEY)` on the cursor row without asking.
+With no rows, `enter` and `x` do nothing. The result text is
+`render.setting_write`'s line; then, when the configuration read the dialog
+or `x` acted on showed the key's source as `override`, the line `--set KEY
+overrides the settings file until the TUI is restarted without it.`; then,
+when the write changed the file and KEY begins with `paths.`, `container.`,
+or `vpn.`, the line `restart the container to apply it (R)`. Activity records
+the whole text under the action's name, and the notification shows it.
+
+*Token.* `t` opens a dialog with one masked field (`Input(password=True)`).
+Submitting runs `set_token` with the field's text stripped of surrounding
+whitespace, as `config set-token` strips a typed token. The dialog empties
+its field whenever it closes, submitted or not. The result text is
+`render.token_stored`'s line, then `render.login_messages`' lines, then,
+when it gives a warning, `warning: WARNING`. The token is passed to the
+backend and to nothing else: no Activity entry, notification, footer line,
+or widget other than the masked field holds it.
+
+*Container.* `U` runs `lifecycle("up")` at once. `D` asks `Stop the
+container? RUNNING Queued jobs wait until it starts again.` and `R` asks
+`Restart the container? RUNNING Queued jobs carry on.`, then run
+`lifecycle("down")` or `lifecycle("restart")` on yes. RUNNING counts the
+latest job listing's `running` jobs as the header does: `No job is
+running.`, `1 running job will be interrupted.`, or `N running jobs will be
+interrupted.`, or `The job listing is unavailable.` when that listing failed
+or has not arrived. The result texts are `The container is up.`, `The
+container is down.`, and `The container restarted.`. Compose's output
+reaches Activity under `lifecycle` as process text (§2).
+
+*VPN dialogs.* `o` opens the connect dialog: a `Target` field holding
+`vpn.server` from the latest successful configuration read (empty when there
+is none), a *Choose a server* button, and OK. The picker opens over it with
+`City` and `Country ID` fields (`New_York` and `228`), a *Fetch* button, a
+status line, and a list. It fetches when it opens and on *Fetch* or `enter`
+in either field, through the read `servers(CITY, COUNTRY)` under the key
+`servers`, the newer fetch superseding; closing the picker drops its fetch
+(§2 *View entry points*). While a fetch runs the status line reads
+`Fetching…`. With servers, the status line is empty and the list holds
+`HOST  load N%` rows (`ServerLoad`'s host and load, escaped); `enter` on one
+puts HOST in `Target` and closes the picker. With none, the status line reads
+`No servers in CITY` (the fetched city, escaped) and the list holds
+`cities`; `enter` on one puts it in `City` and fetches again. A failed fetch
+empties the list and shows §8's error text or `internal error; see
+Activity` in the status line, and is recorded and notified as any read's
+error (§8). `escape` closes the picker and leaves `Target` unchanged.
+Submitting the dialog runs `vpn_connect(TARGET)` with the field's text as
+entered; `O` runs `vpn_disconnect()` at once. TARGET in the texts is the
+target's words joined by single spaces, escaped, or `the fastest server`
+when it has none. A `VpnChange`'s output, when its process text (§2) is
+nonempty, is recorded under the backend method's name (`vpn_connect`,
+`vpn_disconnect`) before the action's outcome. A zero status reports
+`Connected to TARGET.` or `Disconnected; queued jobs wait for the VPN.`;
+a None from `vpn_disconnect` reports `The VPN is already disconnected.`; a
+nonzero status is an operation error (§2 *View entry points*), `could not
+connect to TARGET (nordvpn exit N); see Activity` or `could not disconnect
+the VPN (nordvpn exit N); see Activity`.
+
+*Keys.* `x`, `t`, `U`, `D`, `R`, `o`, and `O` are the Status pane's
+bindings, and `enter` is the settings table's: they apply while the focus is
+in the Status pane and no dialog is open, and the footer lists them there.
 
 ### 8. Errors, Activity, and quitting
 
@@ -4041,7 +4163,8 @@ and logs are the durable record.
 
 Each entry reads `HH:MM:SS SOURCE: TEXT`. SOURCE is the action's name (§2)
 for an action's outcome or error, the backend method's name for process text
-and a read's error, and `output` for Python-level writes (§2). An operation
+and a read's error, and `output` for Python-level writes (§2, by lines;
+DEC-64). An operation
 error's TEXT is `error: ` and §8's error text; a multi-line TEXT continues on
 the following lines, each indented by nine spaces. Dropping the oldest entry
 drops all its lines. The view keeps the newest entry in sight unless the
