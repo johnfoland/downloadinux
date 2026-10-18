@@ -129,11 +129,11 @@ def test_run_raises_a_credentials_error(tmp_path):
         tui_app.run(str(path), ())
 
 
-def test_only_the_app_module_imports_textual_or_rich():
+def test_only_the_app_and_its_widget_modules_import_textual_or_rich():
     pattern = re.compile(r"^\s*(import|from) (textual|rich)", re.MULTILINE)
     hits = {path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py")
             if pattern.search(path.read_text())}
-    assert hits == {"tui/app.py"}
+    assert hits == {"tui/app.py", "tui/dialogs.py", "tui/status.py"}
 
 
 # Frame and header (TUI §3 *Frame*).
@@ -1215,6 +1215,8 @@ def test_registered_re_reads_run_after_their_actions():
     reads = []
 
     async def scenario(pilot):
+        await settle(pilot, app)
+        await pilot.press("4", "1")  # Status registers its kinds when first shown.
         await settle(pilot, app)
         for kind in ("doctor", "config", "cookies"):
             app.register(kind, lambda kind=kind: reads.append(kind))

@@ -8,7 +8,8 @@ Each call is logged with its arguments and thread, then
 runs the next step scripted for its method (`script`), or returns the
 method's default result. A step can call `record` before and after it is
 held, hold on an event until released, raise a scripted error, or return a
-scripted result; a stream method returns a `FakeStream`. `release_all`
+scripted result; a stream method returns a `FakeStream`. `defaults` maps a
+method to its default result, starting from `DEFAULTS`. `release_all`
 releases every held step and ends every stream, and `drive` always calls it
 before `asyncio.run` waits for the worker threads, whatever the test did.
 """
@@ -22,13 +23,17 @@ import queue
 import threading
 import time
 
+from downloadinux import health, operations
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
 
 METHODS = tuple(name for name, _ in inspect.getmembers(Backend, inspect.isfunction)
                 if not name.startswith("_"))
 STREAMS = ("log", "follow_job", "follow_lane")
-DEFAULTS = {"jobs": [], "vpn_state": VpnState(False, False, False, None, None)}
+# `config`'s default is the real report for a settings file that does not exist.
+MISSING = "/nonexistent-downloadinux/config.toml"
+DEFAULTS = {"jobs": [], "vpn_state": VpnState(False, False, False, None, None),
+            "doctor": health.Result(()), "config": operations.show_config(MISSING)}
 WAIT = 5.0  # The longest any helper waits on a thread, so a failure cannot hang.
 
 
@@ -65,7 +70,7 @@ class Call:
     end: float | None = None
 
 
-DEFAULT = object()  # A step's result: the method's entry in DEFAULTS, else None.
+DEFAULT = object()  # A step's result: the method's entry in `defaults`, else None.
 
 
 @dataclass
@@ -131,6 +136,7 @@ class FakeBackend:
         self.steps: dict[str, deque[Step]] = defaultdict(deque)
         self.all_steps: list[Step] = []
         self.streams: list[FakeStream] = []
+        self.defaults = dict(DEFAULTS)
         self._lock = threading.Lock()
 
     def script(self, name: str, *steps: Step) -> tuple[Step, ...]:
@@ -182,7 +188,7 @@ class FakeBackend:
                 with self._lock:
                     self.streams.append(stream)
                 return stream
-            return DEFAULTS.get(name) if step.result is DEFAULT else step.result
+            return self.defaults.get(name) if step.result is DEFAULT else step.result
         finally:
             call.end = time.monotonic()
             step.finished.set()

@@ -1,11 +1,11 @@
 """The Textual app frame (target design, *Python + Textual TUI* §1–§3, §8;
 DEC-58 to DEC-60).
 
-This is the only module under `downloadinux` that imports Textual or Rich.
+With the dialog and view modules it imports (`tui.dialogs`, `tui.status`),
+this is the only code under `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
-the global keys, the confirmation dialog, Activity, the thread-worker reads,
-and the action queue.
+the global keys, Activity, the thread-worker reads, and the action queue.
 """
 
 from collections import deque
@@ -23,7 +23,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.geometry import Size
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -31,14 +31,16 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Static, TabbedContent, TabPane
+from textual.widgets import Footer, Static, TabbedContent, TabPane
 from textual.worker import Worker
 
 from downloadinux import credentials, errors, render, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.dialogs import Confirm
 from downloadinux.tui.process import process_text
+from downloadinux.tui.status import StatusView
 
 # TUI §3 *Frame*: pane IDs and titles, in tab and key order.
 VIEWS = (("jobs", "Jobs"), ("submit", "Submit"), ("cookies", "Cookies"),
@@ -121,6 +123,12 @@ class Outcome:
     @property
     def failed(self) -> bool:
         return self.error is not None or self.internal is not None
+
+    @property
+    def shown(self) -> str:
+        """What a view shows for a failed outcome: §8's error text,
+        escaped, or `internal error; see Activity`."""
+        return INTERNAL if self.internal is not None else render.escape(self.error)
 
     @property
     def error_text(self) -> str | None:
@@ -271,43 +279,6 @@ class ActivityLog(ScrollView, can_focus=True):
         return strip.crop(x, x + width).extend_cell_length(width, self.rich_style)
 
 
-class Confirm(ModalScreen[bool]):
-    """A yes/no question; No has the focus (TUI §3 *Dialogs*)."""
-
-    DEFAULT_CSS = """
-    Confirm { align: center middle; }
-    Confirm > Vertical { width: 60; max-width: 100%; height: auto;
-                         border: thick $primary; background: $surface; padding: 0 1; }
-    Confirm Horizontal { height: auto; align-horizontal: right; }
-    """
-    BINDINGS = [
-        Binding("y", "answer(True)", "Yes"),
-        Binding("n", "answer(False)", "No"),
-        Binding("escape", "answer(False)", "No"),
-    ]
-
-    def __init__(self, question: str):
-        super().__init__()
-        self.question = question
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(Text(self.question), id="question")
-            with Horizontal():
-                yield Button("Yes", id="yes")
-                yield Button("No", id="no")
-
-    def on_mount(self) -> None:
-        self.query_one("#no", Button).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.dismiss(event.button.id == "yes")
-
-    def action_answer(self, value: bool) -> None:
-        self.dismiss(value)
-
-
 class Recorded(Message):
     """Process text from a backend call's thread (TUI §2 *Handing results back*)."""
 
@@ -448,7 +419,12 @@ class DownloadinuxApp(App):
         with TabbedContent(initial="jobs"):
             for view, title in VIEWS:
                 with TabPane(title, id=view):
-                    yield self.activity if view == "activity" else Container(classes="placeholder")
+                    if view == "activity":
+                        yield self.activity
+                    elif view == "status":
+                        yield StatusView(id="status-view")
+                    else:
+                        yield Container(classes="placeholder")
         yield self.running_line
         yield Footer()
 
@@ -628,12 +604,7 @@ class DownloadinuxApp(App):
             self.read("vpn", "vpn_state", done=self._vpn_done)
 
     def _listing_done(self, outcome: Outcome) -> None:
-        if outcome.internal is not None:
-            summary = f"jobs: {INTERNAL}"
-        elif outcome.error is not None:
-            summary = f"jobs: {render.escape(outcome.error)}"
-        else:
-            summary = job_summary(outcome.result)
+        summary = f"jobs: {outcome.shown}" if outcome.failed else job_summary(outcome.result)
         self.header.show(summary=summary)
 
     def _vpn_done(self, outcome: Outcome) -> None:
@@ -714,7 +685,12 @@ class DownloadinuxApp(App):
         return True
 
     def action_show_view(self, view: str) -> None:
-        self.query_one(TabbedContent).active = view
+        tabs = self.query_one(TabbedContent)
+        if view != tabs.active:
+            # Hiding the focused widget makes Textual focus a neighbour,
+            # which can sit in the same pane and so show that pane again.
+            self.set_focus(None)
+        tabs.active = view
 
     def action_toggle_help(self) -> None:
         if self.screen.query("HelpPanel"):
