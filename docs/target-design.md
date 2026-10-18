@@ -4023,8 +4023,9 @@ and the view that asked shows `internal error; see Activity`.
 The OS-error mapping is one function, `errors.from_os_error(error) ->
 DownloadinuxError`, giving `cli.main`'s text (`FILENAME: STRERROR`, with
 `<stdin/stdout>` when the error names no file); `cli.main` and the TUI both
-call it. An error notification has severity `error` and a 10-second timeout;
-every other notification keeps Textual's defaults. An internal error's TYPE
+call it. An operation error's notification has severity `error` and a
+10-second timeout; every other notification, the internal error's included,
+keeps Textual's defaults. An internal error's TYPE
 is the exception class's `__name__` and MESSAGE its `str()`; the entry's
 text is the `internal error: TYPE: MESSAGE` line, then the traceback
 (`traceback.format_exception`) through §2's process-text rule; its
