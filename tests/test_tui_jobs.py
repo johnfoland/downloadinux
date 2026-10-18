@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 from textual.widgets import TabbedContent
 
-from downloadinux import render
+from downloadinux import host_jobs, render
 from downloadinux.tui.app import ActivityLog, DownloadinuxApp
 from downloadinux.tui.jobs import JobsView
 from downloadinux.tui.widgets import TextPane, ViewTable
-from tui_support import FakeBackend, Step, drive, not_running, record, until
+from tui_support import FakeBackend, Step, drive, job_view, not_running, record, until
 
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
 SLOW = dict(jobs_shown=30.0, jobs_hidden=30.0, vpn_every=30.0)  # No timer fires.
@@ -545,5 +545,239 @@ def test_a_re_read_keeps_the_tables_scroll():
         await pilot.press("ctrl+r")
         await listed(pilot, app, 2)
         assert (table.scroll_y, table.cursor_row) == before
+
+    drive(app, scenario)
+
+
+# Details (§4 *Details*, "In detail").
+
+def shows(app) -> list[tuple]:
+    return [call.args for call in app.backend.called("show")]
+
+
+async def show_ended(pilot, app, index):
+    """Wait until `show` call `index` has ended and been handled."""
+    await until(pilot, lambda: len(shows(app)) > index
+                and app.backend.called("show")[index].end is not None)
+    await pilot.pause()
+    await pilot.pause()
+
+
+def test_the_details_are_jobs_show_text():
+    view_ = job_view(4)
+    app = make_app([record(4)])
+    app.backend.script("show", Step(result=view_))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        assert shows(app) == [(4,)]
+        assert view(app).details.text == render.render_job(view_)
+        assert view(app).details.lines[0] == "Job 4: failed"
+
+    drive(app, scenario)
+
+
+def test_the_details_are_plain_text():
+    shown = host_jobs.JobView(record(4, url="https://example.com/[b]x[/b]\x1b", error="E\x1b[0m"), ())
+    app = make_app([record(4)])
+    app.backend.script("show", Step(result=shown))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        assert "  URL:              https://example.com/[b]x[/b]\\x1b" in view(app).details.lines
+        assert view(app).details.render_line(1).text.startswith("  URL:")
+
+    drive(app, scenario)
+
+
+def test_moving_the_cursor_reads_the_new_jobs_details():
+    app = make_app([record(1), record(2), record(3)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        await pilot.press("down")
+        await settle(pilot, app, "show")
+        assert shows(app) == [(1,), (2,)]
+        assert view(app).details.lines[0] == "Job 2: failed"
+
+    drive(app, scenario)
+
+
+def test_a_second_move_supersedes_a_held_read():
+    app = make_app([record(1), record(2), record(3)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        first = app.backend.hold("show", result=job_view(2))
+        await pilot.press("down")
+        await until(pilot, first.started.is_set)
+        assert view(app).details.text == "Job 2: reading…"
+        await pilot.press("down")
+        await show_ended(pilot, app, 2)
+        assert view(app).details.lines[0] == "Job 3: failed"
+        first.release()
+        await until(pilot, first.finished.is_set)
+        await pilot.pause()
+        await pilot.pause()
+        assert view(app).details.lines[0] == "Job 3: failed"
+        assert shows(app) == [(1,), (2,), (3,)]
+
+    drive(app, scenario)
+
+
+def test_an_unchanged_record_makes_no_read():
+    app = make_app([record(1)], [record(1)], [record(1)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        for count in (2, 3):
+            await pilot.press("ctrl+r")
+            await listed(pilot, app, count)
+            await settle(pilot, app, "show")
+        assert shows(app) == [(1,)]
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("change", [
+    dict(state="queued"), dict(attempt=2), dict(state="queued", wait={"reason": "vpn"}),
+    dict(state="running", cancel_requested=True), dict(error="boom"),
+])
+def test_a_changed_record_reads_the_details_again_keeping_the_text(change):
+    changed = dict(state="running") if "cancel_requested" in change else {}
+    app = make_app([record(1, **changed)], [record(1, **change)])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        held = app.backend.hold("show", result=host_jobs.JobView(record(1, **change), ()))
+        await pilot.press("ctrl+r")
+        await until(pilot, held.started.is_set)
+        await pilot.pause()
+        assert view(app).details.lines[0] == "Job 1: failed"  # Kept, not `reading…`.
+        held.release()
+        await settle(pilot, app, "show")
+        assert shows(app) == [(1,), (1,)]
+        assert view(app).details.text == render.render_job(host_jobs.JobView(record(1, **change), ()))
+
+    drive(app, scenario)
+
+
+def test_the_comparison_is_with_the_record_at_the_last_details_read():
+    """A change that arrives while a read is held starts another read; the
+    same record again starts none, though the held read never ended."""
+    app = make_app([record(1)], [record(1)], [record(1, attempt=2)], [record(1, attempt=2)])
+
+    held = app.backend.hold("show")
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await until(pilot, held.started.is_set)
+        await pilot.press("ctrl+r")
+        await listed(pilot, app, 2)
+        assert shows(app) == [(1,)]
+        await pilot.press("ctrl+r")
+        await listed(pilot, app, 3)
+        # The second read returns a record unlike the listing's (attempt 1):
+        # the next listing compares with the listing's record, not with it.
+        await show_ended(pilot, app, 1)
+        await pilot.press("ctrl+r")
+        await listed(pilot, app, 4)
+        await pilot.pause()
+        assert shows(app) == [(1,), (1,)]
+        assert view(app).details.lines[0] == "Job 1: failed"
+
+    drive(app, scenario)
+
+
+def test_reading_only_shows_for_the_first_read_of_a_job():
+    app = make_app([record(1), record(2)])
+
+    held = app.backend.hold("show")
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await until(pilot, held.started.is_set)
+        await pilot.pause()
+        assert view(app).details.text == "Job 1: reading…"
+        held.release()
+        await settle(pilot, app, "show")
+        await pilot.press("down", "up")
+        await settle(pilot, app, "show")
+        assert shows(app) == [(1,), (2,), (1,)]
+
+    drive(app, scenario)
+
+
+def test_a_failed_read_shows_its_reason_records_and_notifies_it():
+    app = make_app([record(1)])
+    app.backend.script("show", Step(error=not_running()))
+    notes = []
+    app.notify = lambda message, **options: notes.append((message, options))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        reason = "the container is not running; start it with dlx up"
+        assert view(app).details.text == f"Job 1: {reason}"
+        assert ["\n".join(entry) for entry in app.activity.entries] == [
+            f"12:34:56 show: error: {reason}"]
+        assert notes == [(reason, dict(severity="error", timeout=10.0, markup=False))]
+
+    drive(app, scenario)
+
+
+def test_an_internal_error_in_a_read_shows_see_activity():
+    app = make_app([record(1)])
+    app.backend.script("show", Step(error=KeyError("x")))
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        assert view(app).details.text == "Job 1: internal error; see Activity"
+
+    drive(app, scenario)
+
+
+def test_an_emptied_table_clears_the_pane_and_drops_a_held_read():
+    app = make_app([record(1)], [record(1, attempt=2)], [])
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await settle(pilot, app, "show")
+        held = app.backend.hold("show", result=job_view(1))
+        await pilot.press("ctrl+r")
+        await until(pilot, held.started.is_set)
+        await pilot.press("ctrl+r")
+        await listed(pilot, app, 3)
+        assert view(app).details.lines == []
+        held.release()
+        await until(pilot, held.finished.is_set)
+        await pilot.pause()
+        await pilot.pause()
+        assert view(app).details.lines == []
+
+    drive(app, scenario)
+
+
+def test_a_clears_the_details_and_drops_a_held_read():
+    app = make_app([record(1)])
+
+    held = app.backend.hold("show")
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await until(pilot, held.started.is_set)
+        await pilot.press("a")
+        await pilot.pause()
+        assert view(app).details.lines == []
+        held.release()
+        await until(pilot, held.finished.is_set)
+        await settle(pilot, app)
+        assert view(app).details.lines == []
 
     drive(app, scenario)

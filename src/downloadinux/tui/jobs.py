@@ -8,6 +8,8 @@ asks it for its mode (`all`) and hands it each listing outcome
 view entry points (§2 *View entry points*).
 """
 
+from functools import partial
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -54,7 +56,7 @@ def row_cells(job: dict, marked: bool) -> tuple[Text, ...]:
 
 
 class JobsView(Vertical):
-    """The Jobs pane (§4 *Layout*, *Listing*).
+    """The Jobs pane (§4 *Layout*, *Listing*, *Details*).
 
     A status line, the listing table, and below them the details pane and
     the log pane. Showing it focuses the table; `tab` and `shift+tab` cycle
@@ -81,6 +83,10 @@ class JobsView(Vertical):
         self.jobs: dict[int, dict] = {}  # The table's records by ID, in ID order.
         self.marks: set[int] = set()
         self.line: str | None = None  # The mode's last successful status line.
+        # §4 *Details*: the job the details pane is for, and its listing
+        # record when its details were last read.
+        self.details_for: int | None = None
+        self.details_record: dict | None = None
         # Kept, not queried: an outcome posted during shutdown still finds them.
         self.status_line = Static(Text(f"{TITLES[self.all]}: reading…", end=""), id="jobs-status")
         self.table = ViewTable(id="jobs-table")
@@ -124,6 +130,7 @@ class JobsView(Vertical):
         self.line = None
         self.marks.clear()
         self._fill({})
+        self._cursor_moved()
         self._status(f"{TITLES[self.all]}: reading…")
         self.app.reread("listing")
 
@@ -137,6 +144,7 @@ class JobsView(Vertical):
         self._status(self.line)
         self.marks &= jobs.keys()
         self._fill(jobs)
+        self._cursor_moved()
 
     def cursor_id(self) -> int | None:
         """The cursor row's job ID, or None with no rows."""
@@ -169,3 +177,34 @@ class JobsView(Vertical):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()  # `enter` on a listing row does nothing (§4).
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        event.stop()
+        self._cursor_moved()
+
+    # The details pane (§4 *Details*).
+
+    def _cursor_moved(self) -> None:
+        """Read the cursor job's details when the cursor comes to a job, or
+        when its listing record differs from the one held at that job's
+        last details read; with no rows, empty the pane and drop the read."""
+        id = self.cursor_id()
+        if id is None:
+            self.details_for = self.details_record = None
+            self.details.show([])
+            self.app.drop("details")
+            return
+        job = self.jobs[id]
+        if id != self.details_for:
+            self.details_for = id
+            self.details.show([f"Job {id}: reading…"])
+        elif job == self.details_record:
+            return
+        self.details_record = job
+        self.app.read("details", "show", id, done=partial(self._details_done, id))
+
+    def _details_done(self, id: int, outcome) -> None:
+        if outcome.failed:
+            self.details.show([f"Job {id}: {outcome.shown}"])
+        else:
+            self.details.show(render.render_job(outcome.result).split("\n"))
