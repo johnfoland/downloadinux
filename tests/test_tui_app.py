@@ -1,5 +1,6 @@
 """The Textual app frame (target design, *Python + Textual TUI* §1–§3, §8)."""
 
+import inspect
 from pathlib import Path
 import re
 import sys
@@ -50,6 +51,29 @@ def test_fake_backend_covers_every_backend_method():
     public = {name for name in dir(Backend) if not name.startswith("_")}
     assert set(METHODS) == public
     assert all(callable(getattr(FakeBackend, name)) for name in public)
+
+
+def arities(name) -> tuple[int, int]:
+    """The fewest and most positional arguments `Backend.<name>` accepts."""
+    parameters = list(inspect.signature(getattr(Backend, name)).parameters.values())[1:]
+    return sum(p.default is p.empty for p in parameters), len(parameters)
+
+
+@pytest.mark.parametrize("name", METHODS)
+def test_fake_backend_rejects_the_calls_the_backend_rejects(name):
+    fake = FakeBackend(lambda call, text: None)
+    fewest, most = arities(name)
+    for count in (fewest, most):
+        getattr(fake, name)(*["x"] * count)
+    assert [call.args for call in fake.calls] == [("x",) * fewest, ("x",) * most]
+    wrong = [most + 1] + ([fewest - 1] if fewest else [])
+    for count in wrong:
+        with pytest.raises(TypeError):
+            getattr(fake, name)(*["x"] * count)
+        with pytest.raises(TypeError):
+            getattr(Backend, name)(object(), *["x"] * count)
+    assert len(fake.calls) == 2
+    fake.release_all()
 
 
 # Errors (TUI §8 *Errors*).

@@ -2,7 +2,9 @@
 (target design, *Python + Textual TUI* §2).
 
 `FakeBackend(record)` has every public `Backend` method, taken from
-`Backend` itself. Each call is logged with its arguments and thread, then
+`Backend` itself. Each call's arguments are bound against the real method's
+signature, so a call `Backend` would reject raises `TypeError` unlogged.
+Each call is logged with its arguments and thread, then
 runs the next step scripted for its method (`script`), or returns the
 method's default result. A step can call `record` before and after it is
 held, hold on an event until released, raise a scripted error, or return a
@@ -187,7 +189,10 @@ class FakeBackend:
 
 
 def _method(name):
+    signature = inspect.signature(getattr(Backend, name))
+
     def method(self, *args):
+        signature.bind(self, *args)  # A wrong call raises TypeError, as on Backend.
         return self._call(name, args)
     method.__name__ = name
     return method
