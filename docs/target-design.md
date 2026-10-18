@@ -2,9 +2,10 @@
 
 Status: Stages 1–3 are implemented; Stage 4's shared host operations are
 implemented, as are the TUI's Textual-free backend, process runners, and
-stream handle (PR #110), its app frame (PR #112), and its Status view
-(PR #115). The Jobs, Submit, and Cookies views and the launch remain
-planned.
+stream handle (PR #110), its app frame (PR #112), its Status view
+(PR #115), and its Jobs view's listing, details, marks, cancel, retry, and
+export (PR #118). The Jobs view's log pane, the Submit and Cookies views,
+and the launch remain planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -45,8 +46,10 @@ renderers and the `config set`/`config unset` writes (DEC-58, DEC-61).
 PR #105 implements `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` (DEC-60, DEC-62), completing the shared host
 operations. PR #110 implements the Textual-free backend, process runners,
-and stream handle, PR #112 the app frame, and PR #115 the Status view;
-the Jobs, Submit, and Cookies views and the launch remain planned.
+and stream handle, PR #112 the app frame, PR #115 the Status view, and
+PR #118 the Jobs view's listing, details, marks, cancel, retry, and export;
+the Jobs view's log pane, the Submit and Cookies views, and the launch
+remain planned.
 
 ## Agreed decisions
 
@@ -3340,8 +3343,9 @@ The gate's smoke test expects it `ok`. Implemented in PR #84.
 Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
 handle are implemented (PR #110), and so are the app frame (PR #112) and
-the Status view (PR #115). The Jobs, Submit, and Cookies views and the
-launch remain planned. Its
+the Status view (PR #115), and the Jobs view's listing, details, marks,
+cancel, retry, and export (PR #118). The Jobs view's log pane, the Submit
+and Cookies views, and the launch remain planned. Its
 settings writes, `config set` and `config unset`, are under *Configuration
 and paths* (DEC-61), and are implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
@@ -3376,8 +3380,11 @@ failed, or interrupted jobs.`). The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
 implemented (PR #112), as is the Status view in `downloadinux.tui.status`
-with its dialogs in `downloadinux.tui.dialogs` (PR #115); the other views
-and the launch remain planned.
+with its dialogs in `downloadinux.tui.dialogs` (PR #115). The Jobs view in
+`downloadinux.tui.jobs`, with the shared widgets in `downloadinux.tui.widgets`
+and `render.job_cells` and `render.no_jobs`, is implemented except its log
+pane (PR #118); `downloadinux.tui.logtext`, the other views, and the launch
+remain planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3766,7 +3773,9 @@ its own style.
 
 The frame, header, footer line, global keys, help, and confirmation dialog
 are implemented (PR #112), and so are Status's keys, refresh, and dialogs
-(PR #115); the other views' are not.
+(PR #115), and Jobs's refresh, cancel question, and dialogs, with its keys
+other than `[`, `]`, `v`, `g`, and `escape` (PR #118); the other views' are
+not.
 
 ### 4. Jobs view
 
@@ -3948,7 +3957,7 @@ no-clobber write is `files.write_atomic` with `replace=False` and a new
 `parents` keyword, default true and unchanged for every other caller, that
 `export_to` sets false: a missing directory is then the OS error naming the
 export path. The host operation and shared export text are implemented
-(PR #105); the TUI dialog and result texts are not.
+(PR #105), and so are the TUI dialog and result texts (PR #118).
 
 The dialog is titled `Export failed work`. It holds a preset choice (a
 `RadioSet`: `video`, pressed, then `gallery`) and a `Path` field, empty.
@@ -3958,6 +3967,11 @@ error. The result is `Exported N URLs to PATH.` or `No failed, cancelled, or
 interrupted PRESET jobs to export.`, PRESET the chosen preset and PATH
 `ExportFile.path`, escaped; an existing path is the operation's error. The
 text is the Activity entry and the notification.
+
+The view's layout, listing, details, marks, cancel, retry, and export are
+implemented (PR #118). The log pane's content, its log text
+(`downloadinux.tui.logtext`), and the `[`, `]`, `v`, `g`, and `escape` keys
+remain planned.
 
 ### 5. Submit view
 

@@ -582,7 +582,7 @@ def _jobs_list(args: argparse.Namespace, options: GlobalOptions) -> int:
     if args.json:
         _json({"jobs": jobs})
     elif not jobs:
-        print("No jobs." if args.all else "No queued, running, failed, or interrupted jobs.")
+        print(render.no_jobs(args.all))
     else:
         print(render.render_jobs(jobs))
     return 0

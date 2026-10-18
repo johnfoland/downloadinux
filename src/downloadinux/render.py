@@ -34,12 +34,23 @@ def job_state(job: dict) -> str:
     return job["state"]
 
 
+def job_cells(job: dict) -> tuple[str, ...]:
+    """One listed job's `jobs list` cells: ID, STATE, PRESET, QUEUE,
+    ATTEMPT, and URL (TUI §1 *Package*)."""
+    return (str(job["id"]), job_state(job), job["preset"], "lane" if job["lane"] else "immediate",
+            str(job["attempt"]), escape(job["url"]))
+
+
+def no_jobs(all: bool) -> str:
+    """`jobs list`'s text for an empty listing (TUI §1 *Package*)."""
+    return "No jobs." if all else "No queued, running, failed, or interrupted jobs."
+
+
 def render_jobs(jobs: list[dict]) -> str:
     """`jobs list`'s table: columns two spaces apart, each but the last
     padded to its widest cell, header included (§6 *Output*)."""
     rows = [("ID", "STATE", "PRESET", "QUEUE", "ATTEMPT", "URL")]
-    rows += [(str(job["id"]), job_state(job), job["preset"], "lane" if job["lane"] else "immediate",
-              str(job["attempt"]), escape(job["url"])) for job in jobs]
+    rows += [job_cells(job) for job in jobs]
     widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]) - 1)]
     return "\n".join("  ".join([*(cell.ljust(width) for cell, width in zip(row, widths)), row[-1]])
                      for row in rows)

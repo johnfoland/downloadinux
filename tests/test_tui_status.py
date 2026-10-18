@@ -11,7 +11,7 @@ from downloadinux.tui.app import ActivityLog, DownloadinuxApp
 from downloadinux.tui.dialogs import ChoiceDialog, Confirm, TextDialog
 from downloadinux.host_vpn import VpnChange
 from downloadinux.tui.status import ConnectDialog, ServerPicker, StatusView, TokenDialog
-from tui_support import FakeBackend, Step, drive, until
+from tui_support import FakeBackend, Step, drive, record, until
 
 SETTINGS = Path("/home/user/.config/downloadinux/config.toml")
 SLOW = dict(jobs_shown=30.0, jobs_hidden=30.0, vpn_every=30.0)  # No timer fires.
@@ -750,9 +750,7 @@ def test_the_token_field_is_emptied_on_escape_and_empty_when_reopened(tmp_path):
 # Container (§7 *Container*).
 
 def running_jobs(count):
-    return [{"id": i, "state": "running", "cancel_requested": False, "wait": None}
-            for i in range(count)] + [{"id": 99, "state": "queued", "cancel_requested": False,
-                                       "wait": None}]
+    return [record(i, state="running") for i in range(1, count + 1)] + [record(99, state="queued")]
 
 
 def test_u_starts_the_container_at_once(tmp_path):
@@ -1182,7 +1180,8 @@ def test_status_keys_apply_and_show_only_while_the_focus_is_in_status(tmp_path):
             assert STATUS_KEYS <= shown
         await pilot.press("1")
         await pilot.pause()
-        assert not STATUS_KEYS & set(app.active_bindings)
+        # Jobs binds `R` too (TUI §3 *Keys*); none of Status's are active.
+        assert not any(isinstance(active.node, StatusView) for active in app.active_bindings.values())
         await pilot.press(*sorted(STATUS_KEYS))
         await settle(pilot, app)
         assert app.screen is app.screen_stack[0]

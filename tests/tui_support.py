@@ -9,7 +9,8 @@ runs the next step scripted for its method (`script`), or returns the
 method's default result. A step can call `record` before and after it is
 held, hold on an event until released, raise a scripted error, or return a
 scripted result; a stream method returns a `FakeStream`. `defaults` maps a
-method to its default result, starting from `DEFAULTS`. `release_all`
+method to its default result, starting from `DEFAULTS`; `show`'s default,
+unless one is set there, is `job_view` for the requested ID. `release_all`
 releases every held step and ends every stream, and `drive` always calls it
 before `asyncio.run` waits for the worker threads, whatever the test did.
 """
@@ -19,11 +20,15 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 import inspect
 import os
+from pathlib import Path
 import queue
 import threading
 import time
 
-from downloadinux import health, operations
+from test_host_jobs import record
+
+from downloadinux import health, host_jobs, operations
+from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
 
@@ -33,8 +38,24 @@ STREAMS = ("log", "follow_job", "follow_lane")
 # `config`'s default is the real report for a settings file that does not exist.
 MISSING = "/nonexistent-downloadinux/config.toml"
 DEFAULTS = {"jobs": [], "vpn_state": VpnState(False, False, False, None, None),
-            "doctor": health.Result(()), "config": operations.show_config(MISSING)}
+            "doctor": health.Result(()), "config": operations.show_config(MISSING),
+            "cookies": {"default": None, "sources": []}}
 WAIT = 5.0  # The longest any helper waits on a thread, so a failure cannot hang.
+
+
+def job_view(id: int) -> host_jobs.JobView:
+    """A `JobView` for `id` from a full record (`test_host_jobs.record`),
+    with its one attempt's log path."""
+    return host_jobs.JobView(record(id), ((1, Path(f"/state/jobs/logs/{id}-1.log")),))
+
+
+def not_running() -> DownloadinuxError:
+    """The error `jobs` really raises when the container is not running."""
+    try:
+        host_jobs.list_jobs(False, capture=lambda argv, environ: (0, ""))
+    except DownloadinuxError as error:
+        return error
+    raise AssertionError("the listing succeeded")
 
 
 def os_error(path) -> OSError:
@@ -188,7 +209,11 @@ class FakeBackend:
                 with self._lock:
                     self.streams.append(stream)
                 return stream
-            return self.defaults.get(name) if step.result is DEFAULT else step.result
+            if step.result is not DEFAULT:
+                return step.result
+            if name == "show" and name not in self.defaults:
+                return job_view(*args)
+            return self.defaults.get(name)
         finally:
             call.end = time.monotonic()
             step.finished.set()

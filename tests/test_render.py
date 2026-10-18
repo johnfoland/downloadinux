@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_host_jobs import record
 
 from downloadinux import operations, render
 
@@ -49,3 +50,35 @@ def test_cancel_line(outcome, state, expected):
 def test_stored_token_message():
     assert render.token_stored(Path('/settings/credentials.toml')) == (
         'Stored the NordVPN token in /settings/credentials.toml')
+
+
+@pytest.mark.parametrize('fields,cells', [
+    (dict(state='running', lane='video'),
+     ('3', 'running', 'video', 'lane', '2', 'https://example.com/3')),
+    (dict(state='queued', preset='gallery', lane=None),
+     ('3', 'queued', 'gallery', 'immediate', '2', 'https://example.com/3')),
+    (dict(state='queued', wait={'reason': 'vpn'}),
+     ('3', 'queued: vpn', 'video', 'immediate', '2', 'https://example.com/3')),
+    (dict(state='queued', wait={'reason': 'throttle', 'until': '2026-10-13T12:00:00Z\x1b'}),
+     ('3', 'queued: throttle until 2026-10-13T12:00:00Z\\x1b', 'video', 'immediate', '2',
+      'https://example.com/3')),
+    (dict(state='running', cancel_requested=True),
+     ('3', 'running: cancelling', 'video', 'immediate', '2', 'https://example.com/3')),
+    (dict(state='failed', url='https://example.com/[b]\x1b\x9b'),
+     ('3', 'failed', 'video', 'immediate', '2', 'https://example.com/[b]\\x1b\\x9b')),
+])
+def test_job_cells(fields, cells):
+    assert render.job_cells(record(3, attempt=2, **fields)) == cells
+
+
+def test_render_jobs_builds_its_rows_from_job_cells():
+    jobs = [record(2, state='running', lane='video'), record(10, state='queued', attempt=12)]
+    assert render.render_jobs(jobs) == (
+        'ID  STATE    PRESET  QUEUE      ATTEMPT  URL\n'
+        '2   running  video   lane       1        https://example.com/2\n'
+        '10  queued   video   immediate  12       https://example.com/10')
+
+
+def test_no_jobs():
+    assert render.no_jobs(True) == 'No jobs.'
+    assert render.no_jobs(False) == 'No queued, running, failed, or interrupted jobs.'
