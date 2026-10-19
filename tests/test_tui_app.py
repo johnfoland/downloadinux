@@ -1542,3 +1542,50 @@ def test_nothing_starts_once_quitting_has_started():
 
     drive(app, scenario)
     assert_threads_ended(app)
+
+
+def test_activity_following_keeps_its_horizontal_position():
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await pilot.press('5')
+        log = app.activity
+
+        def last_line():
+            return log.render_line(log.scrollable_content_region.height - 1).text.rstrip()
+        for number in range(50):
+            log.add('n', 'x' * 300)
+        await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling)
+        log.scroll_to(x=3, animate=False, immediate=True)
+        await pilot.pause()
+        assert log.scroll_x == 3 and log._follow and app.focused is log
+        log.add('n', 'more')
+        await until(pilot, lambda: log.scroll_y == log.max_scroll_y
+                    and not log._scrolling and last_line() == '34:56 n: more')
+        assert log.scroll_x == 3 and log.scroll_y == log.max_scroll_y
+        for size in ((70, 18), (90, 30), (80, 24)):
+            await pilot.resize_terminal(*size)
+            await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling)
+            assert log.scroll_x == 3 and last_line() == '34:56 n: more'
+        await pilot.press('1', '5')
+        await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling)
+        assert log.scroll_x == 3 and last_line() == '34:56 n: more'
+
+    drive(app, scenario)
+
+
+def test_activity_follows_before_scrollbar_visibility_catches_up(monkeypatch):
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await pilot.press('5')
+        log = app.activity
+        with monkeypatch.context() as patch:
+            patch.setattr(ActivityLog, 'allow_vertical_scroll', property(lambda log: False))
+            for number in range(60):
+                log.add('n', str(number))
+            await until(pilot, lambda: not log._scrolling)
+        assert log.max_scroll_y > 0 and log.scroll_y == log.max_scroll_y
+        assert bottom_line(log) == '12:34:56 n: 59'
+
+    drive(app, scenario)

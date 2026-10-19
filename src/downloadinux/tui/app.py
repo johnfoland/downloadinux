@@ -265,7 +265,7 @@ class ActivityLog(ScrollView, can_focus=True):
     def _to_end(self) -> None:
         self._scrolling = False
         if self._follow:
-            self.scroll_end(animate=False, immediate=True)
+            self.scroll_end(animate=False, immediate=True, force=True, x_axis=False)
 
     def watch_scroll_y(self, old: float, new: float) -> None:
         super().watch_scroll_y(old, new)

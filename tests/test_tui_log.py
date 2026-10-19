@@ -727,3 +727,35 @@ def test_lane_dropped_lines_marker(monkeypatch):
             ('1', ''), ('2', '')]
 
     drive(app, scenario)
+
+
+def test_following_keeps_horizontal_scroll_until_a_new_source_opens():
+    app = log_app(record(1), record(2))
+    stream = app.backend.stream('follow_job')
+    new = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, stream)
+        pane = view(app).log_pane
+        line = 'x' * 300
+        stream.feed(follow.FollowLog(1, 1, '\n'.join([line] * 50).encode()))
+        await at_bottom(pilot, pane, line[:pane.scrollable_content_region.width])
+        pane.focus()
+        pane.scroll_to(x=3, animate=False, immediate=True)
+        await pilot.pause()
+        assert pane.scroll_x == 3 and pane._follow
+        stream.feed(follow.FollowLog(1, 1, b'\nmore'))
+        await at_bottom(pilot, pane, 'e')
+        assert pane.scroll_x == 3
+        for size in ((70, 18), (90, 30), (80, 24)):
+            await pilot.resize_terminal(*size)
+            await at_bottom(pilot, pane, 'e')
+            assert pane.scroll_x == 3
+        await pilot.press('2', '1')
+        await at_bottom(pilot, pane, 'e')
+        assert pane.scroll_x == 3
+        await pilot.press('down')
+        await opened(pilot, app, new)
+        assert pane.scroll_x == 0 and pane._follow
+
+    drive(app, scenario)
