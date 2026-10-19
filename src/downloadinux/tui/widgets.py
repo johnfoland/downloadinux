@@ -142,7 +142,9 @@ class LogPane(TextPane):
     def _to_end(self) -> None:
         self._scrolling = False
         if self._follow:
-            self.scroll_end(animate=False, immediate=True)
+            # A pending refresh may learn the new size before scrollbar
+            # visibility catches up. Following must still reach that end.
+            self.scroll_end(animate=False, immediate=True, force=True)
 
     def action_follow(self) -> None:
         self._follow = True

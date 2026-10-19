@@ -34,6 +34,12 @@ def bottom(pane):
     return pane.render_line(pane.scrollable_content_region.height - 1).text.rstrip()
 
 
+async def at_bottom(pilot, pane, text):
+    # Text arrives before the after-refresh scroll callback finishes.
+    await until(pilot, lambda: pane._follow and pane.scroll_y == pane.max_scroll_y
+                and bottom(pane) == text)
+
+
 def test_queued_job_notices_are_shared_plain_text_and_cyan():
     job = record(7, state='queued', url='https://example.com/[b]\x1b', exit_status=None)
     app = log_app(job)
@@ -205,7 +211,12 @@ def test_quit_stops_the_current_follow_and_exits_zero():
     drive(app, scenario)
 
 
-def test_following_scrolling_up_and_end():
+@pytest.mark.parametrize('scroll_delay', [0, 0.15])
+def test_following_scrolling_up_and_end(monkeypatch, scroll_delay):
+    if scroll_delay:
+        scroll = widgets.LogPane._to_end
+        monkeypatch.setattr(widgets.LogPane, '_to_end',
+                            lambda pane: pane.set_timer(scroll_delay, lambda: scroll(pane)))
     app = log_app(record(1))
     stream = app.backend.stream('follow_job')
 
@@ -214,6 +225,7 @@ def test_following_scrolling_up_and_end():
         pane = view(app).log_pane
         stream.feed(follow.FollowLog(1, 1, '\n'.join(map(str, range(100))).encode()))
         await shows(pilot, app, '99')
+        await at_bottom(pilot, pane, '99')
         assert pane.max_scroll_y > 0 and pane.scroll_y == pane.max_scroll_y
         assert bottom(pane) == '99'
         pane.scroll_to(y=10, animate=False, immediate=True)
@@ -223,11 +235,28 @@ def test_following_scrolling_up_and_end():
         assert pane.scroll_y == 10 and not pane._follow
         pane.focus()
         await pilot.press('end')
-        await pilot.pause()
+        await at_bottom(pilot, pane, '100')
         assert pane._follow and bottom(pane) == '100'
         stream.feed(follow.FollowLog(1, 1, b'\n101'))
         await shows(pilot, app, '101')
+        await at_bottom(pilot, pane, '101')
         assert bottom(pane) == '101'
+
+    drive(app, scenario)
+
+
+def test_follow_reaches_the_end_before_scrollbar_visibility_catches_up(monkeypatch):
+    # A queued refresh callback can see the new virtual size before the
+    # scrollbar's visibility has caught up with it.
+    monkeypatch.setattr(widgets.LogPane, 'allow_vertical_scroll', property(lambda pane: False))
+    app = log_app(record(1))
+    stream = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, stream)
+        pane = view(app).log_pane
+        stream.feed(follow.FollowLog(1, 1, '\n'.join(map(str, range(100))).encode()))
+        await at_bottom(pilot, pane, '99')
 
     drive(app, scenario)
 
@@ -242,6 +271,7 @@ def test_hidden_arrivals_and_resizing_preserve_follow_or_scroll_position(scrolle
         pane = view(app).log_pane
         stream.feed(follow.FollowLog(1, 1, '\n'.join(map(str, range(100))).encode()))
         await shows(pilot, app, '99')
+        await at_bottom(pilot, pane, '99')
         if scrolled_up:
             pane.scroll_to(y=10, animate=False, immediate=True)
             await pilot.pause()
@@ -257,6 +287,7 @@ def test_hidden_arrivals_and_resizing_preserve_follow_or_scroll_position(scrolle
                 assert pane.scroll_y == 10 and not pane._follow
                 assert pane.render_line(0).text.rstrip() == '10'
             else:
+                await at_bottom(pilot, pane, '100')
                 assert pane.scroll_y == pane.max_scroll_y and pane._follow
                 assert bottom(pane) == '100'
 
