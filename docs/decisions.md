@@ -1551,7 +1551,16 @@ interface, its line-replacing bare CR, and its dropped-lines texts. A
 listing that shows the cursor job retried reopens the pane on the new
 attempt, with a notice, while it shows the current attempt: unlike the
 CLI's follow (DEC-57), the TUI keeps every earlier attempt one `[` away,
-so the switch loses nothing and is not silent.
+so the switch loses nothing and is not silent. Clarified on 2026-10-19: the
+Submit view's layout, focus, and `escape` in its text fields, its cookie
+choices (from one cookie-list read the app shares between Submit and
+Cookies), its destination line and the configuration read behind it, its
+checks, its `dl` and `batch` result texts, and the Jobs cursor placement
+after a URL submission are pinned in §5 and §4, with `batch`'s result line
+shared through `render` (§1); `ctrl+r` in Submit re-reads the cookie list
+and the configuration, as `ctrl+r` refreshes any shown view. Following the
+end of the log pane or Activity moves only the vertical position (§4, §8;
+issues #121 and #122).
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 

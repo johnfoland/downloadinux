@@ -3379,7 +3379,11 @@ list`'s empty text (`No jobs.` with `--all`, else `No queued, running,
 failed, or interrupted jobs.`). Its log pane adds two more, moved from the
 CLI's following output the same way: `render.follow_job(job)`, `Job I:
 URL`, and `render.follow_wait(id, wait)`, `job I waiting for VPN`, `job I
-waiting for throttle until T`, or `job I resumed`. The Textual-free backend, process
+waiting for throttle until T`, or `job I resumed`. The Submit view (§5)
+adds one more, moved from `batch` the same way: `render.batch_report(result)`,
+`batch`'s first line for a `BatchImport`, `No URLs in queue: PATH` or
+`Queued N jobs; skipped M active duplicates in PRESET lane.`; `batch` prints
+it, and after the `Queued` line its own `Follow with:` line. The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
 implemented (PR #112), as is the Status view in `downloadinux.tui.status`
@@ -3527,7 +3531,8 @@ unexpected exception) is then handled on the UI thread.
 
 *Reads.* Each read has a key naming the place its result goes: `listing`
 for the job listing (`jobs(all)` in the Jobs view's mode, §4), `vpn` for
-the header's VPN state, and one per view pane the views add. A read started under a key supersedes the one in flight
+the header's VPN state, `cookies` for the cookie list that Submit and
+Cookies share (§5), and one per view pane the views add. A read started under a key supersedes the one in flight
 under it: the older one's outcome is dropped when it arrives, and if it is
 a stream, it is stopped (*Stopping a stream*). A dropped outcome changes
 nothing on screen. The two timed reads are `listing` (§3's job intervals)
@@ -3721,8 +3726,9 @@ previous read, and at once after any job action or `ctrl+r` in Jobs;
 `doctor` and `config show` are read when Status is first shown, on
 `ctrl+r` there, and after a settings, token, or lifecycle action; never on a
 timer, since `doctor` makes several Docker calls. The cookie list is read
-when Cookies or Submit is first shown, on `ctrl+r` in Cookies, and after a
-cookie action. The header's VPN state is read every 10 seconds whatever
+when Cookies or Submit is first shown, on `ctrl+r` in either, and after a
+cookie action. Submit's configuration read (§5 *Destination*) runs each
+time Submit is shown and on `ctrl+r` there. The header's VPN state is read every 10 seconds whatever
 view is shown, counted the same way, at once on `ctrl+r` in any view, and
 after the actions §2 names. The app takes the two listing intervals and the
 VPN interval as arguments, defaulting to 2, 10, and 10 seconds, so tests can
@@ -3832,7 +3838,11 @@ green. The condition comes from the record (`state`, `wait`, and
 `cancel_requested`, as `render.job_state` reads them), never from the cell's
 text. At the first listing with rows the cursor is on the first row; after
 that it follows its job ID as above, the next listed ID being the smallest
-listed ID above it.
+listed ID above it. A URL submission (§5) asks the view to place the cursor
+on a job, `JobsView.place(id)`: the next successful listing that holds that
+ID puts the cursor on it instead, and the request ends; a successful listing
+without it ends the request with the cursor placed as usual, and a failed
+listing keeps it. A newer request replaces an older one; `a` keeps it.
 
 *Details.* The cursor job's `jobs show` text (shared renderer), read when
 the cursor moves to it and again whenever a listing shows any field of its
@@ -3965,7 +3975,11 @@ dlx jobs logs ID shows a job's whole log)` for a lane.
 The pane follows the end as Activity does (§8): while it follows, new
 lines, showing Jobs, and a resize keep its last line in view; scrolling up
 stops following and leaves the view where it is; the pane's own `end` key
-scrolls to the last line and follows again.
+scrolls to the last line and follows again. Following moves only the
+vertical position: a pane scrolled sideways keeps its horizontal position
+across new lines, a resize, and showing Jobs, and only opening a source
+returns it to the left edge
+([issue #122](https://github.com/johnfoland/downloadinux/issues/122)).
 
 *Cancel and retry.* `space` marks jobs; `c`, `r`, and `R` act on the marked
 jobs in ID order, else on the cursor job, and clear the marks. Marks on jobs
@@ -4091,6 +4105,90 @@ DEC-56), and its result is
 reported with `batch`'s texts: `No URLs in queue: PATH`, or `Queued N jobs;
 skipped M active duplicates in PRESET lane.` A consumption failure is shown
 with its message, which says the jobs were queued.
+
+*Layout.* In detail: the view is `downloadinux.tui.submit.SubmitView`,
+which the app mounts in the `submit` pane. It is one vertically scrolling
+container holding, in order: one row with the mode choice (a `RadioSet`:
+`URLs`, pressed, then `Queue file`) and the preset choice (a `RadioSet`:
+`video`, pressed, then `gallery`) side by side; in URL mode the `URLs` field
+(a `TextArea`, empty, eight lines tall, scrolling itself, `tab` leaving it),
+and in queue mode the `Queue file` field (an `Input`, empty) in its place;
+the `Cookies` list (an `OptionList`, at most six lines tall) with the cookie
+status line under it; the `User-agent` field (an `Input`, empty); the
+destination line; and the form's status line, empty. Each field and the
+list has a one-line label above it reading its name as given here.
+Switching modes keeps each field's text. Showing Submit focuses the mode
+choice; `tab` and `shift+tab` move through the choices, fields, and list in
+that order. In a text field (`URLs`, `Queue file`, `User-agent`), `escape`
+moves the focus to the mode choice, so the view's and the global keys apply
+again. `ctrl+s` is the view's binding: it applies while the focus is
+anywhere in the view, a text field included, and no dialog is open, and the
+footer lists it there.
+
+*Cookie choices.* The cookie list is the read `cookies()` under the key
+`cookies`. When Submit or Cookies is first shown, the app registers that
+read as the `cookies` re-read kind (§2 *Actions*) and starts it, and hands
+each outcome to every view that shows the list: `SubmitView.cookies_listed(
+outcome)`, and the Cookies view's (§6). The `Cookies` list holds `Default
+(NAME)` (`Default (anonymous)` when the list names no default), `Anonymous`,
+and each listed source by name in the list's order, NAME and the names
+escaped. Before the first outcome it holds `Default` and `Anonymous`, and
+the cookie status line reads `Reading cookie sources…`; a later read in
+flight changes neither. A failed read leaves `Default` and `Anonymous` and
+shows REASON in the status line (§8's error text, escaped, or `internal
+error; see Activity`), the error recorded and notified as any read's (§8);
+a success empties the status line and fills the list. `Default` is
+highlighted at first, and the highlight then stays on what it names (the
+default, anonymous, or a source's name) across outcomes, moving to `Default`
+when that source is no longer offered. The highlighted choice is the one
+submitted. `Default` sends no source, so the operation pins whatever default
+stands when it runs (*Named cookie sources* §3), whatever the label shows.
+
+*Destination.* The destination line follows the preset choice: `Saves under
+PATH: dlmp4/` for `video` and `Saves under PATH: dlgal/ (Instagram),
+gallery-dl/ (other sites)` for `gallery`, PATH being `paths.downloads`'s
+value in the latest successful configuration read, escaped. The view reads
+`config()` under the key `submit-config` each time Submit is shown and on
+`ctrl+r` there (§3 *Refresh*). Before its first outcome the line reads
+`Saves under paths.downloads: reading…`, and after a failed read `Saves
+under paths.downloads: REASON` (REASON as above, the error recorded and
+notified as any read's); a read in flight keeps the line as it is. The
+`Queue file` field's placeholder is `PATH/QUEUE`, QUEUE being the chosen
+preset's queue file (`dlmp4_queue` or `dlgal_queue`), and `the preset's
+default queue file` while there is no successful configuration read.
+
+*Submitting URLs.* In detail: `ctrl+s` in URL mode splits the `URLs` field's
+text as *URLs* above says. With no URL left, the form's status line reads
+`enter at least one URL` and nothing is sent. Then a nonempty `User-agent`
+is checked as `--user-agent` is (`launch.user_agent_option`): a refusal
+shows that error's text, escaped, in the form's status line, and nothing is
+sent. Otherwise the form's status line is emptied and `submit(PRESET, URLS,
+SELECTION)` is queued as the `dl` action: URLS the remaining lines in
+order, and SELECTION `Selection()`, `Selection(anonymous=True)`, or
+`Selection(source=NAME)` for the highlighted choice, each with `user_agent`
+the field's text when it is nonempty, else None. The form keeps its values
+while the action waits and runs. On success the Activity entry is one line
+per reference in the result's order, `job I: URL` or `job I: URL (already
+active)`, URL escaped; a URL entered twice is one reference and one line.
+The notification is that line when there is one reference, and otherwise
+the counts `N queued` and `N already active`, each only when nonzero, joined
+with `, ` and ending `.`. The `URLs` field is then emptied if its text is
+still the text that was submitted, and otherwise kept. The view asks the
+Jobs view to place its cursor on the first reference's job (§4 *Listing*)
+before the action's listing re-read starts; Submit stays shown. A failure is
+§8's operation error under `dl`, and the form keeps its values.
+
+*Importing a queue file.* In detail: `ctrl+s` in queue mode checks the
+`User-agent` as above, then empties the form's status line and queues
+`import_queue(PRESET, PATH, SELECTION)` as the `batch` action, SELECTION as
+above and PATH the `Queue file` field's text as entered, or None when it is
+empty, so the operation takes the preset's default queue from the settings
+it loads, whatever the placeholder shows. The result text, both the
+Activity entry and the notification, is `render.batch_report(result)`;
+`batch`'s `Follow with:` line is left out, since `v` and `g` follow a lane
+in Jobs (§4). The form keeps its values, and the Jobs cursor does not move.
+A consumption failure is §8's operation error, whose text says the jobs
+were queued; the listing is re-read after it as after any `batch`.
 
 ### 6. Cookies view
 
@@ -4378,7 +4476,12 @@ DEC-64). An operation
 error's TEXT is `error: ` and §8's error text; a multi-line TEXT continues on
 the following lines, each indented by nine spaces. Dropping the oldest entry
 drops all its lines. The view keeps the newest entry in sight unless the
-user has scrolled up; `end` returns to following.
+user has scrolled up; `end` returns to following. It follows as the Jobs
+log pane does (§4 *Log text*): new entries, showing Activity, and a resize
+keep the newest line in view, even while the scrollbar has not yet caught
+up with the new size, and following moves only the vertical position
+([issues #121](https://github.com/johnfoland/downloadinux/issues/121) and
+[#122](https://github.com/johnfoland/downloadinux/issues/122)).
 
 *Quitting.* `q` or `ctrl+q` quits at once, with no confirmation, unless an
 action is running: then it asks `NAME is still running and cannot be
