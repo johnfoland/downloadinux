@@ -738,8 +738,11 @@ def test_following_keeps_horizontal_scroll_until_a_new_source_opens():
         await opened(pilot, app, stream)
         pane = view(app).log_pane
         line = 'x' * 300
-        stream.feed(follow.FollowLog(1, 1, '\n'.join([line] * 50).encode()))
-        await at_bottom(pilot, pane, line[:pane.scrollable_content_region.width])
+        stream.feed(follow.FollowLog(1, 1, '\n'.join([line] * 49 + ['last ' + 'x' * 295]).encode()))
+        # Scrollbar layout changes the width asynchronously. Identify the
+        # last line by its prefix instead of a captured viewport width.
+        await until(pilot, lambda: pane._follow and pane.scroll_y == pane.max_scroll_y
+                    and bottom(pane).startswith('last '))
         pane.focus()
         pane.scroll_to(x=3, animate=False, immediate=True)
         await pilot.pause()
