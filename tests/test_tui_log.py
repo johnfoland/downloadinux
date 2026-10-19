@@ -553,3 +553,177 @@ def test_current_and_earlier_dropped_line_markers(monkeypatch, earlier):
             ('1', ''), ('2', ''), ('3', '')]
 
     drive(app, scenario)
+
+
+@pytest.mark.parametrize('key,preset', [('v', 'video'), ('g', 'gallery')])
+def test_lane_keys_open_and_reopen_the_requested_lane(key, preset):
+    app = log_app(record(1))
+    current = app.backend.stream('follow_job')
+    lane = app.backend.stream('follow_lane')
+    again = app.backend.stream('follow_lane')
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await pilot.press(key)
+        await opened(pilot, app, lane)
+        assert title(app) == f'Log: {preset} lane' and current.stops == 1
+        lane.feed(follow.FollowLog(1, 1, b'old lane'))
+        await shows(pilot, app, 'old lane')
+        await pilot.press(key)
+        await opened(pilot, app, again)
+        assert lane.stops == 1 and view(app).log_pane.lines == []
+        assert [call.args for call in app.backend.called('follow_lane')] == [(preset,), (preset,)]
+        assert title(app) == f'Log: {preset} lane'
+
+    drive(app, scenario)
+
+
+def test_lane_accumulates_each_jobs_notices_bytes_and_end_then_idle():
+    app = log_app()
+    lane = app.backend.stream('follow_lane')
+    first = record(7, lane='video', attempt=2, state='succeeded', exit_status=0)
+    second = record(8, lane='video', state='failed', error='broken\x1b')
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press('v')
+        await opened(pilot, app, lane)
+        for job in (first, second):
+            lane.feed(follow.FollowJob(job))
+            lane.feed(follow.FollowWait(job['id'], None))
+            lane.feed(follow.FollowLog(job['id'], job['attempt'], b'unterminated bytes'))
+            lane.feed(follow.FollowEnd(job))
+        lane.feed(follow.FollowDone())
+        lane.end()
+        await until(pilot, lambda: 'log' not in app._reads)
+        assert view(app).log_pane.lines == [
+            ('Job 7: https://example.com/7', 'cyan'), ('job 7 resumed', 'cyan'),
+            ('unterminated bytes', ''), ('attempt 2 ended: succeeded (exit status 0)', 'cyan'),
+            ('Job 8: https://example.com/8', 'cyan'), ('job 8 resumed', 'cyan'),
+            ('unterminated bytes', ''), ('attempt 1 ended: failed (exit status 7): broken\\x1b', 'cyan'),
+            ('video lane is idle', 'cyan')]
+        assert title(app) == 'Log: video lane'
+
+    drive(app, scenario)
+
+
+def test_a_lane_without_jobs_shows_idle():
+    app = log_app()
+    lane = app.backend.stream('follow_lane')
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press('g')
+        await opened(pilot, app, lane)
+        lane.feed(follow.FollowDone())
+        lane.end()
+        await until(pilot, lambda: 'log' not in app._reads)
+        assert view(app).log_pane.lines == [('gallery lane is idle', 'cyan')]
+        assert title(app) == 'Log: gallery lane'
+        assert not app.backend.called('follow_job')
+
+    drive(app, scenario)
+
+
+def test_lane_survives_cursor_listing_retry_empty_listing_and_attempt_keys():
+    app = log_app(record(1), record(2))
+    current = app.backend.stream('follow_job')
+    lane = app.backend.stream('follow_lane')
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await pilot.press('v')
+        await opened(pilot, app, lane)
+        lane.feed(follow.FollowLog(1, 1, b'lane bytes'))
+        await shows(pilot, app, 'lane bytes')
+        await pilot.press('down', '[', ']')
+        app.backend.defaults['jobs'] = [record(2, attempt=3)]
+        app.reread('listing')
+        await listed(pilot, app, 2)
+        assert title(app) == 'Log: video lane'
+        app.backend.defaults['jobs'] = []
+        app.reread('listing')
+        await listed(pilot, app, 3)
+        await pilot.press('[', ']')
+        assert title(app) == 'Log: video lane'
+        assert view(app).log_pane.lines == [('lane bytes', '')]
+        assert lane.stops == 0 and len(app.backend.called('follow_job')) == 1
+        assert not app.backend.called('log')
+        await pilot.press('escape')
+        assert lane.stops == 1 and title(app) == 'Log'
+        assert view(app).log_pane.lines == [] and 'log' not in app._reads
+        assert view(app).log_lane is None
+
+    drive(app, scenario)
+
+
+def test_escape_from_a_lane_opens_the_cursor_jobs_current_attempt():
+    app = log_app(record(1), record(2, attempt=3))
+    current = app.backend.stream('follow_job')
+    lane = app.backend.stream('follow_lane')
+    back = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await pilot.press('v')
+        await opened(pilot, app, lane)
+        await pilot.press('down', 'escape')
+        await opened(pilot, app, back)
+        assert lane.stops == 1 and title(app) == 'Log: job 2, attempt 3 of 3'
+        assert {call.args for call in app.backend.called('follow_job')} == {(1,), (2,)}
+        assert view(app).log_lane is None and view(app).log_current
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('recover_listing', [False, True])
+def test_lane_failure_does_not_show_a_job_and_reopens_the_same_lane(recover_listing):
+    app = log_app()
+    lane = app.backend.stream('follow_lane')
+    again = app.backend.stream('follow_lane')
+    error = not_running()
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press('g')
+        await opened(pilot, app, lane)
+        # Refreshing a healthy lane leaves its stream alone.
+        await pilot.press('ctrl+r')
+        await listed(pilot, app, 2)
+        assert lane.stops == 0 and len(app.backend.called('follow_lane')) == 1
+        lane.feed(follow.FollowLog(1, 1, b'kept'))
+        lane.fail(error)
+        await shows(pilot, app, f'log failed: {error}')
+        assert view(app).log_pane.lines == [('kept', ''), (f'log failed: {error}', 'bold red')]
+        assert not app.backend.called('show')
+        if recover_listing:
+            app.backend.script('jobs', Step(error=not_running()))
+            app.reread('listing')
+            await until(pilot, lambda: 'stale:' in view(app).status)
+            app.reread('listing')
+        else:
+            await pilot.press('ctrl+r')
+        await opened(pilot, app, again)
+        assert title(app) == 'Log: gallery lane'
+        assert view(app).log_pane.lines == [] and not view(app).log_failed
+        assert [call.args for call in app.backend.called('follow_lane')] == [('gallery',), ('gallery',)]
+
+    drive(app, scenario)
+
+
+def test_lane_dropped_lines_marker(monkeypatch):
+    monkeypatch.setattr(JobsView, 'LOG_LIMIT', 2)
+    app = log_app()
+    lane = app.backend.stream('follow_lane')
+
+    async def scenario(pilot):
+        await listed(pilot, app, 1)
+        await pilot.press('v')
+        await opened(pilot, app, lane)
+        lane.feed(follow.FollowLog(1, 1, b'0\n1\n2'))
+        await shows(pilot, app, 'earlier lines dropped')
+        assert view(app).log_pane.lines == [
+            ("(earlier lines dropped; dlx jobs logs ID shows a job's whole log)", 'dim'),
+            ('1', ''), ('2', '')]
+
+    drive(app, scenario)

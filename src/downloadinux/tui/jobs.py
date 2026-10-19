@@ -240,6 +240,8 @@ class JobsView(Vertical):
         Binding("left_square_bracket", "attempt(-1)", "Earlier attempt"),
         Binding("right_square_bracket", "attempt(1)", "Later attempt"),
         Binding("escape", "current", "Current job"),
+        Binding("v", "lane('video')", "Video lane"),
+        Binding("g", "lane('gallery')", "Gallery lane"),
     ]
     LOG_LIMIT = 10_000  # §4 *Log text*; replaceable in headless tests.
 
@@ -263,6 +265,7 @@ class JobsView(Vertical):
         self.log_pane = LogPane(id="log")
         self.log_title = Static(Text("Log", end=""), id="log-title")
         self.log_id: int | None = None
+        self.log_lane: str | None = None
         self.log_attempt = 0
         self.log_current = True
         self.log_failed = False
@@ -458,13 +461,12 @@ class JobsView(Vertical):
     # The log pane (§4 *Log pane*, *Job mode*).
 
     def _log_cursor(self) -> None:
+        if self.log_lane is not None:
+            return  # Listings and cursor moves never replace a lane (§4).
         id = self.cursor_id()
         if id is None:
             if self.log_id is not None:
-                self.app.drop("log")
-                self.log_id = None
-                self.log_failed = False
-                self.log_pane.reset(LogText("", self.LOG_LIMIT))
+                self._clear_log()
             self._log_title()
             return
         job = self.jobs[id]
@@ -477,13 +479,16 @@ class JobsView(Vertical):
 
     def _log_title(self) -> None:
         text = "Log"
-        if self.log_id is not None:
+        if self.log_lane is not None:
+            text = f"Log: {self.log_lane} lane"
+        elif self.log_id is not None:
             maximum = max(self.log_attempt, self.jobs[self.log_id]["attempt"])
             text = f"Log: job {self.log_id}, attempt {self.log_attempt} of {maximum}"
         self.log_title.update(Text(text, end=""))
 
     def _open_current(self, job: dict, *, retried_from: int | None = None) -> None:
         """Open the current attempt under the single `log` key (§4)."""
+        self.log_lane = None
         self.log_id = job["id"]
         self.log_attempt = job["attempt"]
         self.log_current = True
@@ -514,13 +519,18 @@ class JobsView(Vertical):
             if job["error"] is not None:
                 line += f": {render.escape(job['error'])}"
             self.log_pane.notice(line, NOTICE)
+        elif isinstance(event, host_follow.FollowDone) and self.log_lane is not None:
+            self.log_pane.notice(f"{self.log_lane} lane is idle", NOTICE)
 
     def _log_done(self, outcome) -> None:
         """A failed follow checks for a retry through `show` under `log`
         before displaying the follow's own reason (§4 *Failures*)."""
         if outcome.failed:
-            self.app.read("log", "show", self.log_id,
-                          done=partial(self._log_checked, outcome.shown))
+            if self.log_lane is not None:
+                self._log_failure(outcome.shown)
+            else:
+                self.app.read("log", "show", self.log_id,
+                              done=partial(self._log_checked, outcome.shown))
 
     def _log_checked(self, reason: str, outcome) -> None:
         if not outcome.failed and outcome.result.job["attempt"] > self.log_attempt:
@@ -564,14 +574,42 @@ class JobsView(Vertical):
             self.log_pane.notice(f"attempt {self.log_attempt} (earlier)", NOTICE)
 
     def action_current(self) -> None:
-        if self.log_id is not None and not self.log_current:
+        if self.log_lane is not None:
+            id = self.cursor_id()
+            if id is None:
+                self._clear_log()
+            else:
+                self._open_current(self.jobs[id])
+        elif self.log_id is not None and not self.log_current:
             self._open_current(self.jobs[self.log_id])
 
     def _refresh_log(self) -> None:
         """Refresh only a source showing its failure line (§4 *Failures*)."""
-        if self.log_failed and self.log_id is not None:
+        if not self.log_failed:
+            return
+        if self.log_lane is not None:
+            self.action_lane(self.log_lane)
+        elif self.log_id is not None:
             job = self.jobs[self.log_id]
             if self.log_current:
                 self._open_current(job)
             else:
                 self._open_attempt(job, self.log_attempt)
+
+    def _clear_log(self) -> None:
+        self.app.drop("log")
+        self.log_id = self.log_lane = None
+        self.log_attempt = 0
+        self.log_failed = False
+        self.log_pane.reset(LogText("", self.LOG_LIMIT))
+        self._log_title()
+
+    def action_lane(self, preset: str) -> None:
+        """Open a fresh lane follow, even for the same lane (§4 *Lane mode*)."""
+        self.log_lane = preset
+        self.log_id = None
+        self.log_failed = False
+        marker = "(earlier lines dropped; dlx jobs logs ID shows a job's whole log)"
+        self.log_pane.reset(LogText(marker, self.LOG_LIMIT))
+        self._log_title()
+        self.app.read("log", "follow_lane", preset, item=self._log_item, done=self._log_done)
