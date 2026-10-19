@@ -58,6 +58,12 @@ def not_running() -> DownloadinuxError:
     raise AssertionError("the listing succeeded")
 
 
+def retried_while_following(id: int) -> DownloadinuxError:
+    """The worker.follow error reply, raised by host_worker.stream (DEC-57)."""
+    return DownloadinuxError(
+        f"job {id} was retried while following; inspect with dlx jobs show {id}")
+
+
 def os_error(path) -> OSError:
     """The OSError opening a missing `path` really raises (errno, strerror, filename)."""
     try:
@@ -132,6 +138,9 @@ class FakeStream:
 
     def __next__(self):
         item = self._items.get()
+        if isinstance(item, BaseException):
+            self.ended.set()
+            raise item
         if item is _END:
             self._items.put(_END)
             self.ended.set()
@@ -140,6 +149,10 @@ class FakeStream:
 
     def feed(self, item) -> None:
         self._items.put(item)
+
+    def fail(self, error: BaseException) -> None:
+        """Raise an operation's error at this place in the stream."""
+        self._items.put(error)
 
     def end(self) -> None:
         self._items.put(_END)

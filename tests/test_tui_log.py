@@ -3,9 +3,11 @@
 import pytest
 
 from downloadinux import host_follow as follow
+from downloadinux import host_jobs
 from downloadinux.tui import widgets
+from downloadinux.tui.jobs import JobsView
 from test_tui_jobs import listed, make_app, settle, view
-from tui_support import drive, record, until
+from tui_support import Step, drive, not_running, record, retried_while_following, until
 
 
 def log_app(*jobs):
@@ -288,5 +290,235 @@ def test_width_measures_only_changed_lines_and_resets_on_new_source(monkeypatch)
         await opened(pilot, app, new)
         assert pane.virtual_size.width == 0 and pane.scroll_x == 0
         assert pane._follow
+
+    drive(app, scenario)
+
+
+def test_brackets_step_attempts_and_do_nothing_at_either_end():
+    app = log_app(record(1, attempt=3))
+    current = app.backend.stream('follow_job')
+    logs = [app.backend.stream('log') for _ in range(3)]
+    again = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        for key, stream, attempt in (('[', logs[0], 2), ('[', logs[1], 1)):
+            await pilot.press(key)
+            await opened(pilot, app, stream)
+            assert title(app) == f'Log: job 1, attempt {attempt} of 3'
+            assert app._reads['log'].method == 'log'
+        await pilot.press('[')
+        assert len(app.backend.called('log')) == 2
+        await pilot.press(']')
+        await opened(pilot, app, logs[2])
+        assert title(app) == 'Log: job 1, attempt 2 of 3'
+        await pilot.press(']')
+        await opened(pilot, app, again)
+        assert title(app) == 'Log: job 1, attempt 3 of 3'
+        await pilot.press(']', 'escape')
+        assert len(app.backend.called('follow_job')) == 2
+        assert [call.args for call in app.backend.called('log')] == [(1, 2), (1, 1), (1, 2)]
+        assert current.stops == 1 and all(stream.stops == 1 for stream in logs)
+
+    drive(app, scenario)
+
+
+def test_earlier_log_finishes_and_listing_updates_maximum_without_reopening():
+    app = log_app(record(7, attempt=3, url='https://example.com/[b]\x1b'))
+    current = app.backend.stream('follow_job')
+    earlier = app.backend.stream('log')
+    again = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await pilot.press('[')
+        await opened(pilot, app, earlier)
+        earlier.feed(b'earlier bytes')
+        earlier.end()
+        await until(pilot, lambda: 'log' not in app._reads)
+        assert view(app).log_pane.lines == [
+            ('Job 7: https://example.com/[b]\\x1b', 'cyan'),
+            ('earlier bytes', ''), ('attempt 2 (earlier)', 'cyan')]
+        app.backend.defaults['jobs'] = [record(7, attempt=4)]
+        app.reread('listing')
+        await listed(pilot, app, 2)
+        assert title(app) == 'Log: job 7, attempt 2 of 4'
+        assert len(app.backend.called('follow_job')) == 1
+        assert len(app.backend.called('log')) == 1
+        await pilot.press('escape')
+        await opened(pilot, app, again)
+        assert title(app) == 'Log: job 7, attempt 4 of 4'
+
+    drive(app, scenario)
+
+
+def test_retried_failure_checks_show_and_reopens_with_notice_and_reports_error(monkeypatch):
+    app = log_app(record(1))
+    old = app.backend.stream('follow_job')
+    new = app.backend.stream('follow_job')
+    error = retried_while_following(1)
+    notices = []
+    monkeypatch.setattr(app, 'notify', lambda text, **kwargs: notices.append((text, kwargs)))
+
+    async def scenario(pilot):
+        await opened(pilot, app, old)
+        await settle(pilot, app, 'show')
+        app.backend.script('show', Step(result=host_jobs.JobView(record(1, attempt=2), ())))
+        old.fail(error)
+        await opened(pilot, app, new)
+        assert title(app) == 'Log: job 1, attempt 2 of 2'
+        assert view(app).log_pane.lines == [('attempt 1 was retried; now showing attempt 2', 'cyan')]
+        assert any(f'follow_job: error: {error}' in line for line in app.activity.lines)
+        assert (str(error), {'severity': 'error', 'timeout': 10.0, 'markup': False}) in notices
+        assert len(app.backend.called('show')) == 2
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('show_fails', [False, True])
+def test_other_failure_keeps_lines_and_uses_the_follow_reason_even_if_show_fails(show_fails):
+    app = log_app(record(1))
+    stream = app.backend.stream('follow_job')
+    error = not_running()
+
+    async def scenario(pilot):
+        await opened(pilot, app, stream)
+        await settle(pilot, app, 'show')
+        if show_fails:
+            app.backend.script('show', Step(error=retried_while_following(1)))
+        stream.feed(follow.FollowLog(1, 1, b'kept bytes'))
+        stream.fail(error)
+        await shows(pilot, app, f'log failed: {error}')
+        assert view(app).log_pane.lines == [('kept bytes', ''), (f'log failed: {error}', 'bold red')]
+        assert view(app).log_failed
+        if show_fails:
+            assert any('show: error: job 1 was retried while following' in line
+                       for line in app.activity.lines)
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('earlier', [False, True])
+def test_ctrl_r_reopens_only_a_failed_source_and_preserves_the_attempt(earlier):
+    app = log_app(record(1, attempt=3))
+    current = app.backend.stream('follow_job')
+    source = app.backend.stream('log') if earlier else current
+    method = 'log' if earlier else 'follow_job'
+    new = app.backend.stream(method)
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await settle(pilot, app, 'show')
+        if earlier:
+            await pilot.press('[')
+            await opened(pilot, app, source)
+        initial_shows = len(app.backend.called('show'))
+        await pilot.press('ctrl+r')
+        await listed(pilot, app, 2)
+        assert source.stops == 0 and len(app.backend.called(method)) == 1
+        source.fail(not_running())
+        await shows(pilot, app, 'log failed:')
+        assert len(app.backend.called('show')) == initial_shows + (not earlier)
+        await pilot.press('ctrl+r')
+        await opened(pilot, app, new)
+        assert not view(app).log_failed
+        assert title(app) == f'Log: job 1, attempt {2 if earlier else 3} of 3'
+        assert 'log failed:' not in view(app).log_pane.text
+        assert app._reads['log'].method == method
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('earlier', [False, True])
+def test_only_a_listing_recovery_reopens_a_failed_source(earlier):
+    app = log_app(record(1, attempt=3))
+    current = app.backend.stream('follow_job')
+    source = app.backend.stream('log') if earlier else current
+    method = 'log' if earlier else 'follow_job'
+    new = app.backend.stream(method)
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        await settle(pilot, app, 'show')
+        if earlier:
+            await pilot.press('[')
+            await opened(pilot, app, source)
+        source.fail(not_running())
+        await shows(pilot, app, 'log failed:')
+        app.reread('listing')
+        await listed(pilot, app, 2)
+        assert view(app).log_failed and len(app.backend.called(method)) == 1
+        app.backend.script('jobs', Step(error=not_running()))
+        app.reread('listing')
+        await until(pilot, lambda: 'stale:' in view(app).status)
+        app.reread('listing')
+        await opened(pilot, app, new)
+        assert not view(app).log_failed
+        assert title(app) == f'Log: job 1, attempt {2 if earlier else 3} of 3'
+
+    drive(app, scenario)
+
+
+def test_listing_recovery_does_not_restart_a_healthy_log():
+    app = log_app(record(1))
+    stream = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, stream)
+        app.backend.script('jobs', Step(error=not_running()))
+        app.reread('listing')
+        await until(pilot, lambda: 'stale:' in view(app).status)
+        app.reread('listing')
+        await listed(pilot, app, 3)
+        assert stream.stops == 0 and len(app.backend.called('follow_job')) == 1
+
+    drive(app, scenario)
+
+
+def test_cursor_move_supersedes_a_held_show_after_failure():
+    app = log_app(record(1), record(2))
+    old = app.backend.stream('follow_job')
+    new = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, old)
+        await settle(pilot, app, 'show')
+        held = app.backend.hold('show', result=host_jobs.JobView(record(1, attempt=2), ()))
+        old.fail(retried_while_following(1))
+        await until(pilot, held.started.is_set)
+        assert app._reads['log'].method == 'show'
+        await pilot.press('down')
+        await opened(pilot, app, new)
+        new.feed(follow.FollowLog(2, 1, b'new job'))
+        await shows(pilot, app, 'new job')
+        held.release()
+        await until(pilot, held.finished.is_set)
+        await pilot.pause()
+        assert title(app) == 'Log: job 2, attempt 1 of 1'
+        assert view(app).log_pane.lines == [('new job', '')]
+        assert len(app.backend.called('follow_job')) == 2
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('earlier', [False, True])
+def test_current_and_earlier_dropped_line_markers(monkeypatch, earlier):
+    monkeypatch.setattr(JobsView, 'LOG_LIMIT', 3)
+    app = log_app(record(7, attempt=3))
+    current = app.backend.stream('follow_job')
+    source = app.backend.stream('log') if earlier else current
+
+    async def scenario(pilot):
+        await opened(pilot, app, current)
+        if earlier:
+            await pilot.press('[')
+            await opened(pilot, app, source)
+        data = b'0\n1\n2\n3'
+        source.feed(data if earlier else follow.FollowLog(7, 3, data))
+        await shows(pilot, app, 'earlier lines dropped')
+        option = ' --attempt 2' if earlier else ''
+        assert view(app).log_pane.lines == [
+            (f'(earlier lines dropped; dlx jobs logs 7{option} shows the whole log)', 'dim'),
+            ('1', ''), ('2', ''), ('3', '')]
 
     drive(app, scenario)
