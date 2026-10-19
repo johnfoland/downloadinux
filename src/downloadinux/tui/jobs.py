@@ -18,11 +18,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import (DataTable, Input, OptionList, RadioButton, RadioSet, Static,
                              TabbedContent, TabPane)
 
-from downloadinux import host_jobs, launch, render
+from downloadinux import host_follow, host_jobs, launch, render
 from downloadinux.errors import ConfigError
 from downloadinux.tui.backend import Selection
 from downloadinux.tui.dialogs import Confirm, FormDialog
-from downloadinux.tui.widgets import TextPane, ViewTable
+from downloadinux.tui.logtext import FAILURE, LogText, NOTICE
+from downloadinux.tui.widgets import LogPane, TextPane, ViewTable
 
 # §4 *Listing*: the status line's TITLE in each mode.
 TITLES = {False: "Queued, running, failed, or interrupted jobs", True: "All jobs"}
@@ -223,7 +224,9 @@ class JobsView(Vertical):
     JobsView #jobs-table { height: 1fr; }
     JobsView #jobs-panes { height: 2fr; }
     JobsView #details { width: 1fr; min-width: 32; }
-    JobsView #log { width: 2fr; }
+    JobsView #log-column { width: 2fr; }
+    JobsView #log-title { height: 1; }
+    JobsView #log { height: 1fr; }
     """
     BINDINGS = [
         Binding("tab", "cycle(1)", show=False),
@@ -234,7 +237,13 @@ class JobsView(Vertical):
         Binding("r", "retry", "Retry"),
         Binding("R", "retry_with", "Retry with…"),
         Binding("e", "export", "Export"),
+        Binding("left_square_bracket", "attempt(-1)", "Earlier attempt"),
+        Binding("right_square_bracket", "attempt(1)", "Later attempt"),
+        Binding("escape", "current", "Current job"),
+        Binding("v", "lane('video')", "Video lane"),
+        Binding("g", "lane('gallery')", "Gallery lane"),
     ]
+    LOG_LIMIT = 10_000  # §4 *Log text*; replaceable in headless tests.
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -253,20 +262,32 @@ class JobsView(Vertical):
         for column in COLUMNS:
             self.table.add_column(column, key=column)
         self.details = TextPane(id="details")
-        self.log_pane = TextPane(id="log")
+        self.log_pane = LogPane(id="log")
+        self.log_title = Static(Text("Log", end=""), id="log-title")
+        self.log_id: int | None = None
+        self.log_lane: str | None = None
+        self.log_attempt = 0
+        self.log_current = True
+        self.log_failed = False
+        self._listing_failed = False
 
     def compose(self) -> ComposeResult:
         yield self.status_line
         yield self.table
         with Horizontal(id="jobs-panes"):
             yield self.details
-            yield self.log_pane
+            with Vertical(id="log-column"):
+                yield self.log_title
+                yield self.log_pane
 
     def on_show(self) -> None:
         # Unless a later key has already switched away: focusing a widget
         # in a hidden pane would show that pane again.
         if self.app.query_one(TabbedContent).active == self.query_ancestor(TabPane).id:
             self.table.focus()
+
+    def on_mount(self) -> None:
+        self.app.register("log", self._refresh_log)
 
     def action_cycle(self, step: int) -> None:
         panes = [self.table, self.details, self.log_pane]
@@ -295,6 +316,8 @@ class JobsView(Vertical):
 
     def listed(self, outcome) -> None:
         """Show one listing outcome; a failure keeps the rows, marked stale."""
+        recovered = self._listing_failed and not outcome.failed
+        self._listing_failed = outcome.failed
         if outcome.failed:
             self._status(f"{self.line or TITLES[self.all]}; stale: {outcome.shown}")
             return
@@ -304,6 +327,8 @@ class JobsView(Vertical):
         self.marks &= jobs.keys()
         self._fill(jobs)
         self._cursor_moved()
+        if recovered:
+            self._refresh_log()
 
     def cursor_id(self) -> int | None:
         """The cursor row's job ID, or None with no rows."""
@@ -411,6 +436,7 @@ class JobsView(Vertical):
         """Read the cursor job's details when the cursor comes to a job, or
         when its listing record differs from the one held at that job's
         last details read; with no rows, empty the pane and drop the read."""
+        self._log_cursor()
         id = self.cursor_id()
         if id is None:
             self.details_for = self.details_record = None
@@ -431,3 +457,159 @@ class JobsView(Vertical):
             self.details.show([f"Job {id}: {outcome.shown}"])
         else:
             self.details.show(render.render_job(outcome.result).split("\n"))
+
+    # The log pane (§4 *Log pane*, *Job mode*).
+
+    def _log_cursor(self) -> None:
+        if self.log_lane is not None:
+            return  # Listings and cursor moves never replace a lane (§4).
+        id = self.cursor_id()
+        if id is None:
+            if self.log_id is not None:
+                self._clear_log()
+            self._log_title()
+            return
+        job = self.jobs[id]
+        if id != self.log_id:
+            self._open_current(job)
+        elif self.log_current and job["attempt"] > self.log_attempt:
+            self._open_current(job, retried_from=self.log_attempt)
+        else:
+            self._log_title()
+
+    def _log_title(self) -> None:
+        text = "Log"
+        if self.log_lane is not None:
+            text = f"Log: {self.log_lane} lane"
+        elif self.log_id is not None:
+            maximum = max(self.log_attempt, self.jobs[self.log_id]["attempt"])
+            text = f"Log: job {self.log_id}, attempt {self.log_attempt} of {maximum}"
+        self.log_title.update(Text(text, end=""))
+
+    def _open_current(self, job: dict, *, retried_from: int | None = None) -> None:
+        """Open the current attempt under the single `log` key (§4)."""
+        self.log_lane = None
+        self.log_id = job["id"]
+        self.log_attempt = job["attempt"]
+        self.log_current = True
+        self.log_failed = False
+        marker = f"(earlier lines dropped; dlx jobs logs {self.log_id} shows the whole log)"
+        self.log_pane.reset(LogText(marker, self.LOG_LIMIT))
+        if retried_from is not None:
+            self.log_pane.notice(
+                f"attempt {retried_from} was retried; now showing attempt {self.log_attempt}", NOTICE)
+        self._log_title()
+        self.app.read("log", "follow_job", self.log_id,
+                      item=self._log_item, done=self._log_done)
+
+    def _log_item(self, event) -> None:
+        if isinstance(event, host_follow.FollowJob):
+            self.log_attempt = event.job["attempt"]
+            self._log_title()
+            self.log_pane.notice(render.follow_job(event.job), NOTICE)
+        elif isinstance(event, host_follow.FollowWait):
+            self.log_pane.notice(render.follow_wait(event.id, event.wait), NOTICE)
+        elif isinstance(event, host_follow.FollowLog):
+            self.log_pane.feed(event.data)
+        elif isinstance(event, host_follow.FollowEnd):
+            job = event.job
+            line = f"attempt {job['attempt']} ended: {job['state']}"
+            if job["exit_status"] is not None:
+                line += f" (exit status {job['exit_status']})"
+            if job["error"] is not None:
+                line += f": {render.escape(job['error'])}"
+            self.log_pane.notice(line, NOTICE)
+        elif isinstance(event, host_follow.FollowDone) and self.log_lane is not None:
+            self.log_pane.notice(f"{self.log_lane} lane is idle", NOTICE)
+
+    def _log_done(self, outcome) -> None:
+        """A failed follow checks for a retry through `show` under `log`
+        before displaying the follow's own reason (§4 *Failures*)."""
+        if outcome.failed:
+            if self.log_lane is not None:
+                self._log_failure(outcome.shown)
+            else:
+                self.app.read("log", "show", self.log_id,
+                              done=partial(self._log_checked, outcome.shown))
+
+    def _log_checked(self, reason: str, outcome) -> None:
+        if not outcome.failed and outcome.result.job["attempt"] > self.log_attempt:
+            self._open_current(outcome.result.job, retried_from=self.log_attempt)
+        else:
+            self._log_failure(reason)
+
+    def _log_failure(self, reason: str) -> None:
+        self.log_pane.notice(f"log failed: {reason}", FAILURE)
+        self.log_failed = True
+
+    def action_attempt(self, step: int) -> None:
+        """Step within the known attempts (§4 *Job mode*)."""
+        if self.log_id is None:
+            return
+        job = self.jobs[self.log_id]
+        attempt = self.log_attempt + step
+        if 1 <= attempt <= max(self.log_attempt, job["attempt"]):
+            self._open_attempt(job, attempt)
+
+    def _open_attempt(self, job: dict, attempt: int) -> None:
+        if attempt >= job["attempt"]:
+            self._open_current(job)
+            return
+        self.log_id = job["id"]
+        self.log_attempt = attempt
+        self.log_current = False
+        self.log_failed = False
+        marker = (f"(earlier lines dropped; dlx jobs logs {self.log_id} "
+                  f"--attempt {attempt} shows the whole log)")
+        self.log_pane.reset(LogText(marker, self.LOG_LIMIT))
+        self.log_pane.notice(render.follow_job(job), NOTICE)
+        self._log_title()
+        self.app.read("log", "log", self.log_id, attempt,
+                      item=self.log_pane.feed, done=self._earlier_done)
+
+    def _earlier_done(self, outcome) -> None:
+        if outcome.failed:
+            self._log_failure(outcome.shown)
+        else:
+            self.log_pane.notice(f"attempt {self.log_attempt} (earlier)", NOTICE)
+
+    def action_current(self) -> None:
+        if self.log_lane is not None:
+            id = self.cursor_id()
+            if id is None:
+                self._clear_log()
+            else:
+                self._open_current(self.jobs[id])
+        elif self.log_id is not None and not self.log_current:
+            self._open_current(self.jobs[self.log_id])
+
+    def _refresh_log(self) -> None:
+        """Refresh only a source showing its failure line (§4 *Failures*)."""
+        if not self.log_failed:
+            return
+        if self.log_lane is not None:
+            self.action_lane(self.log_lane)
+        elif self.log_id is not None:
+            job = self.jobs[self.log_id]
+            if self.log_current:
+                self._open_current(job)
+            else:
+                self._open_attempt(job, self.log_attempt)
+
+    def _clear_log(self) -> None:
+        self.app.drop("log")
+        self.log_id = self.log_lane = None
+        self.log_attempt = 0
+        self.log_failed = False
+        self.log_pane.reset(LogText("", self.LOG_LIMIT))
+        self._log_title()
+
+    def action_lane(self, preset: str) -> None:
+        """Open a fresh lane follow, even for the same lane (§4 *Lane mode*)."""
+        self.log_lane = preset
+        self.log_id = None
+        self.log_failed = False
+        marker = "(earlier lines dropped; dlx jobs logs ID shows a job's whole log)"
+        self.log_pane.reset(LogText(marker, self.LOG_LIMIT))
+        self._log_title()
+        self.app.read("log", "follow_lane", preset, item=self._log_item, done=self._log_done)

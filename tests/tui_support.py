@@ -58,6 +58,12 @@ def not_running() -> DownloadinuxError:
     raise AssertionError("the listing succeeded")
 
 
+def retried_while_following(id: int) -> DownloadinuxError:
+    """The worker.follow error reply, raised by host_worker.stream (DEC-57)."""
+    return DownloadinuxError(
+        f"job {id} was retried while following; inspect with dlx jobs show {id}")
+
+
 def os_error(path) -> OSError:
     """The OSError opening a missing `path` really raises (errno, strerror, filename)."""
     try:
@@ -132,6 +138,9 @@ class FakeStream:
 
     def __next__(self):
         item = self._items.get()
+        if isinstance(item, BaseException):
+            self.ended.set()
+            raise item
         if item is _END:
             self._items.put(_END)
             self.ended.set()
@@ -140,6 +149,10 @@ class FakeStream:
 
     def feed(self, item) -> None:
         self._items.put(item)
+
+    def fail(self, error: BaseException) -> None:
+        """Raise an operation's error at this place in the stream."""
+        self._items.put(error)
 
     def end(self) -> None:
         self._items.put(_END)
@@ -170,6 +183,14 @@ class FakeBackend:
     def hold(self, name: str, **step) -> Step:
         [held] = self.script(name, Step(hold=True, **step))
         return held
+
+    def stream(self, name: str, *, stop_ends: bool = True) -> FakeStream:
+        """Own a scripted stream before any test assertion can fail."""
+        stream = FakeStream(stop_ends=stop_ends)
+        with self._lock:
+            self.streams.append(stream)
+        self.script(name, Step(result=stream))
+        return stream
 
     def names(self) -> list[str]:
         with self._lock:
@@ -207,7 +228,8 @@ class FakeBackend:
             if name in STREAMS:
                 stream = FakeStream() if step.result is DEFAULT else step.result
                 with self._lock:
-                    self.streams.append(stream)
+                    if stream not in self.streams:
+                        self.streams.append(stream)
                 return stream
             if step.result is not DEFAULT:
                 return step.result

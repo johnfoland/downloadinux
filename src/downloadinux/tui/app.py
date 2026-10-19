@@ -75,7 +75,7 @@ ACTIONS = {
     "vpn_disconnect": ("vpn disconnect", ("doctor", "vpn")),
 }
 # TUI §3 *Refresh*: what ctrl+r re-reads in each view, besides the VPN state.
-VIEW_REFRESH = {"jobs": ("listing",), "cookies": ("cookies",), "status": ("config", "doctor")}
+VIEW_REFRESH = {"jobs": ("listing", "log"), "cookies": ("cookies",), "status": ("config", "doctor")}
 
 
 def run(config: str | None, overrides: Sequence[str]) -> int:

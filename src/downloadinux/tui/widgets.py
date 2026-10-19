@@ -4,6 +4,7 @@
 
 from rich.cells import cell_len
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual.binding import Binding
 from textual.geometry import Size
@@ -12,6 +13,7 @@ from textual.strip import Strip
 from textual.widgets import DataTable
 
 from downloadinux import render
+from downloadinux.tui.logtext import LogText
 
 
 def plain(text: str) -> Text:
@@ -81,4 +83,83 @@ class TextPane(ScrollView, can_focus=True):
         if index >= len(self.lines):
             return Strip.blank(width, self.rich_style)
         strip = Strip([Segment(self.lines[index], self.rich_style)])
+        return strip.crop(x, x + width).extend_cell_length(width, self.rich_style)
+
+
+class LogPane(TextPane):
+    """Styled `LogText` lines, following the end (TUI §4 *Log text*).
+
+    Width grows from changed lines only, and resets with the source. Lines
+    are rendered on demand, so a chunk never remeasures the retained history.
+    """
+
+    BINDINGS = [Binding("end", "follow", show=False)]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.source = LogText("")
+        self.lines = self.source.lines
+        self._width = 0
+        self._follow = True
+        self._scrolling = False
+
+    def reset(self, source: LogText) -> None:
+        self.source = source
+        self.lines = source.lines
+        self._width = 0
+        self.scroll_to(x=0, y=0, animate=False, immediate=True, force=True)
+        self._follow = True
+        self._sync(0)
+
+    def feed(self, data: bytes) -> None:
+        self._sync(self.source.feed(data))
+
+    def notice(self, text: str, style: str) -> None:
+        self._sync(self.source.notice(text, style))
+
+    def _sync(self, start: int) -> None:
+        for text, _ in self.lines[start:]:
+            self._width = max(self._width, cell_len(text.expandtabs()))
+        self.virtual_size = Size(self._width, len(self.lines))
+        self._follow_end()
+        self.refresh()
+
+    @property
+    def text(self) -> str:
+        return "\n".join(text for text, _ in self.lines)
+
+    def on_show(self) -> None:
+        self._follow_end()
+
+    def on_resize(self) -> None:
+        self._follow_end()
+
+    def _follow_end(self) -> None:
+        if self._follow and not self._scrolling:
+            self._scrolling = True
+            self.call_after_refresh(self._to_end)
+
+    def _to_end(self) -> None:
+        self._scrolling = False
+        if self._follow:
+            # A pending refresh may learn the new size before scrollbar
+            # visibility catches up. Following must still reach that end.
+            self.scroll_end(animate=False, immediate=True, force=True)
+
+    def action_follow(self) -> None:
+        self._follow = True
+        self._follow_end()
+
+    def watch_scroll_y(self, old: float, new: float) -> None:
+        super().watch_scroll_y(old, new)
+        self._follow = new >= self.max_scroll_y
+
+    def render_line(self, y: int) -> Strip:
+        x, top = self.scroll_offset
+        width = self.size.width
+        index = top + y
+        if index >= len(self.lines):
+            return Strip.blank(width, self.rich_style)
+        text, style = self.lines[index]
+        strip = Strip([Segment(text.expandtabs(), self.rich_style + Style.parse(style))])
         return strip.crop(x, x + width).extend_cell_length(width, self.rich_style)

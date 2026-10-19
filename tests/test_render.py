@@ -82,3 +82,18 @@ def test_render_jobs_builds_its_rows_from_job_cells():
 def test_no_jobs():
     assert render.no_jobs(True) == 'No jobs.'
     assert render.no_jobs(False) == 'No queued, running, failed, or interrupted jobs.'
+
+
+def test_follow_job_escapes_the_url():
+    assert render.follow_job(record(7, url='https://example.com/[b]\x1b\r')) == (
+        'Job 7: https://example.com/[b]\\x1b\\x0d')
+
+
+@pytest.mark.parametrize('wait,text', [
+    (None, 'job 7 resumed'),
+    ({'reason': 'vpn'}, 'job 7 waiting for VPN'),
+    ({'reason': 'throttle', 'until': 'tomorrow\x1b\r'},
+     'job 7 waiting for throttle until tomorrow\\x1b\\x0d'),
+])
+def test_follow_wait(wait, text):
+    assert render.follow_wait(7, wait) == text
