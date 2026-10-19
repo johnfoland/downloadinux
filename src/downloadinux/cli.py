@@ -687,14 +687,9 @@ def _render_follow(events, *, ids=(), lane: str | None = None) -> int:
                 for event in events:
                     if isinstance(event, host_follow.FollowJob):
                         selected = True
-                        job = event.job
-                        _notice(f"Job {job['id']}: {render.escape(job['url'])}")
+                        _notice(render.follow_job(event.job))
                     elif isinstance(event, host_follow.FollowWait):
-                        wait = event.wait
-                        reason = ('resumed' if wait is None else 'waiting for VPN'
-                                  if wait['reason'] == 'vpn' else
-                                  f"waiting for throttle until {render.escape(wait['until'])}")
-                        _notice(f"job {event.id} {reason}")
+                        _notice(render.follow_wait(event.id, event.wait))
                     elif isinstance(event, host_follow.FollowLog):
                         _write_bytes(event.data)
                     elif isinstance(event, host_follow.FollowEnd):

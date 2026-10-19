@@ -25,6 +25,19 @@ def escape(text: str) -> str:
     return _CONTROL.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
 
 
+def follow_job(job: dict) -> str:
+    """The selected-job notice shared by CLI and TUI (TUI §1 *Package*)."""
+    return f"Job {job['id']}: {escape(job['url'])}"
+
+
+def follow_wait(id: int, wait: dict | None) -> str:
+    """A changed-wait notice (TUI §1 *Package*; DEC-57)."""
+    reason = ('resumed' if wait is None else 'waiting for VPN'
+              if wait['reason'] == 'vpn' else
+              f"waiting for throttle until {escape(wait['until'])}")
+    return f"job {id} {reason}"
+
+
 def job_state(job: dict) -> str:
     wait = job["wait"]
     if job["state"] == "queued" and wait is not None:
