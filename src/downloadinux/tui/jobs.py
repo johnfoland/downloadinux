@@ -18,11 +18,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import (DataTable, Input, OptionList, RadioButton, RadioSet, Static,
                              TabbedContent, TabPane)
 
-from downloadinux import host_jobs, launch, render
+from downloadinux import host_follow, host_jobs, launch, render
 from downloadinux.errors import ConfigError
 from downloadinux.tui.backend import Selection
 from downloadinux.tui.dialogs import Confirm, FormDialog
-from downloadinux.tui.widgets import TextPane, ViewTable
+from downloadinux.tui.logtext import LogText, NOTICE
+from downloadinux.tui.widgets import LogPane, TextPane, ViewTable
 
 # §4 *Listing*: the status line's TITLE in each mode.
 TITLES = {False: "Queued, running, failed, or interrupted jobs", True: "All jobs"}
@@ -223,7 +224,9 @@ class JobsView(Vertical):
     JobsView #jobs-table { height: 1fr; }
     JobsView #jobs-panes { height: 2fr; }
     JobsView #details { width: 1fr; min-width: 32; }
-    JobsView #log { width: 2fr; }
+    JobsView #log-column { width: 2fr; }
+    JobsView #log-title { height: 1; }
+    JobsView #log { height: 1fr; }
     """
     BINDINGS = [
         Binding("tab", "cycle(1)", show=False),
@@ -235,6 +238,7 @@ class JobsView(Vertical):
         Binding("R", "retry_with", "Retry with…"),
         Binding("e", "export", "Export"),
     ]
+    LOG_LIMIT = 10_000  # §4 *Log text*; replaceable in headless tests.
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -253,14 +257,20 @@ class JobsView(Vertical):
         for column in COLUMNS:
             self.table.add_column(column, key=column)
         self.details = TextPane(id="details")
-        self.log_pane = TextPane(id="log")
+        self.log_pane = LogPane(id="log")
+        self.log_title = Static(Text("Log", end=""), id="log-title")
+        self.log_id: int | None = None
+        self.log_attempt = 0
+        self.log_current = True
 
     def compose(self) -> ComposeResult:
         yield self.status_line
         yield self.table
         with Horizontal(id="jobs-panes"):
             yield self.details
-            yield self.log_pane
+            with Vertical(id="log-column"):
+                yield self.log_title
+                yield self.log_pane
 
     def on_show(self) -> None:
         # Unless a later key has already switched away: focusing a widget
@@ -411,6 +421,7 @@ class JobsView(Vertical):
         """Read the cursor job's details when the cursor comes to a job, or
         when its listing record differs from the one held at that job's
         last details read; with no rows, empty the pane and drop the read."""
+        self._log_cursor()
         id = self.cursor_id()
         if id is None:
             self.details_for = self.details_record = None
@@ -431,3 +442,64 @@ class JobsView(Vertical):
             self.details.show([f"Job {id}: {outcome.shown}"])
         else:
             self.details.show(render.render_job(outcome.result).split("\n"))
+
+    # The log pane (§4 *Log pane*, *Job mode*).
+
+    def _log_cursor(self) -> None:
+        id = self.cursor_id()
+        if id is None:
+            if self.log_id is not None:
+                self.app.drop("log")
+                self.log_id = None
+                self.log_pane.reset(LogText("", self.LOG_LIMIT))
+            self._log_title()
+            return
+        job = self.jobs[id]
+        if id != self.log_id:
+            self._open_current(job)
+        elif self.log_current and job["attempt"] > self.log_attempt:
+            self._open_current(job, retried_from=self.log_attempt)
+        else:
+            self._log_title()
+
+    def _log_title(self) -> None:
+        text = "Log"
+        if self.log_id is not None:
+            maximum = max(self.log_attempt, self.jobs[self.log_id]["attempt"])
+            text = f"Log: job {self.log_id}, attempt {self.log_attempt} of {maximum}"
+        self.log_title.update(Text(text, end=""))
+
+    def _open_current(self, job: dict, *, retried_from: int | None = None) -> None:
+        """Open the current attempt under the single `log` key (§4)."""
+        self.log_id = job["id"]
+        self.log_attempt = job["attempt"]
+        self.log_current = True
+        marker = f"(earlier lines dropped; dlx jobs logs {self.log_id} shows the whole log)"
+        self.log_pane.reset(LogText(marker, self.LOG_LIMIT))
+        if retried_from is not None:
+            self.log_pane.notice(
+                f"attempt {retried_from} was retried; now showing attempt {self.log_attempt}", NOTICE)
+        self._log_title()
+        self.app.read("log", "follow_job", self.log_id,
+                      item=self._log_item, done=self._log_done)
+
+    def _log_item(self, event) -> None:
+        if isinstance(event, host_follow.FollowJob):
+            self.log_attempt = event.job["attempt"]
+            self._log_title()
+            self.log_pane.notice(render.follow_job(event.job), NOTICE)
+        elif isinstance(event, host_follow.FollowWait):
+            self.log_pane.notice(render.follow_wait(event.id, event.wait), NOTICE)
+        elif isinstance(event, host_follow.FollowLog):
+            self.log_pane.feed(event.data)
+        elif isinstance(event, host_follow.FollowEnd):
+            job = event.job
+            line = f"attempt {job['attempt']} ended: {job['state']}"
+            if job["exit_status"] is not None:
+                line += f" (exit status {job['exit_status']})"
+            if job["error"] is not None:
+                line += f": {render.escape(job['error'])}"
+            self.log_pane.notice(line, NOTICE)
+
+    def _log_done(self, outcome) -> None:
+        pass  # Failure recovery is added with attempt navigation.

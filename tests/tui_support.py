@@ -171,6 +171,14 @@ class FakeBackend:
         [held] = self.script(name, Step(hold=True, **step))
         return held
 
+    def stream(self, name: str, *, stop_ends: bool = True) -> FakeStream:
+        """Own a scripted stream before any test assertion can fail."""
+        stream = FakeStream(stop_ends=stop_ends)
+        with self._lock:
+            self.streams.append(stream)
+        self.script(name, Step(result=stream))
+        return stream
+
     def names(self) -> list[str]:
         with self._lock:
             return [call.name for call in self.calls]
@@ -207,7 +215,8 @@ class FakeBackend:
             if name in STREAMS:
                 stream = FakeStream() if step.result is DEFAULT else step.result
                 with self._lock:
-                    self.streams.append(stream)
+                    if stream not in self.streams:
+                        self.streams.append(stream)
                 return stream
             if step.result is not DEFAULT:
                 return step.result

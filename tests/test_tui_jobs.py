@@ -123,7 +123,9 @@ def test_the_panes_split_the_height_and_width():
         table, details, log = jobs.table.size, jobs.details.size, jobs.log_pane.size
         rest = jobs.size.height - 1
         assert table.height == rest // 3 or table.height == rest // 3 + 1
-        assert details.height == log.height == rest - table.height
+        assert details.height == log.height + 1 == rest - table.height
+        assert jobs.log_title.size.height == 1
+        assert jobs.log_title.region.bottom == jobs.log_pane.region.y
         assert details.width == 32  # A third of 80 is less than its minimum.
         assert details.width + log.width == jobs.size.width
 
@@ -153,8 +155,10 @@ def test_the_details_and_log_panes_scroll_both_ways_while_focused():
     async def scenario(pilot):
         await settle(pilot, app)
         pane = view(app).log_pane
-        pane.show([f"{n:03} " + "w" * 200 for n in range(100)])
+        pane.feed("\n".join(f"{n:03} " + "w" * 200 for n in range(100)).encode())
         pane.focus()
+        await pilot.pause()
+        pane.scroll_home(animate=False, immediate=True)
         await pilot.pause()
         await pilot.press("down", "down", "right", "right")
         await pilot.pause()
