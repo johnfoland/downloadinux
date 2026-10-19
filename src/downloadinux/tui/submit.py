@@ -4,7 +4,9 @@ Cookie choices come from the app's shared list read. The destination has
 its own configuration read; every operation uses the app's entry points.
 """
 
+from functools import partial
 from pathlib import Path
+import re
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -13,7 +15,9 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (Input, OptionList, RadioButton, RadioSet, Static,
                              TabbedContent, TabPane, TextArea)
 
-from downloadinux import presets, render
+from downloadinux import host_downloads, launch, presets, render
+from downloadinux.errors import ConfigError
+from downloadinux.tui.backend import Selection
 
 
 class SubmitView(VerticalScroll):
@@ -160,4 +164,51 @@ class SubmitView(VerticalScroll):
                                   render.escape(str(self.downloads / presets.PRESETS[self.preset].queue)))
 
     def action_submit(self) -> None:
-        """Submit is wired to the form's key; its operation follows in §5."""
+        """Validate, then queue one action (§5 *Submitting URLs*, *Importing a queue file*)."""
+        original = self.urls.text
+        if not self.queue_mode:
+            urls = tuple(line.strip() for line in re.split(r"\r\n|\r|\n", original)
+                         if line.strip() and not line.strip().startswith("#"))
+            if not urls:
+                self.status_line.update(Text("enter at least one URL"))
+                return
+        try:
+            selection = self._selection()
+        except ConfigError as error:
+            self.status_line.update(Text(render.escape(str(error))))
+            return
+        self.status_line.update(Text(""))
+        if self.queue_mode:
+            self.app.act("import_queue", self.preset, self.queue.value or None, selection,
+                         report=self._imported)
+        else:
+            self.app.act("submit", self.preset, urls, selection,
+                         report=partial(self._submitted, original))
+
+    def _selection(self) -> Selection:
+        """Default pins at action time, regardless of its label (§5 *Cookie choices*)."""
+        agent = launch.user_agent_option(self.agent.value) if self.agent.value else None
+        index = self.cookies.highlighted or 0
+        return Selection(source=self.sources[index - 2] if index >= 2 else None,
+                         anonymous=index == 1, user_agent=agent)
+
+    def _submitted(self, original: str, result: host_downloads.DownloadSubmission) -> tuple[str, str]:
+        """Report references, conditionally clear, and request placement before re-reading (§5)."""
+        lines = [f"job {reference.id}: {render.escape(reference.url)}"
+                 + (" (already active)" if reference.duplicate else "")
+                 for reference in result.references]
+        if len(lines) == 1:
+            notice = lines[0]
+        else:
+            duplicates = sum(reference.duplicate for reference in result.references)
+            counts = ((len(lines) - duplicates, "queued"), (duplicates, "already active"))
+            notice = ", ".join(f"{count} {label}" for count, label in counts if count) + "."
+        if self.urls.text == original:
+            self.urls.load_text("")
+        self.app.jobs_view.place(result.references[0].id)
+        return "\n".join(lines), notice
+
+    @staticmethod
+    def _imported(result: host_downloads.BatchImport) -> tuple[str, str]:
+        text = render.batch_report(result)
+        return text, text

@@ -291,7 +291,9 @@ The Python + Textual TUI (Stage 4) is settled (DEC-58 to DEC-62, issue #98).
 Its Textual-free backend, process runners, and stream handle are implemented
 (PR #110), as are its app frame (PR #112), its Status view (PR #115), and
 its complete Jobs view (PRs #118, #120), including the log pane and
-`tui.logtext`; the Submit and Cookies views and the launch remain planned.
+`tui.logtext`;
+the Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 Its `config set`/`config unset`
 writes and shared renderers are implemented (PR #103),
 as are `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`

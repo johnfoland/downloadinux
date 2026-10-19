@@ -4,8 +4,9 @@ Status: Stages 1–3 are implemented; Stage 4's shared host operations are
 implemented, as are the TUI's Textual-free backend, process runners, and
 stream handle (PR #110), its app frame (PR #112), its Status view
 (PR #115), and its complete Jobs view (PRs #118, #120), including its log
-pane and `tui.logtext`. The Submit and Cookies views and the launch remain
-planned.
+pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -49,7 +50,8 @@ operations. PR #110 implements the Textual-free backend, process runners,
 and stream handle, PR #112 the app frame, PR #115 the Status view, and
 PR #118 the Jobs view's listing, details, marks, cancel, retry, and export.
 PR #120 completes the Jobs view with its log pane and `tui.logtext`.
-The Submit and Cookies views and the launch remain planned.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 
 ## Agreed decisions
 
@@ -3344,8 +3346,9 @@ Settled for Stage 4 ([issue #98](https://github.com/johnfoland/downloadinux/issu
 DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
 handle are implemented (PR #110), and so are the app frame (PR #112) and
 the Status view (PR #115), and the complete Jobs view (PRs #118, #120),
-including its log pane and `tui.logtext`. The Submit and Cookies views
-and the launch remain planned. Its
+including its log pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned. Its
 settings writes, `config set` and `config unset`, are under *Configuration
 and paths* (DEC-61), and are implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
@@ -3390,8 +3393,9 @@ implemented (PR #112), as is the Status view in `downloadinux.tui.status`
 with its dialogs in `downloadinux.tui.dialogs` (PR #115). The Jobs view in
 `downloadinux.tui.jobs`, with the shared widgets in `downloadinux.tui.widgets`
 and the shared job and follow renderers, is implemented in full (PRs #118,
-#120), including `downloadinux.tui.logtext` and the log pane. The Submit
-and Cookies views and the launch remain planned.
+#120), including `downloadinux.tui.logtext` and the log pane.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3784,7 +3788,8 @@ its own style.
 The frame, header, footer line, global keys, help, and confirmation dialog
 are implemented (PR #112), and so are Status's keys, refresh, and dialogs
 (PR #115), and all of Jobs's keys, refresh, cancel question, and dialogs
-(PRs #118, #120); the other views' are not.
+(PRs #118, #120), and Submit's keys and refresh (PR #124). The Cookies
+view's keys and refresh remain planned.
 
 ### 4. Jobs view
 
@@ -4189,6 +4194,10 @@ Activity entry and the notification, is `render.batch_report(result)`;
 in Jobs (§4). The form keeps its values, and the Jobs cursor does not move.
 A consumption failure is §8's operation error, whose text says the jobs
 were queued; the listing is re-read after it as after any `batch`.
+
+The Submit view, shared cookie-list read, batch report renderer, and Jobs
+cursor placement are implemented (PR #124). The Cookies view and launch
+remain planned.
 
 ### 6. Cookies view
 
