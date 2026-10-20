@@ -3386,7 +3386,12 @@ waiting for throttle until T`, or `job I resumed`. The Submit view (§5)
 adds one more, moved from `batch` the same way: `render.batch_report(result)`,
 `batch`'s first line for a `BatchImport`, `No URLs in queue: PATH` or
 `Queued N jobs; skipped M active duplicates in PRESET lane.`; `batch` prints
-it, and after the `Queued` line its own `Follow with:` line. The Textual-free backend, process
+it, and after the `Queued` line its own `Follow with:` line. The Cookies
+view (§6) adds one more, moved from `cookies list`'s text the same way:
+`render.cookie_cells(source)`, the tuple of one listed source's cells (its
+name, kind, origin as `render_cookie_source` writes it, revision, refreshed
+time, and `yes` or `no` for the default), which `render_cookie_source`
+builds its text from. The Textual-free backend, process
 runners, and stream handle are implemented (PR #110), and the app frame
 in `downloadinux.tui.app`, with the Textual dependency and `run`, is
 implemented (PR #112), as is the Status view in `downloadinux.tui.status`
@@ -3586,7 +3591,10 @@ does. And a view's result function, which turns an action's result into its
 Activity and notification text, may instead raise a `DownloadinuxError`
 (`vpn connect`'s nonzero status, §7): the action's outcome is then recorded
 and notified as §8's operation error under the action's name, with that
-error's text.
+error's text. An action may also carry a start function (`act(…,
+started=…)`), which the app calls on the UI thread when the action reaches
+the head of the queue, just before its backend call starts (§6's export
+notice); an action dropped while quitting never starts and never calls it.
 
 *Processes.* `downloadinux.tui.process` provides the runners the backend
 passes to every operation that takes them (`runner`, `capture`, `feed`, and
@@ -3731,7 +3739,8 @@ previous read, and at once after any job action or `ctrl+r` in Jobs;
 `ctrl+r` there, and after a settings, token, or lifecycle action; never on a
 timer, since `doctor` makes several Docker calls. The cookie list is read
 when Cookies or Submit is first shown, on `ctrl+r` in either, and after a
-cookie action. Submit's configuration read (§5 *Destination*) runs each
+cookie action; `ctrl+r` in Cookies also re-reads the cursor source's
+inspection (§6 *Inspection*). Submit's configuration read (§5 *Destination*) runs each
 time Submit is shown and on `ctrl+r` there. The header's VPN state is read every 10 seconds whatever
 view is shown, counted the same way, at once on `ctrl+r` in any view, and
 after the actions §2 names. The app takes the two listing intervals and the
@@ -4202,11 +4211,11 @@ remain planned.
 ### 6. Cookies view
 
 A table of the cookie list, one row per source in name order: name, kind,
-origin, revision, refreshed time, and a default mark, the same fields
-`cookies list` prints; above it, `Default: NAME` or `Default: anonymous`.
-Beside it, the cursor source's `cookies inspect` text (shared renderer),
-read when the cursor moves to it and after an action on it. A source's
-cookie values never appear (DEC-30).
+origin, revision, refreshed time, and whether it is the default, the same
+fields `cookies list` prints; above it, `Default: NAME` or `Default:
+anonymous`. Below it, the cursor source's `cookies inspect` text (shared
+renderer), read when the cursor moves to it and after an action on it. A
+source's cookie values never appear (DEC-30).
 
 - `a` opens a dialog for a name, a browser (from `cookies browsers`), and an
   optional profile, keyring, and container where that browser supports them,
@@ -4221,6 +4230,118 @@ Each result is the operation's inspection or default, recorded in Activity
 with the CLI's text. Registration never changes the default (*Named cookie
 sources* §2), and the TUI does not either, except through `d` and `n`. `cookies cleanup` and the
 `firefox` and `setup` shortcuts stay CLI-only.
+
+*Layout.* In detail: the view is `downloadinux.tui.cookies.CookiesView`,
+which the app mounts in the `cookies` pane. It is a vertical stack: the
+view's status line, the source table, and below the table the inspection
+pane. Below the status line the table takes one third of the height and the
+pane the rest (`height: 1fr` and `2fr`). The table scrolls itself, keeping
+its cursor row in sight; the inspection pane is the Jobs details pane's
+widget (`widgets.TextPane`, §4 *Layout*), unwrapped plain lines that scroll
+both ways while focused. Showing Cookies focuses the table; `tab` and
+`shift+tab` move the focus between the table and the inspection pane.
+Cookies's keys (§3) are the view's bindings: they apply while the focus is
+in the view and no dialog is open, and the footer lists them there.
+
+*Source list.* The table shows the shared `cookies` read (§5 *Cookie
+choices*): the app hands each outcome to `SubmitView.cookies_listed(
+outcome)` and then to `CookiesView.listed(outcome)`. Its columns are
+`NAME`, `KIND`, `ORIGIN`, `REVISION`, `REFRESHED`, and `DEFAULT`, one row
+per listed source in the list's order (by name), with
+`render.cookie_cells(source)` (§1) as the cells, each escaped, as plain
+text. The status line reads `Cookie sources: reading…` before the first
+outcome, and a later read in flight keeps it as it is; after a success it
+reads `Default: NAME` (escaped) or `Default: anonymous`, and after a failure
+`Cookie sources: REASON`, REASON being §8's error text, escaped, or
+`internal error; see Activity`. A failure empties the table; its error is
+recorded and notified once, as the shared read's (§5). At the first outcome
+with rows the cursor is on the first row; after that it stays on the same
+source name, and when that source is no longer listed it moves to the next
+listed name (the smallest listed name after it), else to the last row. A
+successful `a` or `i` (below) asks for the cursor on the name it
+registered: the next successful outcome that lists that name puts the
+cursor on it instead, and the request ends; a successful outcome without it
+ends the request with the cursor placed as usual, and a failed one keeps
+it. A newer request replaces an older one.
+
+*Inspection.* The pane shows `render.render_cookie_inspection(report)` for
+the cursor source, each line escaped, read with `inspect(NAME)` under the
+key `inspection`. A read starts when the cursor comes to a source (a key,
+or an outcome that moved it); when an outcome's metadata for the cursor
+source (its listed record) differs from the record listed when its
+inspection was last read, so a refresh, a replacement, or a default change
+re-reads it; and on `ctrl+r` in Cookies, the read the view registers as
+the `inspection` re-read kind (§2, §3 *Refresh*). While the first read for
+a source runs, the pane reads `NAME: reading…`; a later read for the same
+source keeps the shown text until it ends. A failed read shows `NAME:
+REASON` (REASON as above), its error recorded and notified as any read's
+(§8). With no rows, an `inspection` read in flight is dropped (§2 *View
+entry points*), and the pane reads `No cookie sources; add one with a
+(browser) or i (Netscape file).` after a successful list, and is empty
+otherwise. An inspection holds a source's metadata and counts by domain:
+no cookie name or value reaches the TUI (DEC-30).
+
+*Refresh and default.* `f` queues `refresh(NAME)` as `cookies refresh`,
+and `d` queues `set_default(NAME)` as `cookies default`, for the cursor
+source; with no rows they do nothing. `n` queues `set_default(None)` as
+`cookies default`. None of the three asks first. The result of `cookies
+import`, `cookies add-browser`, and `cookies refresh` is recorded in
+Activity as the CLI prints it, `render.render_cookie_inspection(report)`
+with each line escaped, and notified as `NAME: COUNTS`, NAME being the
+report's source name, escaped, and COUNTS its
+`render.render_cookie_counts(report)` line. `cookies default`'s result is
+recorded as the CLI prints it, the new default's name (escaped) or
+`anonymous`, and notified as `Default: NAME` or `Default: anonymous`. A
+failure is §8's operation error under the action's name, and the cookie
+list is re-read after every cookie action (§2 *Actions*).
+
+*Import dialog.* `i` opens a form titled `Import a Netscape cookie file`:
+a `Name` field, a `File` field, each with a one-line label above it reading
+its name, and a `Replace` checkbox, off. `Name` has the focus, and `enter`
+in `File` or OK submits it. Submitting queues `import_cookies(NAME, FILE,
+REPLACE)` as `cookies import`, both fields' text as entered: the operation
+checks them as `cookies import` does, so an invalid name, an empty path,
+and an existing source without Replace are its operation errors.
+
+*Add-browser dialog.* `a` opens a form titled `Add a browser cookie
+source` holding, in order, a `Name` field, a `Browser` list, a `Profile`
+field, a `Keyring` list, a `Container` field, a `Replace` checkbox (off),
+and a status line, each field and list with a one-line label above it
+reading its name. The dialog reads `browsers()` under the key `browsers`
+when it opens, and closing it drops that read (§2 *View entry points*).
+While the read runs, the status line reads `Reading browsers…` and the
+`Browser` list is empty; a failure leaves the list empty and shows REASON
+(as above) in the status line, its error recorded and notified as any
+read's (§8); a success empties the status line and lists each browser's
+`id` in the report's order, the first highlighted. The highlighted browser
+decides the optional fields, from `cookies browsers`' capabilities:
+`Profile` is shown when its `profile` is true, `Keyring` when its
+`keyrings` is not empty, listing `automatic` and then each keyring ID with
+`automatic` highlighted when the list is filled, and `Container` when its
+`container` is true. A hidden field keeps its text but is not sent. `Name`
+has the focus; `tab` and `shift+tab` move through the shown fields, the
+lists, the checkbox, and OK; `enter` in the last shown text field or OK
+submits it, and with no browser listed submitting does nothing and the
+dialog stays open. Submitting queues `add_browser(NAME, BROWSER, PROFILE,
+KEYRING, CONTAINER, REPLACE)` as `cookies add-browser`: NAME as entered,
+BROWSER the highlighted ID, PROFILE and CONTAINER each field's text as
+entered when it is shown and not empty, else None, and KEYRING the
+highlighted keyring ID, or None for `automatic` or a hidden list. The
+operation checks them as `cookies add-browser` does. When the action starts
+(§2 *View entry points*), the app notifies `export running; a keychain or
+browser prompt may appear`, with Textual's default severity and timeout;
+the footer names the action while it runs (§3 *Frame*).
+
+The export runs on the action's thread through the locked adapter
+(*Named cookie sources* §2, DEC-29), which takes no runner: yt-dlp starts
+the platform's keyring helpers itself (`security` on macOS, `dbus-send` and
+`kwallet-query` for KWallet) with standard output piped and standard error
+discarded, so they write nothing to the screen; they share the TUI's
+session and standard input, which they never read. The adapter's
+diagnostic containment replaces `sys.stdout` and `sys.stderr` while an
+export runs, so a Python-level write made then, from any thread, is
+contained with the adapter's and not recorded in Activity (DEC-59
+clarified).
 
 ### 7. Status and settings view
 
