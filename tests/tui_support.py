@@ -9,7 +9,8 @@ runs the next step scripted for its method (`script`), or returns the
 method's default result. A step can call `record` before and after it is
 held, hold on an event until released, raise a scripted error, or return a
 scripted result; a stream method returns a `FakeStream`. `defaults` maps a
-method to its default result, starting from `DEFAULTS`; `show`'s default,
+method to its default result, starting from `DEFAULTS` (real-shaped
+results, `inspect` and `browsers` included); `show`'s default,
 unless one is set there, is `job_view` for the requested ID. `release_all`
 releases every held step and ends every stream, and `drive` always calls it
 before `asyncio.run` waits for the worker threads, whatever the test did.
@@ -22,12 +23,13 @@ import inspect
 import os
 from pathlib import Path
 import queue
+import tempfile
 import threading
 import time
 
-from test_host_jobs import record
+from test_host_jobs import NOW, publish, record
 
-from downloadinux import health, host_jobs, operations
+from downloadinux import cookie_store, cookie_writer, health, host_jobs, operations
 from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
@@ -37,9 +39,21 @@ METHODS = tuple(name for name, _ in inspect.getmembers(Backend, inspect.isfuncti
 STREAMS = ("log", "follow_job", "follow_lane")
 # `config`'s default is the real report for a settings file that does not exist.
 MISSING = "/nonexistent-downloadinux/config.toml"
+
+
+def _inspection() -> dict:
+    """A real `inspect_cookies` report for one synthetic file source."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "cookies"
+        publish(root, "alpha", "value")
+        return cookie_store.inspect(root, cookie_writer.ensure_store(root), "alpha",
+                                    now=NOW.timestamp())
+
+
 DEFAULTS = {"jobs": [], "vpn_state": VpnState(False, False, False, None, None),
             "doctor": health.Result(()), "config": operations.show_config(MISSING),
-            "cookies": {"default": None, "sources": []}}
+            "cookies": {"default": None, "sources": []}, "inspect": _inspection(),
+            "browsers": operations.cookie_browsers(platform="linux")}
 WAIT = 5.0  # The longest any helper waits on a thread, so a failure cannot hang.
 
 

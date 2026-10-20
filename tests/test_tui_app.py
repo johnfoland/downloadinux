@@ -134,7 +134,7 @@ def test_only_the_app_and_its_widget_modules_import_textual_or_rich():
     hits = {path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py")
             if pattern.search(path.read_text())}
     assert hits == {"tui/app.py", "tui/dialogs.py", "tui/jobs.py", "tui/status.py",
-                    "tui/widgets.py", "tui/submit.py"}
+                    "tui/widgets.py", "tui/submit.py", "tui/cookies.py"}
 
 
 # Frame and header (TUI §3 *Frame*).

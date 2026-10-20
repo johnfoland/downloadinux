@@ -1576,7 +1576,13 @@ and add-browser dialogs (fields from `cookies browsers`' capabilities) are
 pinned in §6; the add-browser notice is a notification posted when the
 action starts, through an action start function (§2 *View entry points*),
 since a notification cannot last exactly as long as the action and the
-footer already names it while it runs.
+footer already names it while it runs. Clarified on 2026-10-20 in #128:
+the shared cookie list fills the Cookies table even before Cookies is first
+shown, but no inspection is read until it is, as a view not yet shown reads
+nothing of its own (§2 *Actions*), so a session that only uses Submit never
+inspects a source; and the cursor's source name outlasts a table emptied
+by a failed or empty list, so the next list with rows places the cursor by
+that name (§6 *Source list*, *Inspection*).
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 

@@ -2,7 +2,7 @@
 DEC-58 to DEC-60).
 
 With the dialog, widget, and view modules it imports (`tui.dialogs`,
-`tui.widgets`, `tui.jobs`, `tui.submit`, `tui.status`), this is the only code under
+`tui.widgets`, `tui.jobs`, `tui.submit`, `tui.cookies`, `tui.status`), this is the only code under
 `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
@@ -24,7 +24,6 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
 from textual.geometry import Size
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -39,6 +38,7 @@ from downloadinux import credentials, errors, render, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.cookies import CookiesView
 from downloadinux.tui.dialogs import Confirm
 from downloadinux.tui.jobs import JobsView
 from downloadinux.tui.process import process_text
@@ -77,7 +77,7 @@ ACTIONS = {
 }
 # TUI §3 *Refresh*: what ctrl+r re-reads in each view, besides the VPN state.
 VIEW_REFRESH = {"jobs": ("listing", "log"), "submit": ("cookies", "submit-config"),
-                "cookies": ("cookies",), "status": ("config", "doctor")}
+                "cookies": ("cookies", "inspection"), "status": ("config", "doctor")}
 
 
 def run(config: str | None, overrides: Sequence[str]) -> int:
@@ -332,13 +332,16 @@ class Read:
 @dataclass(eq=False)
 class Action:
     """One queued action (TUI §2 *Actions*). `report(result)` gives the
-    Activity text and the notification text for a success."""
+    Activity text and the notification text for a success; `started`, when
+    given, runs as the action reaches the head of the queue (§2 *View entry
+    points*)."""
 
     name: str
     method: str
     args: tuple
     report: Callable[[object], tuple[str, str]]
     rereads: tuple[str, ...]
+    started: Callable[[], None] | None = None
 
 
 class ReadItem(Message):
@@ -372,7 +375,8 @@ class DownloadinuxApp(App):
     entry points*): `read` for a read under a key, `drop` to drop the read
     in flight under a key when the pane it fills closes, `act` to queue an
     action, whose result function may raise `DownloadinuxError` to report
-    the action as an operation error, and `register` to supply the read
+    the action as an operation error and whose start function runs as it
+    starts, and `register` to supply the read
     behind a re-read kind (§2 *Actions*, §3 *Refresh*).
 
     `listing` is the latest job listing's `Outcome`, None before the
@@ -380,7 +384,8 @@ class DownloadinuxApp(App):
     questions count (§7 *Container*). The timed `listing` read lists in
     the Jobs view's mode and hands each outcome to the view after the
     header (§4 *Listing*). Submit and Cookies share the app's `cookies`
-    read, registered and started when either is first shown (§5).
+    read, registered and started when either is first shown, which hands
+    each outcome to Submit and then to Cookies (§5, §6 *Source list*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -436,6 +441,7 @@ class DownloadinuxApp(App):
         self.activity = ActivityLog(id="activity-log")
         self.jobs_view = JobsView(id="jobs-view")
         self.submit_view = SubmitView(id="submit-view")
+        self.cookies_view = CookiesView(id="cookies-view")
         self.running_line = Static(id="running")
         yield self.header
         with TabbedContent(initial="jobs"):
@@ -450,7 +456,7 @@ class DownloadinuxApp(App):
                     elif view == "submit":
                         yield self.submit_view
                     else:
-                        yield Container(classes="placeholder")
+                        yield self.cookies_view
         yield self.running_line
         yield Footer()
 
@@ -473,7 +479,11 @@ class DownloadinuxApp(App):
 
     def _read_cookies(self) -> None:
         """One cookie-list read shared by the views (TUI §5 *Cookie choices*)."""
-        self.read("cookies", "cookies", done=self.submit_view.cookies_listed)
+        self.read("cookies", "cookies", done=self._cookies_done)
+
+    def _cookies_done(self, outcome: Outcome) -> None:
+        self.submit_view.cookies_listed(outcome)
+        self.cookies_view.listed(outcome)
 
     def show_running(self, text: str) -> None:
         self.running_line.update(Text(text))
@@ -658,23 +668,28 @@ class DownloadinuxApp(App):
         if reread is not None:
             reread()
 
-    def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
+    def act(self, method: str, *args, report: Callable[[object], tuple[str, str]],
+            started: Callable[[], None] | None = None) -> None:
         """Queue `backend.<method>(*args)` as an action, named and re-read
         by §2's table. `report(result)` gives a success's Activity text
         and notification text, or raises `DownloadinuxError` to report the
         action as that operation error (§2 *View entry points*); any other
-        exception it raises is an internal error. Once quitting has started,
-        nothing is queued."""
+        exception it raises is an internal error. `started()` runs on the
+        UI thread when the action reaches the head of the queue, just before
+        its backend call starts; an action dropped while quitting never
+        calls it. Once quitting has started, nothing is queued."""
         if self._quitting:
             return
         name, rereads = ACTIONS[method]
-        self._waiting.append(Action(name or args[0], method, args, report, rereads))
+        self._waiting.append(Action(name or args[0], method, args, report, rereads, started))
         self._next_action()
 
     def _next_action(self) -> None:
         # The queue waits while the quit question is open (DEC-63).
         if self._action is None and self._waiting and not self._asking:
             self._action = self._waiting.popleft()
+            if self._action.started is not None:
+                self._action.started()
             self.run_worker(partial(self._run_action, self._action), name=self._action.name,
                             group="action", thread=True, exit_on_error=False)
         self._show_queue()

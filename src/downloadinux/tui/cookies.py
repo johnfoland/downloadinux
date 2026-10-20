@@ -1,0 +1,402 @@
+"""The Cookies view (target design, *Python + Textual TUI* §6; DEC-60): the
+registered cookie sources, the cursor source's inspection, refresh, the
+default, Netscape import, and browser sources.
+
+`CookiesView` fills the app's `cookies` pane. The app hands it each outcome
+of the cookie-list read it shares with Submit (`listed`, §5 *Cookie
+choices*); everything else reaches the host operations through the app's
+view entry points (§2 *View entry points*). No cookie name or value reaches
+it: the list and inspections hold metadata and counts only (DEC-30).
+"""
+
+from functools import partial
+
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.widgets import Checkbox, DataTable, Input, OptionList, Static, TabbedContent, TabPane
+
+from downloadinux import render
+from downloadinux.tui.dialogs import FormDialog
+from downloadinux.tui.widgets import TextPane, ViewTable, plain
+
+COLUMNS = ("NAME", "KIND", "ORIGIN", "REVISION", "REFRESHED", "DEFAULT")
+EMPTY = "No cookie sources; add one with a (browser) or i (Netscape file)."  # §6 *Inspection*
+EXPORT_NOTICE = "export running; a keychain or browser prompt may appear"  # §6 *Add-browser dialog*
+
+
+def inspection_lines(report: dict) -> list[str]:
+    """`cookies inspect`'s text, each line escaped (§6 *Inspection*)."""
+    return [render.escape(line) for line in render.render_cookie_inspection(report).split("\n")]
+
+
+def inspected(report: dict) -> tuple[str, str]:
+    """`cookies import`, `add-browser`, and `refresh`'s result: the CLI's
+    text, each line escaped, and `NAME: COUNTS` (§6 *Refresh and default*)."""
+    name = render.escape(report["source"]["name"])
+    return "\n".join(inspection_lines(report)), f"{name}: {render.render_cookie_counts(report)}"
+
+
+def defaulted(default: str | None) -> tuple[str, str]:
+    """`cookies default`'s result: the CLI's text and `Default: NAME`."""
+    name = "anonymous" if default is None else render.escape(default)
+    return name, f"Default: {name}"
+
+
+class ImportDialog(FormDialog):
+    """`i`'s dialog (§6 *Import dialog*): `Name`, `File`, and `Replace`,
+    submitted as `(NAME, FILE, REPLACE)` with the text as entered."""
+
+    def __init__(self):
+        super().__init__("Import a Netscape cookie file")
+
+    def fields(self) -> ComposeResult:
+        yield Static(Text("Name"))
+        yield Input(id="name")
+        yield Static(Text("File"))
+        yield Input(id="file")
+        yield Checkbox("Replace", id="replace")
+
+    def on_mount(self) -> None:
+        self.query_one("#name", Input).focus()
+
+    def value(self) -> tuple[str, str, bool]:
+        return (self.query_one("#name", Input).value, self.query_one("#file", Input).value,
+                self.query_one(Checkbox).value)
+
+
+class AddBrowserDialog(FormDialog):
+    """`a`'s dialog (§6 *Add-browser dialog*). It reads `browsers()` under
+    `browsers` when it opens and drops that read when it closes; the
+    highlighted browser's capabilities decide which optional fields show.
+    A hidden field keeps its text but sends None. It submits
+    `(NAME, BROWSER, PROFILE, KEYRING, CONTAINER, REPLACE)`, and only with a
+    browser listed."""
+
+    # Taller than 24 lines with every field shown: the form scrolls, and
+    # focus keeps the focused field in view (TUI §3 *Size and appearance*).
+    DEFAULT_CSS = """
+    AddBrowserDialog > Vertical { overflow-y: auto; }
+    AddBrowserDialog .optional { height: auto; }
+    AddBrowserDialog OptionList { height: auto; max-height: 6; }
+    """
+    KEY = "browsers"
+
+    def __init__(self):
+        super().__init__("Add a browser cookie source")
+        self.browsers: tuple[dict, ...] = ()  # The report's browsers, in its order.
+        self.keyrings: tuple[str, ...] = ()  # The `Keyring` list's IDs after `automatic`.
+
+    def fields(self) -> ComposeResult:
+        yield Static(Text("Name"))
+        yield Input(id="name")
+        yield Static(Text("Browser"))
+        yield OptionList(id="browser")
+        with Vertical(id="profile-field", classes="optional"):
+            yield Static(Text("Profile"))
+            yield Input(id="profile")
+        with Vertical(id="keyring-field", classes="optional"):
+            yield Static(Text("Keyring"))
+            yield OptionList(id="keyring")
+        with Vertical(id="container-field", classes="optional"):
+            yield Static(Text("Container"))
+            yield Input(id="container")
+        yield Checkbox("Replace", id="replace")
+        yield Static(id="browsers-status")
+
+    def on_mount(self) -> None:
+        self._fields()
+        self.query_one("#name", Input).focus()
+        self._status("Reading browsers…")
+        self.app.read(self.KEY, "browsers", done=self._listed)
+
+    def _status(self, text: str) -> None:
+        self.query_one("#browsers-status", Static).update(Text(text, end=""))
+
+    @property
+    def status(self) -> str:
+        return self.query_one("#browsers-status", Static).content.plain
+
+    def _listed(self, outcome) -> None:
+        if outcome.failed:
+            self._status(outcome.shown)
+            return
+        self._status("")
+        self.browsers = tuple(outcome.result["browsers"])
+        options = self.query_one("#browser", OptionList)
+        options.add_options([plain(browser["id"]) for browser in self.browsers])
+        if self.browsers:
+            options.highlighted = 0
+        self._fields()
+
+    def browser(self) -> dict | None:
+        """The highlighted browser's capabilities, or None with none listed."""
+        index = self.query_one("#browser", OptionList).highlighted
+        return None if index is None or not self.browsers else self.browsers[index]
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "browser":
+            self._fields()
+
+    def _fields(self) -> None:
+        """Show the optional fields the highlighted browser supports."""
+        browser = self.browser() or {"profile": False, "keyrings": [], "container": False}
+        self.query_one("#profile-field").display = browser["profile"]
+        self.query_one("#container-field").display = browser["container"]
+        keyrings = tuple(browser["keyrings"])
+        self.query_one("#keyring-field").display = bool(keyrings)
+        if keyrings != self.keyrings:
+            self.keyrings = keyrings
+            options = self.query_one("#keyring", OptionList)
+            options.clear_options()
+            if keyrings:
+                options.add_options([plain("automatic"), *(plain(id) for id in keyrings)])
+                options.highlighted = 0
+
+    def _shown(self, field: str) -> bool:
+        return self.query_one(f"#{field}-field").display
+
+    def _text(self, field: str) -> str | None:
+        """A shown field's text when not empty, else None."""
+        return (self.query_one(f"#{field}", Input).value or None) if self._shown(field) else None
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """`enter` in the last shown text field submits (not the base's last field)."""
+        event.stop()
+        event.prevent_default()
+        shown = [field for field in ("name", "profile", "container")
+                 if field == "name" or self._shown(field)]
+        if event.input.id == shown[-1]:
+            self.submit()
+
+    def submit(self) -> None:
+        if self.browser() is not None:
+            super().submit()
+
+    def value(self) -> tuple:
+        keyring = None
+        if self._shown("keyring"):
+            index = self.query_one("#keyring", OptionList).highlighted
+            keyring = self.keyrings[index - 1] if index else None
+        return (self.query_one("#name", Input).value, self.browser()["id"],
+                self._text("profile"), keyring, self._text("container"),
+                self.query_one(Checkbox).value)
+
+    def closing(self) -> None:
+        self.app.drop(self.KEY)
+
+
+class CookiesView(Vertical):
+    """The Cookies pane (§6 *Layout*, *Source list*, *Inspection*).
+
+    A status line, the source table, and below it the inspection pane.
+    Showing it focuses the table; `tab` and `shift+tab` move between the
+    table and the pane. Its keys apply while the focus is inside it and no
+    dialog is open.
+    """
+
+    DEFAULT_CSS = """
+    CookiesView #cookies-status { height: 1; }
+    CookiesView #cookies-table { height: 1fr; }
+    CookiesView #inspection { height: 2fr; }
+    """
+    BINDINGS = [
+        Binding("tab", "cycle(1)", show=False),
+        Binding("shift+tab", "cycle(-1)", show=False),
+        Binding("a", "add_browser", "Add browser"),
+        Binding("i", "import", "Import"),
+        Binding("f", "refresh_source", "Refresh"),
+        Binding("d", "default", "Default"),
+        Binding("n", "anonymous", "Anonymous"),
+    ]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.started = False
+        self.sources: dict[str, dict] = {}  # The table's records by name, in list order.
+        self.listed_ok = False  # The latest outcome succeeded.
+        # The cursor's source name, kept across emptied tables (§6, DEC-60 clarified).
+        self.cursor_source: str | None = None
+        # §6 *Inspection*: the source the pane is for, and its listed record
+        # when its inspection was last read.
+        self.inspected_for: str | None = None
+        self.inspected_record: dict | None = None
+        self._place_name: str | None = None
+        # Kept, not queried: an outcome posted during shutdown still finds them.
+        self.status_line = Static(Text("Cookie sources: reading…", end=""), id="cookies-status")
+        self.table = ViewTable(id="cookies-table")
+        for column in COLUMNS:
+            self.table.add_column(column, key=column)
+        self.inspection = TextPane(id="inspection")
+
+    def compose(self) -> ComposeResult:
+        yield self.status_line
+        yield self.table
+        yield self.inspection
+
+    def on_show(self) -> None:
+        if not self.started:
+            # Inspections start once Cookies is first shown (§2 *Actions*, DEC-60).
+            self.started = True
+            self.app.register("inspection", self.reinspect)
+            self._cursor_moved()
+        # Unless a later key has already switched away: focusing a widget
+        # in a hidden pane would show that pane again.
+        if self.app.query_one(TabbedContent).active == self.query_ancestor(TabPane).id:
+            self.table.focus()
+
+    def action_cycle(self, step: int) -> None:
+        panes = [self.table, self.inspection]
+        focused = self.app.focused
+        index = panes.index(focused) if focused in panes else -step
+        panes[(index + step) % len(panes)].focus()
+
+    def _status(self, text: str) -> None:
+        self.status_line.update(Text(text, end=""))
+
+    @property
+    def status(self) -> str:
+        return self.status_line.content.plain
+
+    # The source list (§6 *Source list*).
+
+    def place(self, name: str) -> None:
+        """Place the cursor at the next successful outcome listing `name`.
+
+        A failure keeps the request; a newer request replaces it.
+        """
+        self._place_name = name
+
+    def listed(self, outcome) -> None:
+        """Show one cookie-list outcome; a failure empties the table. The
+        app records and notifies its error once, for both views."""
+        self.listed_ok = not outcome.failed
+        if outcome.failed:
+            self._status(f"Cookie sources: {outcome.shown}")
+            self._fill({})
+        else:
+            default = outcome.result["default"]
+            self._status(f"Default: {render.escape(default) if default else 'anonymous'}")
+            place, self._place_name = self._place_name, None
+            self._fill({source["name"]: source for source in outcome.result["sources"]},
+                       place=place)
+        self._cursor_moved()
+
+    def cursor_name(self) -> str | None:
+        """The cursor row's source name, or None with no rows."""
+        table = self.table
+        if not table.row_count:
+            return None
+        return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+
+    def _fill(self, sources: dict[str, dict], *, place: str | None = None) -> None:
+        """Replace the rows, keeping the cursor on its source name; when that
+        source has left, on the smallest listed name after it, else the last row."""
+        table = self.table
+        scrolled = table.scroll_offset
+        self.sources = sources
+        table.clear()
+        for name, source in sources.items():
+            table.add_row(*(plain(cell) for cell in render.cookie_cells(source)), key=name)
+        if not sources:
+            return
+        names = list(sources)
+        if place in sources:
+            row = names.index(place)
+        elif self.cursor_source is None:
+            row = 0
+        else:
+            row = next((index for index, name in enumerate(names) if name >= self.cursor_source),
+                       len(names) - 1)
+        # Clearing scrolls to the top; keep the rows where they were unless
+        # the cursor row would leave the view.
+        table.scroll_to(*scrolled, animate=False, immediate=True, force=True)
+        table.move_cursor(row=row, animate=False)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()  # `enter` on a source does nothing (§6).
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        event.stop()
+        self._cursor_moved()
+
+    # The inspection pane (§6 *Inspection*).
+
+    def _cursor_moved(self) -> None:
+        """Inspect the cursor source when the cursor comes to it, or when
+        its listed record differs from the one held at its last inspection;
+        with no rows, drop the read and show the empty-list text after a
+        successful list."""
+        name = self.cursor_name()
+        if name is None:
+            self.inspected_for = self.inspected_record = None
+            self.inspection.show([EMPTY] if self.listed_ok else [])
+            self.app.drop("inspection")
+            return
+        self.cursor_source = name
+        if not self.started:
+            return
+        if name != self.inspected_for:
+            self.inspected_for = name
+            self.inspection.show([f"{render.escape(name)}: reading…"])
+        elif self.sources[name] == self.inspected_record:
+            return
+        self._inspect(name)
+
+    def reinspect(self) -> None:
+        """`ctrl+r` in Cookies: read the cursor source's inspection again."""
+        name = self.cursor_name()
+        if name is not None:
+            self._inspect(name)
+
+    def _inspect(self, name: str) -> None:
+        self.inspected_record = self.sources[name]
+        self.app.read("inspection", "inspect", name, done=partial(self._inspected, name))
+
+    def _inspected(self, name: str, outcome) -> None:
+        if outcome.failed:
+            self.inspection.show([f"{render.escape(name)}: {outcome.shown}"])
+        else:
+            self.inspection.show(inspection_lines(outcome.result))
+
+    # Refresh, default, import, and add-browser (§6 *Refresh and default*,
+    # *Import dialog*, *Add-browser dialog*).
+
+    def action_refresh_source(self) -> None:
+        name = self.cursor_name()
+        if name is not None:
+            self.app.act("refresh", name, report=inspected)
+
+    def action_default(self) -> None:
+        name = self.cursor_name()
+        if name is not None:
+            self.app.act("set_default", name, report=defaulted)
+
+    def action_anonymous(self) -> None:
+        self.app.act("set_default", None, report=defaulted)
+
+    def action_import(self) -> None:
+        self.app.push_screen(ImportDialog(), self._import)
+
+    def _import(self, chosen: tuple[str, str, bool] | None) -> None:
+        if chosen is not None:  # None: the dialog was closed.
+            self.app.act("import_cookies", *chosen, report=self._registered)
+
+    def _registered(self, report: dict) -> tuple[str, str]:
+        """A registration's result; the cursor goes to the new source once
+        the cookie re-read lists it (§6 *Source list*)."""
+        self.place(report["source"]["name"])
+        return inspected(report)
+
+    def action_add_browser(self) -> None:
+        self.app.push_screen(AddBrowserDialog(), self._add_browser)
+
+    def _add_browser(self, chosen: tuple | None) -> None:
+        if chosen is not None:  # None: the dialog was closed.
+            self.app.act("add_browser", *chosen, report=self._registered,
+                         started=self._exporting)
+
+    def _exporting(self) -> None:
+        """The notice when the export starts, not while it waits (§6)."""
+        self.app.notify(EXPORT_NOTICE, markup=False)
