@@ -3434,14 +3434,18 @@ runs `uv run downloadinux "$@"`, menu line `# Open the terminal UI: just tui
 [--config PATH] [--set KEY=VALUE]…`.
 
 *Entry point.* `downloadinux.tui.app.run(config, overrides) -> int` is what
-the launch calls. It loads the settings (`settings.load(config, overrides)`)
-and then the credentials file they name (`credentials.load`), raising either
-load's error unchanged to its caller, which maps it as `cli.main` maps a
-command's error (exit 2 for a configuration error). It then builds the app
-with the loaded settings file's path and a backend factory, runs it, and
-returns the app's return code: 0 after a quit, 1 after an unexpected
+the launch calls. It calls `build_app(config, overrides) ->
+DownloadinuxApp`, which loads the settings (`settings.load(config,
+overrides)`) and then the credentials file they name (`credentials.load`),
+raising either load's error unchanged to its caller, which maps it as
+`cli.main` maps a command's error (exit 2 for a configuration error), and
+then returns the app built with the loaded settings file's path, the backend
+factory below, and the default intervals. `run` then runs the app and
+returns `app.return_code or 0`: 0 after a quit, 1 after an unexpected
 exception (Textual sets it and prints the traceback on standard error once
-the terminal is restored). The app class is `tui.app.DownloadinuxApp(
+the terminal is restored). The gate's TUI smoke test builds each of its
+sessions with `build_app` and runs it headlessly with Textual's `run_test`,
+so it drives the app exactly as the launch builds it. The app class is `tui.app.DownloadinuxApp(
 make_backend, settings_path, *, jobs_shown=2.0, jobs_hidden=10.0,
 vpn_every=10.0)`: `make_backend(record)` returns the backend, given the
 app's thread-safe `record(call, text)` (§2), so `run` passes
