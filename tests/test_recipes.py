@@ -218,6 +218,15 @@ def test_smoke_drives_the_jobs_commands_after_the_worker_smoke():
     assert 'kill "$follower_pid"' in trap
 
 
+def test_tui_opens_the_terminal_ui():
+    # Target design, *Python + Textual TUI* §1 *Launch*.
+    assert recipe("tui") == [
+        "# Open the terminal UI: just tui [--config PATH] [--set KEY=VALUE]…",
+        "tui *args:",
+        '    @uv run downloadinux "$@"',
+    ]
+
+
 def test_watch_wraps_the_cli():
     # Target design, Migration, "Pinned for P0001-C04".
     assert recipe("watch")[-1].strip() == '@uv run downloadinux watch "$1"'

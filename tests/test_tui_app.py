@@ -121,6 +121,22 @@ def test_run_builds_the_app_and_returns_its_return_code(tmp_path, monkeypatch):
     assert app.backend._record == app.record
 
 
+def test_build_app_loads_and_builds_without_running(tmp_path, monkeypatch):
+    # TUI §1 *Entry point*: the gate's smoke builds its sessions here.
+    path = tmp_path / "config.toml"
+    path.write_text("")
+    monkeypatch.setattr(DownloadinuxApp, "run", lambda self: pytest.fail("the app ran"))
+    app = tui_app.build_app(str(path), ("vpn.enabled=false",))
+    assert isinstance(app, DownloadinuxApp)
+    assert app.settings_path == settings.load(str(path), ["vpn.enabled=false"]).file
+    assert (app.backend._config, list(app.backend._overrides)) == (str(path), ["vpn.enabled=false"])
+    assert app.backend._record == app.record
+    bad = tmp_path / "bad.toml"
+    bad.write_text("paths = [\n")
+    with pytest.raises(ConfigError):
+        tui_app.build_app(str(bad), ())
+
+
 def test_run_raises_a_credentials_error(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text("")

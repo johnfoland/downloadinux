@@ -4,7 +4,7 @@ DEC-58 to DEC-60).
 With the dialog, widget, and view modules it imports (`tui.dialogs`,
 `tui.widgets`, `tui.jobs`, `tui.submit`, `tui.cookies`, `tui.status`), this is the only code under
 `downloadinux` that imports Textual or Rich.
-`run` is the launch's entry point; `DownloadinuxApp` holds the frame every
+`build_app` and `run` are the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
 the global keys, Activity, the thread-worker reads, and the action queue.
 """
@@ -80,16 +80,24 @@ VIEW_REFRESH = {"jobs": ("listing", "log"), "submit": ("cookies", "submit-config
                 "cookies": ("cookies", "inspection"), "status": ("config", "doctor")}
 
 
-def run(config: str | None, overrides: Sequence[str]) -> int:
-    """Load the settings and credentials, then run the app (TUI §1 *Entry point*).
+def build_app(config: str | None, overrides: Sequence[str]) -> "DownloadinuxApp":
+    """Load the settings and credentials, then build the app (TUI §1 *Entry point*).
 
     Either load's error reaches the caller unchanged, before any screen.
-    Returns the app's return code: 0 after a quit, 1 after an exception
-    that ended it.
+    The gate's TUI smoke builds its sessions here, as the launch does.
     """
     effective = settings.load(config, overrides)
     credentials.load(effective.credentials_file)
-    app = DownloadinuxApp(lambda record: Backend(config, overrides, record), effective.file)
+    return DownloadinuxApp(lambda record: Backend(config, overrides, record), effective.file)
+
+
+def run(config: str | None, overrides: Sequence[str]) -> int:
+    """Build and run the app (TUI §1 *Entry point*): what bare `dlx` calls.
+
+    Returns the app's return code: 0 after a quit, 1 after an exception
+    that ended it.
+    """
+    app = build_app(config, overrides)
     app.run()
     return app.return_code or 0
 
