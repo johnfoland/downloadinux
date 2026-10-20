@@ -257,9 +257,16 @@ class ActivityLog(ScrollView, can_focus=True):
     def on_resize(self) -> None:
         self._follow_end()
 
+    def watch_show_horizontal_scrollbar(self) -> None:
+        self._follow_end()
+
+    def watch_show_vertical_scrollbar(self) -> None:
+        self._follow_end()
+
     def _follow_end(self) -> None:
         """Scroll to the end after the next refresh while following: new
-        entries, a show, and a resize all move the end (TUI §8 *Activity*)."""
+        entries, a show, a resize, and a scrollbar appearing or going after
+        the scroll all move the end (TUI §8 *Activity*)."""
         if self._follow and not self._scrolling:
             self._scrolling = True
             self.call_after_refresh(self._to_end)

@@ -1555,7 +1555,8 @@ def test_activity_following_keeps_its_horizontal_position():
             return log.render_line(log.scrollable_content_region.height - 1).text.rstrip()
         for number in range(50):
             log.add('n', 'x' * 300)
-        await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling)
+        await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling
+                    and log.allow_horizontal_scroll)
         log.scroll_to(x=3, animate=False, immediate=True)
         await pilot.pause()
         assert log.scroll_x == 3 and log._follow and app.focused is log
@@ -1570,6 +1571,45 @@ def test_activity_following_keeps_its_horizontal_position():
         await pilot.press('1', '5')
         await until(pilot, lambda: log.scroll_y == log.max_scroll_y and not log._scrolling)
         assert log.scroll_x == 3 and last_line() == '34:56 n: more'
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("scrolled_up", [False, True])
+def test_activity_follow_reapplies_when_a_scrollbar_appears_after_the_scroll(monkeypatch, scrolled_up):
+    # Hold scrollbar visibility until the follow scroll has run, then let
+    # the horizontal scrollbar take its row from the viewport.
+    app = make_slow_app()
+
+    async def scenario(pilot):
+        await pilot.press("5")
+        log = app.activity
+
+        def last_line():
+            return log.render_line(log.scrollable_content_region.height - 1).text.rstrip()
+        refresh_scrollbars = ActivityLog._refresh_scrollbars
+        with monkeypatch.context() as patch:
+            patch.setattr(ActivityLog, "_refresh_scrollbars", lambda log: None)
+            for number in range(50):
+                log.add("n", "x" * 300)
+            log.add("n", "last")
+            await until(pilot, lambda: not log._scrolling)
+            assert not log.show_horizontal_scrollbar
+            assert log._follow and log.scroll_y == log.max_scroll_y
+            if scrolled_up:
+                # No scrollbar exists yet, so only a forced scroll moves.
+                log.scroll_to(y=10, animate=False, immediate=True, force=True)
+                await pilot.pause()
+                assert log.scroll_y == 10 and not log._follow
+        refresh_scrollbars(log)
+        assert log.show_horizontal_scrollbar
+        if scrolled_up:
+            await pilot.pause()
+            await pilot.pause()
+            assert log.scroll_y == 10 and not log._follow
+        else:
+            await until(pilot, lambda: log._follow and log.scroll_y == log.max_scroll_y
+                        and last_line() == "12:34:56 n: last")
 
     drive(app, scenario)
 

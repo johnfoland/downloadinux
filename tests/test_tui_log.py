@@ -262,6 +262,42 @@ def test_follow_reaches_the_end_before_scrollbar_visibility_catches_up(monkeypat
 
 
 @pytest.mark.parametrize('scrolled_up', [False, True])
+def test_follow_reapplies_when_a_scrollbar_appears_after_the_scroll(monkeypatch, scrolled_up):
+    # Hold scrollbar visibility until the follow scroll has run, then let
+    # the horizontal scrollbar take its row from the viewport.
+    app = log_app(record(1))
+    stream = app.backend.stream('follow_job')
+
+    async def scenario(pilot):
+        await opened(pilot, app, stream)
+        pane = view(app).log_pane
+        refresh_scrollbars = widgets.LogPane._refresh_scrollbars
+        with monkeypatch.context() as patch:
+            patch.setattr(widgets.LogPane, '_refresh_scrollbars', lambda pane: None)
+            line = 'x' * 300
+            stream.feed(follow.FollowLog(1, 1, '\n'.join([line] * 49 + ['last']).encode()))
+            await shows(pilot, app, 'last')
+            await until(pilot, lambda: not pane._scrolling)
+            assert not pane.show_horizontal_scrollbar
+            assert pane._follow and pane.scroll_y == pane.max_scroll_y
+            if scrolled_up:
+                # No scrollbar exists yet, so only a forced scroll moves.
+                pane.scroll_to(y=10, animate=False, immediate=True, force=True)
+                await pilot.pause()
+                assert pane.scroll_y == 10 and not pane._follow
+        refresh_scrollbars(pane)
+        assert pane.show_horizontal_scrollbar
+        if scrolled_up:
+            await pilot.pause()
+            await pilot.pause()
+            assert pane.scroll_y == 10 and not pane._follow
+        else:
+            await at_bottom(pilot, pane, 'last')
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('scrolled_up', [False, True])
 def test_hidden_arrivals_and_resizing_preserve_follow_or_scroll_position(scrolled_up):
     app = log_app(record(1))
     stream = app.backend.stream('follow_job')
@@ -744,6 +780,7 @@ def test_following_keeps_horizontal_scroll_until_a_new_source_opens():
         await until(pilot, lambda: pane._follow and pane.scroll_y == pane.max_scroll_y
                     and bottom(pane).startswith('last '))
         pane.focus()
+        await until(pilot, lambda: pane.allow_horizontal_scroll)
         pane.scroll_to(x=3, animate=False, immediate=True)
         await pilot.pause()
         assert pane.scroll_x == 3 and pane._follow
