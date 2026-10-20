@@ -281,7 +281,7 @@ stay outside the TUI; history retention stays #65.
   (implemented, PR #103).
 - Add VPN connect and disconnect, with a server picker, through shared host
   operations (`host_vpn` and `operations.server_choices` implemented,
-  PR #105; the TUI controls are not).
+  PR #105; the TUI's controls, PR #115).
 
 Acceptance criteria:
 
