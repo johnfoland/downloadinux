@@ -1,6 +1,6 @@
 """The Cookies view (target design, *Python + Textual TUI* §6; DEC-60): the
 registered cookie sources, the cursor source's inspection, refresh, the
-default, and Netscape import.
+default, Netscape import, and browser sources.
 
 `CookiesView` fills the app's `cookies` pane. The app hands it each outcome
 of the cookie-list read it shares with Submit (`listed`, §5 *Cookie
@@ -15,7 +15,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Checkbox, DataTable, Input, Static, TabbedContent, TabPane
+from textual.widgets import Checkbox, DataTable, Input, OptionList, Static, TabbedContent, TabPane
 
 from downloadinux import render
 from downloadinux.tui.dialogs import FormDialog
@@ -23,6 +23,7 @@ from downloadinux.tui.widgets import TextPane, ViewTable, plain
 
 COLUMNS = ("NAME", "KIND", "ORIGIN", "REVISION", "REFRESHED", "DEFAULT")
 EMPTY = "No cookie sources; add one with a (browser) or i (Netscape file)."  # §6 *Inspection*
+EXPORT_NOTICE = "export running; a keychain or browser prompt may appear"  # §6 *Add-browser dialog*
 
 
 def inspection_lines(report: dict) -> list[str]:
@@ -65,6 +66,127 @@ class ImportDialog(FormDialog):
                 self.query_one(Checkbox).value)
 
 
+class AddBrowserDialog(FormDialog):
+    """`a`'s dialog (§6 *Add-browser dialog*). It reads `browsers()` under
+    `browsers` when it opens and drops that read when it closes; the
+    highlighted browser's capabilities decide which optional fields show.
+    A hidden field keeps its text but sends None. It submits
+    `(NAME, BROWSER, PROFILE, KEYRING, CONTAINER, REPLACE)`, and only with a
+    browser listed."""
+
+    # Taller than 24 lines with every field shown: the form scrolls, and
+    # focus keeps the focused field in view (TUI §3 *Size and appearance*).
+    DEFAULT_CSS = """
+    AddBrowserDialog > Vertical { overflow-y: auto; }
+    AddBrowserDialog .optional { height: auto; }
+    AddBrowserDialog OptionList { height: auto; max-height: 6; }
+    """
+    KEY = "browsers"
+
+    def __init__(self):
+        super().__init__("Add a browser cookie source")
+        self.browsers: tuple[dict, ...] = ()  # The report's browsers, in its order.
+        self.keyrings: tuple[str, ...] = ()  # The `Keyring` list's IDs after `automatic`.
+
+    def fields(self) -> ComposeResult:
+        yield Static(Text("Name"))
+        yield Input(id="name")
+        yield Static(Text("Browser"))
+        yield OptionList(id="browser")
+        with Vertical(id="profile-field", classes="optional"):
+            yield Static(Text("Profile"))
+            yield Input(id="profile")
+        with Vertical(id="keyring-field", classes="optional"):
+            yield Static(Text("Keyring"))
+            yield OptionList(id="keyring")
+        with Vertical(id="container-field", classes="optional"):
+            yield Static(Text("Container"))
+            yield Input(id="container")
+        yield Checkbox("Replace", id="replace")
+        yield Static(id="browsers-status")
+
+    def on_mount(self) -> None:
+        self._fields()
+        self.query_one("#name", Input).focus()
+        self._status("Reading browsers…")
+        self.app.read(self.KEY, "browsers", done=self._listed)
+
+    def _status(self, text: str) -> None:
+        self.query_one("#browsers-status", Static).update(Text(text, end=""))
+
+    @property
+    def status(self) -> str:
+        return self.query_one("#browsers-status", Static).content.plain
+
+    def _listed(self, outcome) -> None:
+        if outcome.failed:
+            self._status(outcome.shown)
+            return
+        self._status("")
+        self.browsers = tuple(outcome.result["browsers"])
+        options = self.query_one("#browser", OptionList)
+        options.add_options([plain(browser["id"]) for browser in self.browsers])
+        if self.browsers:
+            options.highlighted = 0
+        self._fields()
+
+    def browser(self) -> dict | None:
+        """The highlighted browser's capabilities, or None with none listed."""
+        index = self.query_one("#browser", OptionList).highlighted
+        return None if index is None or not self.browsers else self.browsers[index]
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "browser":
+            self._fields()
+
+    def _fields(self) -> None:
+        """Show the optional fields the highlighted browser supports."""
+        browser = self.browser() or {"profile": False, "keyrings": [], "container": False}
+        self.query_one("#profile-field").display = browser["profile"]
+        self.query_one("#container-field").display = browser["container"]
+        keyrings = tuple(browser["keyrings"])
+        self.query_one("#keyring-field").display = bool(keyrings)
+        if keyrings != self.keyrings:
+            self.keyrings = keyrings
+            options = self.query_one("#keyring", OptionList)
+            options.clear_options()
+            if keyrings:
+                options.add_options([plain("automatic"), *(plain(id) for id in keyrings)])
+                options.highlighted = 0
+
+    def _shown(self, field: str) -> bool:
+        return self.query_one(f"#{field}-field").display
+
+    def _text(self, field: str) -> str | None:
+        """A shown field's text when not empty, else None."""
+        return (self.query_one(f"#{field}", Input).value or None) if self._shown(field) else None
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """`enter` in the last shown text field submits (not the base's last field)."""
+        event.stop()
+        event.prevent_default()
+        shown = [field for field in ("name", "profile", "container")
+                 if field == "name" or self._shown(field)]
+        if event.input.id == shown[-1]:
+            self.submit()
+
+    def submit(self) -> None:
+        if self.browser() is not None:
+            super().submit()
+
+    def value(self) -> tuple:
+        keyring = None
+        if self._shown("keyring"):
+            index = self.query_one("#keyring", OptionList).highlighted
+            keyring = self.keyrings[index - 1] if index else None
+        return (self.query_one("#name", Input).value, self.browser()["id"],
+                self._text("profile"), keyring, self._text("container"),
+                self.query_one(Checkbox).value)
+
+    def closing(self) -> None:
+        self.app.drop(self.KEY)
+
+
 class CookiesView(Vertical):
     """The Cookies pane (§6 *Layout*, *Source list*, *Inspection*).
 
@@ -82,6 +204,7 @@ class CookiesView(Vertical):
     BINDINGS = [
         Binding("tab", "cycle(1)", show=False),
         Binding("shift+tab", "cycle(-1)", show=False),
+        Binding("a", "add_browser", "Add browser"),
         Binding("i", "import", "Import"),
         Binding("f", "refresh_source", "Refresh"),
         Binding("d", "default", "Default"),
@@ -237,7 +360,8 @@ class CookiesView(Vertical):
         else:
             self.inspection.show(inspection_lines(outcome.result))
 
-    # Refresh, default, and import (§6 *Refresh and default*, *Import dialog*).
+    # Refresh, default, import, and add-browser (§6 *Refresh and default*,
+    # *Import dialog*, *Add-browser dialog*).
 
     def action_refresh_source(self) -> None:
         name = self.cursor_name()
@@ -264,3 +388,15 @@ class CookiesView(Vertical):
         the cookie re-read lists it (§6 *Source list*)."""
         self.place(report["source"]["name"])
         return inspected(report)
+
+    def action_add_browser(self) -> None:
+        self.app.push_screen(AddBrowserDialog(), self._add_browser)
+
+    def _add_browser(self, chosen: tuple | None) -> None:
+        if chosen is not None:  # None: the dialog was closed.
+            self.app.act("add_browser", *chosen, report=self._registered,
+                         started=self._exporting)
+
+    def _exporting(self) -> None:
+        """The notice when the export starts, not while it waits (§6)."""
+        self.app.notify(EXPORT_NOTICE, markup=False)

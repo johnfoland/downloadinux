@@ -1,12 +1,12 @@
 """The Cookies view through the real app and fake backend (TUI §6; DEC-60)."""
 
 import pytest
-from textual.widgets import Checkbox, Input, Static, TabbedContent
+from textual.widgets import Checkbox, Input, OptionList, Static, TabbedContent
 
 from downloadinux import cookie_store, cookie_writer, cookiejar, operations, render
 from downloadinux.errors import DownloadinuxError
 from downloadinux.tui.app import ActivityLog
-from downloadinux.tui.cookies import EMPTY, CookiesView, ImportDialog
+from downloadinux.tui.cookies import AddBrowserDialog, EMPTY, CookiesView, ImportDialog
 from downloadinux.tui.dialogs import ChoiceDialog
 from downloadinux.tui.widgets import TextPane, ViewTable
 from test_host_jobs import NOW, publish
@@ -571,8 +571,9 @@ def test_bindings_are_listed_in_the_footer():
     async def scenario(pilot):
         await show(pilot, app)
         bindings = app.screen.active_bindings
-        assert {key: bindings[key].binding.description for key in 'ifdn'} == {
-            'i': 'Import', 'f': 'Refresh', 'd': 'Default', 'n': 'Anonymous'}
+        assert {key: bindings[key].binding.description for key in 'aifdn'} == {
+            'a': 'Add browser', 'i': 'Import', 'f': 'Refresh', 'd': 'Default',
+            'n': 'Anonymous'}
 
     drive(app, scenario)
 
@@ -742,5 +743,311 @@ def test_keys_do_nothing_while_a_dialog_is_open(tmp_path):
         assert isinstance(app.screen, ChoiceDialog)
         assert not {'refresh', 'set_default', 'browsers'} & set(app.backend.names())
         await pilot.press('escape')
+
+    drive(app, scenario)
+
+
+# The add-browser dialog (§6 *Add-browser dialog*).
+
+
+def browser_options(app, id):
+    options = app.screen.query_one(f'#{id}', OptionList)
+    return [options.get_option_at_index(i).prompt.plain for i in range(options.option_count)]
+
+
+def shown_fields(app):
+    return [field for field in ('profile', 'keyring', 'container')
+            if app.screen.query_one(f'#{field}-field').display]
+
+
+async def ok(pilot, app):
+    """Press OK as a keyboard user does: focus it (scrolling it into view) and press enter."""
+    app.screen.query_one('#ok').focus()
+    await pilot.press('enter')
+
+
+async def open_add(pilot, app, report=None):
+    if report is not None:
+        app.backend.script('browsers', Step(result=report))
+    await pilot.press('a')
+    await until(pilot, lambda: isinstance(app.screen, AddBrowserDialog)
+                and 'browsers' not in app._reads)
+    await settle(pilot, app, 'browsers')
+
+
+async def highlight(pilot, app, index):
+    app.screen.query_one('#browser', OptionList).highlighted = index
+    await pilot.pause()
+
+
+def test_linux_browsers_fields_and_keyrings():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        dialog = app.screen
+        assert dialog.query_one('#heading', Static).content.plain == 'Add a browser cookie source'
+        assert [label.content.plain for label in dialog.query(Static) if label.id is None] == [
+            'Name', 'Browser', 'Profile', 'Keyring', 'Container']
+        assert dialog.query_one(Checkbox).label.plain == 'Replace'
+        assert browser_options(app, 'browser') == ['firefox', 'chrome', 'chromium']
+        assert dialog.query_one('#browser', OptionList).highlighted == 0
+        assert app.focused is dialog.query_one('#name', Input)
+        assert dialog.status == '' and dialog.query_one(Checkbox).value is False
+        assert shown_fields(app) == ['profile', 'container']
+        await highlight(pilot, app, 1)
+        assert shown_fields(app) == ['profile', 'keyring']
+        assert browser_options(app, 'keyring') == [
+            'automatic', 'KWALLET', 'KWALLET5', 'KWALLET6', 'GNOMEKEYRING', 'BASICTEXT']
+        assert dialog.query_one('#keyring', OptionList).highlighted == 0
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('index,order', [
+    (0, ('name', 'browser', 'profile', 'container', 'replace', 'ok')),
+    (1, ('name', 'browser', 'profile', 'keyring', 'replace', 'ok')),
+])
+def test_tab_moves_through_the_shown_fields_each_in_view_at_80x24(index, order):
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await highlight(pilot, app, index)
+        dialog = app.screen
+        for id in (*order[1:], order[0]):
+            await pilot.press('tab')
+            await pilot.pause()
+            assert app.focused.id == id
+            assert dialog.region.contains_region(app.focused.region)
+        for id in reversed(order):  # From Name, back round through OK.
+            await pilot.press('shift+tab')
+            assert app.focused.id == id
+
+    drive(app, scenario)
+
+
+def test_macos_browsers_show_no_keyring():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='darwin'))
+        for index in range(3):
+            await highlight(pilot, app, index)
+            assert 'keyring' not in shown_fields(app)
+
+    drive(app, scenario)
+
+
+async def fill(app, **values):
+    for field, value in values.items():
+        app.screen.query_one(f'#{field}', Input).value = value
+
+
+@pytest.mark.parametrize('index,values,keyring,expected', [
+    (0, {}, None, ('work', 'firefox', None, None, None, False)),
+    (0, {'profile': 'p 1', 'container': 'Work'}, None,
+     ('work', 'firefox', 'p 1', None, 'Work', False)),
+    (1, {}, 0, ('work', 'chrome', None, None, None, False)),
+    (1, {'profile': 'Default'}, 4, ('work', 'chrome', 'Default', 'GNOMEKEYRING', None, False)),
+    (2, {'profile': 'x', 'container': 'kept'}, 1, ('work', 'chromium', 'x', 'KWALLET', None, False)),
+])
+def test_sent_values_per_browser(index, values, keyring, expected):
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await fill(app, name='work', **values)
+        await highlight(pilot, app, index)
+        if keyring is not None:
+            app.screen.query_one('#keyring', OptionList).highlighted = keyring
+        await ok(pilot, app)
+        await action_done(pilot, app, 'add_browser')
+        assert app.backend.called('add_browser')[0].args == expected
+
+    drive(app, scenario)
+
+
+def test_a_container_typed_for_firefox_is_not_sent_for_chrome_and_replace_is():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await fill(app, name=' as typed ', container='Work')
+        await highlight(pilot, app, 1)
+        assert app.screen.query_one('#container', Input).value == 'Work'  # Kept, hidden.
+        app.screen.query_one(Checkbox).value = True
+        await ok(pilot, app)
+        await action_done(pilot, app, 'add_browser')
+        assert app.backend.called('add_browser')[0].args == (
+            ' as typed ', 'chrome', None, None, None, True)
+
+    drive(app, scenario)
+
+
+def test_reading_browsers_status_and_a_real_failure():
+    try:
+        operations.cookie_browsers(platform='win32')
+    except DownloadinuxError as error:
+        failure = error
+    app = make_app()
+    held = app.backend.hold('browsers', error=failure)
+    shown = notes(app)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('a')
+        await until(pilot, held.started.is_set)
+        dialog = app.screen
+        assert dialog.status == 'Reading browsers…'
+        assert browser_options(app, 'browser') == [] and shown_fields(app) == []
+        held.release()
+        await settle(pilot, app, 'browsers')
+        assert dialog.status == render.escape(str(failure))
+        assert browser_options(app, 'browser') == []
+        assert activity(app, 'browsers') == [f'error: {failure}']
+        assert (str(failure), {'severity': 'error', 'timeout': 10.0, 'markup': False}) in shown
+        await fill(app, name='work')
+        await ok(pilot, app)
+        app.screen.query_one('#name', Input).focus()
+        await pilot.press('enter')
+        await settle(pilot, app)
+        assert app.screen is dialog and not app.backend.called('add_browser')
+        await pilot.press('escape')
+
+    drive(app, scenario)
+
+
+def test_closing_the_dialog_drops_a_held_browsers_read():
+    app = make_app()
+    held = app.backend.hold('browsers', result=operations.cookie_browsers(platform='linux'))
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('a')
+        await until(pilot, held.started.is_set)
+        dialog = app.screen
+        await pilot.press('escape')
+        await pilot.pause()
+        assert 'browsers' not in app._reads and app.screen is not dialog
+        held.release()
+        await until(pilot, held.finished.is_set)
+        await settle(pilot, app, 'browsers')
+        assert dialog.browsers == () and not app.backend.called('add_browser')
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('index,last,earlier', [(0, 'container', ('name', 'profile')),
+                                                (1, 'profile', ('name',))])
+def test_enter_in_the_last_shown_text_field_submits(index, last, earlier):
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await fill(app, name='work')
+        await highlight(pilot, app, index)
+        dialog = app.screen
+        for field in earlier:
+            dialog.query_one(f'#{field}', Input).focus()
+            await pilot.press('enter')
+            assert app.screen is dialog
+        dialog.query_one(f'#{last}', Input).focus()
+        await pilot.press('enter')
+        await action_done(pilot, app, 'add_browser')
+        assert len(app.backend.called('add_browser')) == 1
+        assert 'browsers' not in app._reads
+
+    drive(app, scenario)
+
+
+def test_escape_sends_nothing():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await fill(app, name='work')
+        await pilot.press('escape')
+        await settle(pilot, app)
+        assert not isinstance(app.screen, AddBrowserDialog)
+        assert not app.backend.called('add_browser')
+
+    drive(app, scenario)
+
+
+def test_the_export_notice_is_posted_when_the_action_starts_and_the_cursor_placed(tmp_path):
+    root = store(tmp_path, ('alpha', 'work'))
+    app = make_app()
+    app.backend.script('cookies', Step(result=listing(root, 'alpha')),
+                       Step(result=listing(root, 'alpha')),
+                       Step(result=listing(root, 'alpha', 'work')))
+    first = app.backend.hold('refresh', result=inspection(root, 'alpha'))
+    export = app.backend.hold('add_browser', result=inspection(root, 'work'))
+    shown = notes(app)
+    notice = ('export running; a keychain or browser prompt may appear', {'markup': False})
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('f')
+        await until(pilot, first.started.is_set)
+        await open_add(pilot, app, operations.cookie_browsers(platform='linux'))
+        await fill(app, name='work')
+        await ok(pilot, app)
+        await pilot.pause()
+        assert app.running_line.content.plain == 'cookies refresh running; 1 waiting'
+        assert notice not in shown
+        first.release()
+        await until(pilot, export.started.is_set)
+        assert shown.count(notice) == 1
+        assert app.running_line.content.plain == 'cookies add-browser running'
+        export.release()
+        await action_done(pilot, app, 'add_browser')
+        await until(pilot, lambda: len(app.backend.called('cookies')) == 3)
+        await settle(pilot, app, 'cookies', 'inspect')
+        assert view(app).cursor_name() == 'work'
+        assert shown.count(notice) == 1
+
+    drive(app, scenario)
+
+
+# No cookie value (§6, DEC-30).
+
+
+def test_no_cookie_name_or_value_reaches_the_screen(tmp_path):
+    netscape = tmp_path / 'export.txt'
+    netscape.write_text(cookiejar.HEADER
+                        + '.example.com\tTRUE\t/\tTRUE\t0\tSENTINELNAME\tSENTINELVALUE\n')
+    config = tmp_path / 'config.toml'
+    config.write_text(f'[paths]\ncookies = "{tmp_path / "store"}"\n')
+    imported = operations.import_cookies('work', str(netscape), config=str(config))
+    listed = operations.list_cookies(str(config))
+    inspected_report = operations.inspect_cookies('work', str(config))
+    app = make_app()
+    app.backend.defaults.update(cookies=listed, inspect=inspected_report,
+                                import_cookies=imported)
+    shown = notes(app)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('down', 'up', 'tab')
+        await pilot.press('i')
+        app.screen.query_one('#name', Input).value = 'work'
+        await ok(pilot, app)
+        await action_done(pilot, app, 'import_cookies')
+        await settle(pilot, app, 'cookies', 'inspect')
+        assert pane(app)[0] == 'work: file; default: no'
+        screen = app.export_screenshot()
+        texts = [*pane(app), *(' '.join(row) for row in rows(app)), view(app).status,
+                 *app.activity.lines, *(message for message, _ in shown), screen]
+        assert any('work' in text for text in texts)
+        for sentinel in ('SENTINELNAME', 'SENTINELVALUE'):
+            assert not any(sentinel in text for text in texts)
 
     drive(app, scenario)

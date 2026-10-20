@@ -5,8 +5,8 @@ implemented, as are the TUI's Textual-free backend, process runners, and
 stream handle (PR #110), its app frame (PR #112), its Status view
 (PR #115), and its complete Jobs view (PRs #118, #120), including its log
 pane and `tui.logtext`.
-The Submit view is implemented (PR #124); the Cookies view and launch
-remain planned.
+The Submit view is implemented (PR #124), and so is the Cookies view
+(PR #128); the launch remains planned.
 P0002's portable writes and cookie/setup refresh
 hardening and runtime-home ownership are implemented. Stage 2's named cookie
 source contract is settled in P0003. P0003-C01 implements its internal parser,
@@ -50,8 +50,8 @@ operations. PR #110 implements the Textual-free backend, process runners,
 and stream handle, PR #112 the app frame, PR #115 the Status view, and
 PR #118 the Jobs view's listing, details, marks, cancel, retry, and export.
 PR #120 completes the Jobs view with its log pane and `tui.logtext`.
-The Submit view is implemented (PR #124); the Cookies view and launch
-remain planned.
+The Submit view is implemented (PR #124), and so is the Cookies view
+(PR #128); the launch remains planned.
 
 ## Agreed decisions
 
@@ -3347,8 +3347,8 @@ DEC-58 to DEC-62); the Textual-free backend, process runners, and stream
 handle are implemented (PR #110), and so are the app frame (PR #112) and
 the Status view (PR #115), and the complete Jobs view (PRs #118, #120),
 including its log pane and `tui.logtext`.
-The Submit view is implemented (PR #124); the Cookies view and launch
-remain planned. Its
+The Submit view is implemented (PR #124), and so is the Cookies view
+(PR #128); the launch remains planned. Its
 settings writes, `config set` and `config unset`, are under *Configuration
 and paths* (DEC-61), and are implemented with the shared renderers (PR #103). `host_jobs.export_to`,
 `host_vpn`, and `operations.server_choices` are implemented (PR #105),
@@ -3399,8 +3399,8 @@ with its dialogs in `downloadinux.tui.dialogs` (PR #115). The Jobs view in
 `downloadinux.tui.jobs`, with the shared widgets in `downloadinux.tui.widgets`
 and the shared job and follow renderers, is implemented in full (PRs #118,
 #120), including `downloadinux.tui.logtext` and the log pane.
-The Submit view is implemented (PR #124); the Cookies view and launch
-remain planned.
+The Submit view is implemented (PR #124), and so is the Cookies view
+(PR #128); the launch remains planned.
 
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
@@ -3797,8 +3797,8 @@ its own style.
 The frame, header, footer line, global keys, help, and confirmation dialog
 are implemented (PR #112), and so are Status's keys, refresh, and dialogs
 (PR #115), and all of Jobs's keys, refresh, cancel question, and dialogs
-(PRs #118, #120), and Submit's keys and refresh (PR #124). The Cookies
-view's keys and refresh remain planned.
+(PRs #118, #120), Submit's keys and refresh (PR #124), and Cookies's
+keys, refresh, and dialogs (PR #128).
 
 ### 4. Jobs view
 
@@ -4205,8 +4205,8 @@ A consumption failure is §8's operation error, whose text says the jobs
 were queued; the listing is re-read after it as after any `batch`.
 
 The Submit view, shared cookie-list read, batch report renderer, and Jobs
-cursor placement are implemented (PR #124). The Cookies view and launch
-remain planned.
+cursor placement are implemented (PR #124), and the Cookies view (PR
+#128). The launch remains planned.
 
 ### 6. Cookies view
 
@@ -4331,7 +4331,9 @@ KEYRING, CONTAINER, REPLACE)` as `cookies add-browser`: NAME as entered,
 BROWSER the highlighted ID, PROFILE and CONTAINER each field's text as
 entered when it is shown and not empty, else None, and KEYRING the
 highlighted keyring ID, or None for `automatic` or a hidden list. The
-operation checks them as `cookies add-browser` does. When the action starts
+operation checks them as `cookies add-browser` does. With every field shown
+the form is taller than 24 lines, so it scrolls, and moving the focus keeps
+the focused field in view (§3 *Size and appearance*). When the action starts
 (§2 *View entry points*), the app notifies `export running; a keychain or
 browser prompt may appear`, with Textual's default severity and timeout;
 the footer names the action while it runs (§3 *Frame*).
@@ -4346,6 +4348,10 @@ diagnostic containment replaces `sys.stdout` and `sys.stderr` while an
 export runs, so a Python-level write made then, from any thread, is
 contained with the adapter's and not recorded in Activity (DEC-59
 clarified).
+
+The Cookies view is implemented: its layout, source table, inspection,
+refresh, default, import and add-browser dialogs, `render.cookie_cells`,
+and the action start function (PR #128).
 
 ### 7. Status and settings view
 
