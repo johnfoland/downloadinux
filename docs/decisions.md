@@ -1491,7 +1491,13 @@ redirect was dropped (above), and the backend's, runners', and stream
 handle's shapes were pinned in §2. Clarified on 2026-10-16: worker threads hand
 results to the UI only by posting messages, read keys and supersession,
 the timed reads' scheduling, and the action names and re-reads are pinned
-in §2.
+in §2. Clarified on 2026-10-20: the runner rule covers the processes the
+TUI starts. A browser export's keyring helpers (`security`, `dbus-send`,
+`kwallet-query`) are started by yt-dlp inside the locked adapter (DEC-29),
+which takes no runner: they pipe standard output and discard standard
+error, so they write nothing to the screen, but share the TUI's session and
+standard input, which they never read; and Python-level writes made while
+an export runs go into the adapter's containment, not Activity (§6).
 
 ## DEC-60: The TUI has five views with fixed refresh rules and keys, and renders logs as escaped text (2026-10)
 
@@ -1560,7 +1566,17 @@ after a URL submission are pinned in §5 and §4, with `batch`'s result line
 shared through `render` (§1); `ctrl+r` in Submit re-reads the cookie list
 and the configuration, as `ctrl+r` refreshes any shown view. Following the
 end of the log pane or Activity moves only the vertical position (§4, §8;
-issues #121 and #122).
+issues #121 and #122). Clarified on 2026-10-20: the Cookies
+view's layout (the inspection pane below the table, not beside it, so both
+fit at 80 columns), its table cells (`render.cookie_cells`, shared through
+`render`, §1), status line, cursor rules and placement on a newly
+registered source, inspection reads (re-read when the listed record
+changes, and on `ctrl+r`), result and notification texts, and the import
+and add-browser dialogs (fields from `cookies browsers`' capabilities) are
+pinned in §6; the add-browser notice is a notification posted when the
+action starts, through an action start function (§2 *View entry points*),
+since a notification cannot last exactly as long as the action and the
+footer already names it while it runs.
 
 ## DEC-61: `config set` and `config unset` write one setting with the file's validation and comments kept (2026-10)
 
