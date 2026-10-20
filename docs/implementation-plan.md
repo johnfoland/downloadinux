@@ -7,7 +7,9 @@ implemented (PR #105), completing the shared host operations. The TUI's
 Textual-free backend, process runners, and stream handle are implemented
 (PR #110), as are its app frame (PR #112), its Status view (PR #115), and
 its complete Jobs view (PRs #118, #120), including the log pane and
-`tui.logtext`; the Submit and Cookies views and the launch remain planned.
+`tui.logtext`;
+the Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -38,8 +40,9 @@ are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 shared host operations. The Textual-free backend, process runners, and
 stream handle are implemented (PR #110), as are the app frame (PR #112),
 the Status view (PR #115), and the complete Jobs view (PRs #118, #120),
-including the log pane and `tui.logtext`; the Submit and Cookies views
-and the launch remain planned.
+including the log pane and `tui.logtext`;
+the Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -202,8 +205,9 @@ completion evidence in the gate. Stage 3 is implemented; Stage 4's shared
 host operations are implemented (PRs #103, #105), as are its Textual-free
 backend, process runners, and stream handle (PR #110) and its app frame
 (PR #112), Status view (PR #115), and complete Jobs view (PRs #118, #120),
-including the log pane and `tui.logtext`. The Submit and Cookies views
-and the launch remain planned.
+including the log pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -245,8 +249,9 @@ shared renderers and settings writes are implemented (PR #103), as are
 (PR #105), completing the shared host operations. The Textual-free backend,
 process runners, and stream handle are implemented (PR #110), as are the
 app frame (PR #112), the Status view (PR #115), and the complete Jobs view
-(PRs #118, #120), including the log pane and `tui.logtext`. The Submit and
-Cookies views and the launch remain planned. The app uses
+(PRs #118, #120), including the log pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned. The app uses
 `downloadinux.tui` on `textual==8.2.8` and is
 to open on bare `dlx` on a terminal (help otherwise).
 It is a front over the CLI's host operations through one backend: no new
@@ -362,5 +367,6 @@ the writes and the shared renderers are implemented (PR #103), as are
 (PR #105), completing the shared host operations. The Textual-free backend,
 process runners, and stream handle are implemented (PR #110), as are the
 app frame (PR #112), the Status view (PR #115), and the complete Jobs view
-(PRs #118, #120), including the log pane and `tui.logtext`. The Submit and
-Cookies views and the launch remain planned.
+(PRs #118, #120), including the log pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.

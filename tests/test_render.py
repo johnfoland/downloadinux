@@ -97,3 +97,16 @@ def test_follow_job_escapes_the_url():
 ])
 def test_follow_wait(wait, text):
     assert render.follow_wait(7, wait) == text
+
+
+@pytest.mark.parametrize('submission,references,expected', [
+    (None, (), 'No URLs in queue: /queue[b]\\x1b'),
+    (7, (), 'Queued 0 jobs; skipped 0 active duplicates in gallery lane.'),
+    (7, ((1, 'a', False), (2, 'b', True)),
+     'Queued 1 jobs; skipped 1 active duplicates in gallery lane.'),
+])
+def test_batch_report(submission, references, expected):
+    from downloadinux.host_downloads import BatchImport, SubmissionReference
+    result = BatchImport(Path('/queue[b]\x1b'), 'gallery', submission,
+                         tuple(SubmissionReference(*reference) for reference in references))
+    assert render.batch_report(result) == expected

@@ -134,6 +134,14 @@ class LogPane(TextPane):
     def on_resize(self) -> None:
         self._follow_end()
 
+    # A scrollbar can appear on a layout pass after the follow scroll, and
+    # the horizontal one takes a row from the viewport (TUI §4 *Log text*).
+    def watch_show_horizontal_scrollbar(self) -> None:
+        self._follow_end()
+
+    def watch_show_vertical_scrollbar(self) -> None:
+        self._follow_end()
+
     def _follow_end(self) -> None:
         if self._follow and not self._scrolling:
             self._scrolling = True
@@ -144,7 +152,7 @@ class LogPane(TextPane):
         if self._follow:
             # A pending refresh may learn the new size before scrollbar
             # visibility catches up. Following must still reach that end.
-            self.scroll_end(animate=False, immediate=True, force=True)
+            self.scroll_end(animate=False, immediate=True, force=True, x_axis=False)
 
     def action_follow(self) -> None:
         self._follow = True

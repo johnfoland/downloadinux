@@ -270,6 +270,7 @@ class JobsView(Vertical):
         self.log_current = True
         self.log_failed = False
         self._listing_failed = False
+        self._place_id: int | None = None
 
     def compose(self) -> ComposeResult:
         yield self.status_line
@@ -304,6 +305,13 @@ class JobsView(Vertical):
 
     # The listing (§4 *Listing*).
 
+    def place(self, id: int) -> None:
+        """Place the cursor at the next successful listing (§4 *Listing*).
+
+        Failures and mode switches keep the request; a newer request replaces it.
+        """
+        self._place_id = id
+
     def action_toggle_all(self) -> None:
         """Switch the mode, empty the table and the marks, and read now."""
         self.all = not self.all
@@ -325,7 +333,8 @@ class JobsView(Vertical):
         self.line = TITLES[self.all] if jobs else render.no_jobs(self.all)
         self._status(self.line)
         self.marks &= jobs.keys()
-        self._fill(jobs)
+        place, self._place_id = self._place_id, None
+        self._fill(jobs, place=place)
         self._cursor_moved()
         if recovered:
             self._refresh_log()
@@ -337,7 +346,7 @@ class JobsView(Vertical):
             return None
         return int(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
 
-    def _fill(self, jobs: dict[int, dict]) -> None:
+    def _fill(self, jobs: dict[int, dict], *, place: int | None = None) -> None:
         """Replace the rows, keeping the cursor on its job ID; when that job
         has left, on the smallest listed ID above it, else the last row."""
         table = self.table
@@ -350,7 +359,9 @@ class JobsView(Vertical):
         if not jobs:
             return
         ids = list(jobs)
-        if before is None:
+        if place in jobs:
+            row = ids.index(place)
+        elif before is None:
             row = 0
         else:
             row = next((index for index, id in enumerate(ids) if id >= before), len(ids) - 1)

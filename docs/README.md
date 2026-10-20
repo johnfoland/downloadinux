@@ -54,8 +54,9 @@ implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 shared host operations. The TUI's Textual-free backend, process runners,
 and stream handle are implemented (PR #110), as are its app frame (PR #112)
 and its Status view (PR #115), as is the complete Jobs view (PRs #118,
-#120), including the log pane and `tui.logtext`. The Submit and Cookies
-views and the launch remain planned.
+#120), including the log pane and `tui.logtext`.
+The Submit view is implemented (PR #124); the Cookies view and launch
+remain planned.
 
 - [Current state](current-state.md): architecture, behavior worth preserving,
   portability constraints, and implementation observations.

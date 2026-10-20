@@ -12,7 +12,7 @@ import re
 import sys
 from pathlib import Path
 
-from downloadinux import files, health, host_jobs, operations
+from downloadinux import files, health, host_downloads, host_jobs, operations
 
 PROG = "downloadinux"
 
@@ -36,6 +36,15 @@ def follow_wait(id: int, wait: dict | None) -> str:
               if wait['reason'] == 'vpn' else
               f"waiting for throttle until {escape(wait['until'])}")
     return f"job {id} {reason}"
+
+
+def batch_report(result: host_downloads.BatchImport) -> str:
+    """`batch`'s first line, shared with Submit (TUI §1 *Package*)."""
+    if result.submission is None:
+        return f"No URLs in queue: {escape(str(result.queue))}"
+    skipped = sum(reference.duplicate for reference in result.references)
+    return (f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
+            f"in {result.preset} lane.")
 
 
 def job_state(job: dict) -> str:

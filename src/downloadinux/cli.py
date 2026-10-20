@@ -534,12 +534,8 @@ def _dl(args: argparse.Namespace, options: GlobalOptions) -> int:
 def _batch(args: argparse.Namespace, options: GlobalOptions) -> int:
     result = host_downloads.import_batch(args.preset, args.queue, options.config, options.overrides,
                                          **_launch_options(args))
-    if result.submission is None:
-        _write_text(f"No URLs in queue: {render.escape(str(result.queue))}")
-    else:
-        skipped = sum(reference.duplicate for reference in result.references)
-        _write_text(f"Queued {len(result.references) - skipped} jobs; skipped {skipped} active duplicates "
-                    f"in {result.preset} lane.")
+    _write_text(render.batch_report(result))
+    if result.submission is not None:
         _write_text(f"Follow with: dlx watch {result.preset}")
     return 0
 

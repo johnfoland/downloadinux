@@ -2,7 +2,7 @@
 DEC-58 to DEC-60).
 
 With the dialog, widget, and view modules it imports (`tui.dialogs`,
-`tui.widgets`, `tui.jobs`, `tui.status`), this is the only code under
+`tui.widgets`, `tui.jobs`, `tui.submit`, `tui.status`), this is the only code under
 `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
@@ -43,6 +43,7 @@ from downloadinux.tui.dialogs import Confirm
 from downloadinux.tui.jobs import JobsView
 from downloadinux.tui.process import process_text
 from downloadinux.tui.status import StatusView
+from downloadinux.tui.submit import SubmitView
 
 # TUI §3 *Frame*: pane IDs and titles, in tab and key order.
 VIEWS = (("jobs", "Jobs"), ("submit", "Submit"), ("cookies", "Cookies"),
@@ -75,7 +76,8 @@ ACTIONS = {
     "vpn_disconnect": ("vpn disconnect", ("doctor", "vpn")),
 }
 # TUI §3 *Refresh*: what ctrl+r re-reads in each view, besides the VPN state.
-VIEW_REFRESH = {"jobs": ("listing", "log"), "cookies": ("cookies",), "status": ("config", "doctor")}
+VIEW_REFRESH = {"jobs": ("listing", "log"), "submit": ("cookies", "submit-config"),
+                "cookies": ("cookies",), "status": ("config", "doctor")}
 
 
 def run(config: str | None, overrides: Sequence[str]) -> int:
@@ -255,9 +257,16 @@ class ActivityLog(ScrollView, can_focus=True):
     def on_resize(self) -> None:
         self._follow_end()
 
+    def watch_show_horizontal_scrollbar(self) -> None:
+        self._follow_end()
+
+    def watch_show_vertical_scrollbar(self) -> None:
+        self._follow_end()
+
     def _follow_end(self) -> None:
         """Scroll to the end after the next refresh while following: new
-        entries, a show, and a resize all move the end (TUI §8 *Activity*)."""
+        entries, a show, a resize, and a scrollbar appearing or going after
+        the scroll all move the end (TUI §8 *Activity*)."""
         if self._follow and not self._scrolling:
             self._scrolling = True
             self.call_after_refresh(self._to_end)
@@ -265,7 +274,7 @@ class ActivityLog(ScrollView, can_focus=True):
     def _to_end(self) -> None:
         self._scrolling = False
         if self._follow:
-            self.scroll_end(animate=False, immediate=True)
+            self.scroll_end(animate=False, immediate=True, force=True, x_axis=False)
 
     def watch_scroll_y(self, old: float, new: float) -> None:
         super().watch_scroll_y(old, new)
@@ -370,7 +379,8 @@ class DownloadinuxApp(App):
     first: what the header counts, and what Status's `down` and `restart`
     questions count (§7 *Container*). The timed `listing` read lists in
     the Jobs view's mode and hands each outcome to the view after the
-    header (§4 *Listing*).
+    header (§4 *Listing*). Submit and Cookies share the app's `cookies`
+    read, registered and started when either is first shown (§5).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -414,6 +424,7 @@ class DownloadinuxApp(App):
         self._waiting: deque[Action] = deque()
         self._action: Action | None = None
         self._jobs_shown = True
+        self._cookies_started = False
         self.listing: Outcome | None = None
         self._captured = {False: "", True: ""}  # By `events.Print.stderr` (DEC-64).
         self._asking = False  # The quit question is open (TUI §8 *Quitting*).
@@ -424,6 +435,7 @@ class DownloadinuxApp(App):
         self.header = HeaderLine(render.escape(str(self.settings_path)), id="header")
         self.activity = ActivityLog(id="activity-log")
         self.jobs_view = JobsView(id="jobs-view")
+        self.submit_view = SubmitView(id="submit-view")
         self.running_line = Static(id="running")
         yield self.header
         with TabbedContent(initial="jobs"):
@@ -435,6 +447,8 @@ class DownloadinuxApp(App):
                         yield self.jobs_view
                     elif view == "status":
                         yield StatusView(id="status-view")
+                    elif view == "submit":
+                        yield self.submit_view
                     else:
                         yield Container(classes="placeholder")
         yield self.running_line
@@ -446,12 +460,20 @@ class DownloadinuxApp(App):
             self._timed_read(key)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        if event.pane.id in ("submit", "cookies") and not self._cookies_started:
+            self._cookies_started = True
+            self.register("cookies", self._read_cookies)
+            self._read_cookies()
         if event.pane.id == "activity":
             self.activity.focus()  # So `end` reaches it (TUI §8 *Activity*).
         shown = event.pane.id == "jobs"
         if shown != self._jobs_shown:
             self._jobs_shown = shown
             self._schedule("listing")
+
+    def _read_cookies(self) -> None:
+        """One cookie-list read shared by the views (TUI §5 *Cookie choices*)."""
+        self.read("cookies", "cookies", done=self.submit_view.cookies_listed)
 
     def show_running(self, text: str) -> None:
         self.running_line.update(Text(text))

@@ -106,11 +106,17 @@ def test_neither_read_runs_before_status_is_first_shown(tmp_path):
         await settle(pilot, app)
         for key in ("2", "3", "5", "1"):
             await pilot.press(key)
+        await settle(pilot, app)
+        # Submit reads the same backend method for its destination; Status
+        # still has not registered either of its own re-read kinds.
+        assert len(app.backend.called("config")) == 1
+        assert not {"config", "doctor"} & app._rereads.keys()
         await pilot.press("ctrl+r")
         app.act("set_setting", "vpn.enabled", "true", report=lambda r: ("a", "b"))
         await until(pilot, lambda: entries(app, "config set"))
         await settle(pilot, app)
-        assert not {"doctor", "config"} & set(app.backend.names())
+        assert not app.backend.called("doctor")
+        assert len(app.backend.called("config")) == 1
 
     drive(app, scenario)
 
