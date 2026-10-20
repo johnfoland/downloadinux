@@ -5,9 +5,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_host_jobs import record
+from test_host_jobs import NOW, ROW, publish, record
 
-from downloadinux import operations, render
+from downloadinux import (cookie_selectors, cookie_store, cookie_writer, cookiejar, operations,
+                          render)
 
 
 def test_fresh_import_has_no_cli_or_argparse():
@@ -110,3 +111,27 @@ def test_batch_report(submission, references, expected):
     result = BatchImport(Path('/queue[b]\x1b'), 'gallery', submission,
                          tuple(SubmissionReference(*reference) for reference in references))
     assert render.batch_report(result) == expected
+
+
+# `render.cookie_cells` (TUI §1 *Package*).
+
+
+def test_cookie_cells_for_a_file_and_a_browser_source(tmp_path):
+    root = tmp_path / 'cookies'
+    publish(root, 'alpha', 'synthetic', select=True)
+    origin = cookie_selectors.normalize('firefox', container='Work', platform='linux').origin()
+    material = cookiejar.parse((cookiejar.HEADER + ROW.format('x')).encode(), Path('fixture'))
+    cookie_writer.publish(root, 'work', material, origin, expected=None, clock=lambda: NOW)
+    alpha, work = cookie_store.list_metadata(cookie_writer.ensure_store(root))['sources']
+    assert render.cookie_cells(alpha) == (
+        'alpha', 'file', '{"path": "/external/export.txt"}', alpha['revision'],
+        alpha['refreshed_at'], 'yes')
+    assert render.cookie_cells(work) == (
+        'work', 'browser',
+        '{"browser": "firefox", "profile": null, "keyring": null, "container": "Work"}',
+        work['revision'], work['refreshed_at'], 'no')
+    for source in (alpha, work):
+        name, kind, origin, revision, refreshed, default = render.cookie_cells(source)
+        assert render.render_cookie_source(source) == (
+            f'{name}: {kind}; default: {default}\n  origin: {origin}\n'
+            f'  revision: {revision}; refreshed_at: {refreshed}')

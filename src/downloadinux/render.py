@@ -128,12 +128,22 @@ def retry_line(line: host_jobs.RetryLine) -> str:
     return f"job {line.id} is {state}; only failed, cancelled, or interrupted jobs can be retried"
 
 
+def cookie_cells(source: dict) -> tuple[str, ...]:
+    """One listed source's `cookies list` fields: name, kind, origin as
+    JSON, revision, refreshed time, and `yes` or `no` for the default (TUI
+    §1 *Package*). Unescaped, as the CLI prints them."""
+    origin = {key: source[key] for key in ('path', 'browser', 'profile', 'keyring', 'container') if key in source}
+    return (source['name'], source['kind'], json.dumps(origin, ensure_ascii=False),
+            str(source['revision']), str(source['refreshed_at']),
+            'yes' if source['is_default'] else 'no')
+
+
 def render_cookie_source(source: dict) -> str:
     """Render the same metadata fields as JSON, without individual cookies."""
-    origin = {key: source[key] for key in ('path', 'browser', 'profile', 'keyring', 'container') if key in source}
-    return (f"{source['name']}: {source['kind']}; default: {'yes' if source['is_default'] else 'no'}\n"
-            f"  origin: {json.dumps(origin, ensure_ascii=False)}\n"
-            f"  revision: {source['revision']}; refreshed_at: {source['refreshed_at']}")
+    name, kind, origin, revision, refreshed_at, default = cookie_cells(source)
+    return (f"{name}: {kind}; default: {default}\n"
+            f"  origin: {origin}\n"
+            f"  revision: {revision}; refreshed_at: {refreshed_at}")
 
 
 def render_cookie_counts(summary: dict) -> str:

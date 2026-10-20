@@ -4257,7 +4257,9 @@ reads `Default: NAME` (escaped) or `Default: anonymous`, and after a failure
 recorded and notified once, as the shared read's (§5). At the first outcome
 with rows the cursor is on the first row; after that it stays on the same
 source name, and when that source is no longer listed it moves to the next
-listed name (the smallest listed name after it), else to the last row. A
+listed name (the smallest listed name after it), else to the last row;
+the name is kept across a table that a failed or empty list emptied (DEC-60
+clarified). A
 successful `a` or `i` (below) asks for the cursor on the name it
 registered: the next successful outcome that lists that name puts the
 cursor on it instead, and the request ends; a successful outcome without it
@@ -4271,7 +4273,9 @@ or an outcome that moved it); when an outcome's metadata for the cursor
 source (its listed record) differs from the record listed when its
 inspection was last read, so a refresh, a replacement, or a default change
 re-reads it; and on `ctrl+r` in Cookies, the read the view registers as
-the `inspection` re-read kind (§2, §3 *Refresh*). While the first read for
+the `inspection` re-read kind (§2, §3 *Refresh*). Before Cookies is first
+shown, outcomes fill the table but start no inspection; showing it reads
+the cursor source's (DEC-60 clarified). While the first read for
 a source runs, the pane reads `NAME: reading…`; a later read for the same
 source keeps the shown text until it ends. A failed read shows `NAME:
 REASON` (REASON as above), its error recorded and notified as any read's

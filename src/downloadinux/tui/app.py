@@ -2,7 +2,7 @@
 DEC-58 to DEC-60).
 
 With the dialog, widget, and view modules it imports (`tui.dialogs`,
-`tui.widgets`, `tui.jobs`, `tui.submit`, `tui.status`), this is the only code under
+`tui.widgets`, `tui.jobs`, `tui.submit`, `tui.cookies`, `tui.status`), this is the only code under
 `downloadinux` that imports Textual or Rich.
 `run` is the launch's entry point; `DownloadinuxApp` holds the frame every
 view plugs into: the header, the tabs, the running-action line and footer,
@@ -24,7 +24,6 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
 from textual.geometry import Size
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -39,6 +38,7 @@ from downloadinux import credentials, errors, render, settings
 from downloadinux.errors import DownloadinuxError
 from downloadinux.host_vpn import VpnState
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.cookies import CookiesView
 from downloadinux.tui.dialogs import Confirm
 from downloadinux.tui.jobs import JobsView
 from downloadinux.tui.process import process_text
@@ -77,7 +77,7 @@ ACTIONS = {
 }
 # TUI §3 *Refresh*: what ctrl+r re-reads in each view, besides the VPN state.
 VIEW_REFRESH = {"jobs": ("listing", "log"), "submit": ("cookies", "submit-config"),
-                "cookies": ("cookies",), "status": ("config", "doctor")}
+                "cookies": ("cookies", "inspection"), "status": ("config", "doctor")}
 
 
 def run(config: str | None, overrides: Sequence[str]) -> int:
@@ -380,7 +380,8 @@ class DownloadinuxApp(App):
     questions count (§7 *Container*). The timed `listing` read lists in
     the Jobs view's mode and hands each outcome to the view after the
     header (§4 *Listing*). Submit and Cookies share the app's `cookies`
-    read, registered and started when either is first shown (§5).
+    read, registered and started when either is first shown, which hands
+    each outcome to Submit and then to Cookies (§5, §6 *Source list*).
     """
 
     ENABLE_COMMAND_PALETTE = False
@@ -436,6 +437,7 @@ class DownloadinuxApp(App):
         self.activity = ActivityLog(id="activity-log")
         self.jobs_view = JobsView(id="jobs-view")
         self.submit_view = SubmitView(id="submit-view")
+        self.cookies_view = CookiesView(id="cookies-view")
         self.running_line = Static(id="running")
         yield self.header
         with TabbedContent(initial="jobs"):
@@ -450,7 +452,7 @@ class DownloadinuxApp(App):
                     elif view == "submit":
                         yield self.submit_view
                     else:
-                        yield Container(classes="placeholder")
+                        yield self.cookies_view
         yield self.running_line
         yield Footer()
 
@@ -473,7 +475,11 @@ class DownloadinuxApp(App):
 
     def _read_cookies(self) -> None:
         """One cookie-list read shared by the views (TUI §5 *Cookie choices*)."""
-        self.read("cookies", "cookies", done=self.submit_view.cookies_listed)
+        self.read("cookies", "cookies", done=self._cookies_done)
+
+    def _cookies_done(self, outcome: Outcome) -> None:
+        self.submit_view.cookies_listed(outcome)
+        self.cookies_view.listed(outcome)
 
     def show_running(self, text: str) -> None:
         self.running_line.update(Text(text))
