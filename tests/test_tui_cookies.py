@@ -1,12 +1,13 @@
 """The Cookies view through the real app and fake backend (TUI §6; DEC-60)."""
 
 import pytest
-from textual.widgets import TabbedContent
+from textual.widgets import Checkbox, Input, Static, TabbedContent
 
-from downloadinux import cookie_store, cookie_writer, render
+from downloadinux import cookie_store, cookie_writer, cookiejar, operations, render
 from downloadinux.errors import DownloadinuxError
 from downloadinux.tui.app import ActivityLog
-from downloadinux.tui.cookies import EMPTY, CookiesView
+from downloadinux.tui.cookies import EMPTY, CookiesView, ImportDialog
+from downloadinux.tui.dialogs import ChoiceDialog
 from downloadinux.tui.widgets import TextPane, ViewTable
 from test_host_jobs import NOW, publish
 from test_tui_jobs import make_app, settle
@@ -464,5 +465,282 @@ def test_submit_and_cookies_share_every_outcome_and_inspect_waits_for_cookies(tm
         assert len(app.backend.called('cookies')) == 1
         assert pane(app)[0] == 'alpha: file; default: yes'
         assert app.submit_view.sources == ('alpha', 'beta')
+
+    drive(app, scenario)
+
+
+# The action start function (§2 *View entry points*).
+
+
+def test_started_runs_once_at_the_head_of_the_queue_before_the_backend_call():
+    app = make_app()
+    held = app.backend.hold('refresh')
+    seen = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act('refresh', 'alpha', report=lambda result: ('one', 'one'))
+        await until(pilot, held.started.is_set)
+        app.act('set_default', None, report=lambda result: ('two', 'two'),
+                started=lambda: seen.append(len(app.backend.called('set_default'))))
+        await pilot.pause()
+        assert seen == []
+        held.release()
+        await until(pilot, lambda: app.backend.called('set_default') and app._action is None)
+        await settle(pilot, app)
+        assert seen == [0]
+
+    drive(app, scenario)
+
+
+def test_started_is_not_called_for_actions_dropped_while_quitting():
+    app = make_app()
+    held = app.backend.hold('refresh')
+    seen = []
+
+    async def scenario(pilot):
+        await settle(pilot, app)
+        app.act('refresh', 'alpha', report=lambda result: ('one', 'one'),
+                started=lambda: seen.append('refresh'))
+        await until(pilot, held.started.is_set)
+        app.act('set_default', None, report=lambda result: ('two', 'two'),
+                started=lambda: seen.append('set_default'))
+        await pilot.press('q')
+        await pilot.press('y')
+        held.release()
+        await until(pilot, lambda: app.return_code is not None)
+        assert seen == ['refresh'] and not app.backend.called('set_default')
+
+    drive(app, scenario)
+
+
+# Refresh and default (§6 *Refresh and default*).
+
+
+async def action_done(pilot, app, method, count=1):
+    await until(pilot, lambda: len(app.backend.called(method)) == count and app._action is None)
+    await settle(pilot, app)
+
+
+@pytest.mark.parametrize('key,method,args,name', [
+    ('f', 'refresh', ('beta',), 'cookies refresh'),
+    ('d', 'set_default', ('beta',), 'cookies default'),
+    ('n', 'set_default', (None,), 'cookies default'),
+])
+@pytest.mark.parametrize('fails', [False, True])
+def test_keys_send_the_cursor_source_name_the_action_and_re_read(tmp_path, key, method, args,
+                                                                  name, fails):
+    root = store(tmp_path, ('alpha', 'beta'))
+    app = make_app()
+    app.backend.defaults['cookies'] = metadata(root)
+    result = inspection(root, 'beta') if method == 'refresh' else args[0]
+    held = app.backend.hold(method, **({'error': not_running()} if fails else {'result': result}))
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('down', key)
+        await until(pilot, held.started.is_set)
+        assert app.running_line.content.plain == f'{name} running'
+        assert app.backend.called(method)[0].args == args
+        held.release()
+        await action_done(pilot, app, method)
+        assert len(app.backend.called('cookies')) == 2
+        entries = activity(app, name)
+        assert len(entries) == 1 and entries[0].startswith('error: ') is fails
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('key', ['f', 'd'])
+def test_refresh_and_default_do_nothing_with_no_rows(key):
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press(key)
+        await settle(pilot, app)
+        assert not app.backend.called('refresh') and not app.backend.called('set_default')
+        assert app._action is None
+
+    drive(app, scenario)
+
+
+def test_bindings_are_listed_in_the_footer():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        bindings = app.screen.active_bindings
+        assert {key: bindings[key].binding.description for key in 'ifdn'} == {
+            'i': 'Import', 'f': 'Refresh', 'd': 'Default', 'n': 'Anonymous'}
+
+    drive(app, scenario)
+
+
+def odd_report(root, name='alpha'):
+    report = inspection(root, name)
+    report['source']['name'] = 'al[b]\x1b'
+    report['source']['path'] = '/odd\x9bpath'
+    return report
+
+
+@pytest.mark.parametrize('method,key,name', [('refresh', 'f', 'cookies refresh'),
+                                             ('import_cookies', None, 'cookies import')])
+def test_inspection_result_texts_from_real_reports(tmp_path, method, key, name):
+    root = store(tmp_path, ('alpha',))
+    report = odd_report(root)
+    app = make_app()
+    app.backend.defaults['cookies'] = metadata(root)
+    app.backend.script(method, Step(result=report))
+    shown = notes(app)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        if key:
+            await pilot.press(key)
+        else:
+            app.push_screen(ImportDialog(), view(app)._import)
+            await pilot.pause()
+            await pilot.click('#ok')
+        await action_done(pilot, app, method)
+        lines = [render.escape(line) for line in render.render_cookie_inspection(report).split('\n')]
+        assert activity(app, name) == ['\n'.join(lines)]
+        assert '  origin: {"path": "/odd\\x9bpath"}' in lines
+        assert (f'al[b]\\x1b: {render.render_cookie_counts(report)}', {'markup': False}) in shown
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize('key,result,text', [('d', 'al[b]\x1b', 'al[b]\\x1b'),
+                                             ('n', None, 'anonymous')])
+def test_default_result_texts(tmp_path, key, result, text):
+    root = store(tmp_path, ('alpha',))
+    app = make_app()
+    app.backend.defaults['cookies'] = metadata(root)
+    app.backend.script('set_default', Step(result=result))
+    shown = notes(app)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press(key)
+        await action_done(pilot, app, 'set_default')
+        assert activity(app, 'cookies default') == [text]
+        assert (f'Default: {text}', {'markup': False}) in shown
+
+    drive(app, scenario)
+
+
+def real_import_errors(tmp_path):
+    """The errors the real `import_cookies` raises for an invalid name, an
+    empty path, and a registered source without Replace, the last from a
+    `tmp_path` store reached through a temporary settings file."""
+    netscape = tmp_path / 'export.txt'
+    netscape.write_text(cookiejar.HEADER + '.example.com\tTRUE\t/\tTRUE\t0\tsid\tx\n')
+    config = tmp_path / 'config.toml'
+    config.write_text(f'[paths]\ncookies = "{tmp_path / "store"}"\n')
+    operations.import_cookies('work', str(netscape), config=str(config))
+    found = []
+    for name, file in (('Bad Name', str(netscape)), ('work', ''), ('work', str(netscape))):
+        try:
+            operations.import_cookies(name, file, config=str(config))
+        except DownloadinuxError as error:
+            found.append(error)
+    assert len(found) == 3
+    return found
+
+
+def test_real_import_errors_are_shown_under_cookies_import(tmp_path):
+    errors = real_import_errors(tmp_path)
+    app = make_app()
+    app.backend.script('import_cookies', *(Step(error=error) for error in errors))
+    shown = notes(app)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        for count in (1, 2, 3):
+            app.push_screen(ImportDialog(), view(app)._import)
+            await pilot.pause()
+            await pilot.click('#ok')
+            await action_done(pilot, app, 'import_cookies', count)
+        assert activity(app, 'cookies import') == [f'error: {error}' for error in errors]
+        assert [message for message, _ in shown] == [str(error) for error in errors]
+        assert 'source name must match' in str(errors[0])
+        assert 'cookie file must be a nonempty path' in str(errors[1])
+        assert 'already registered' in str(errors[2])
+
+    drive(app, scenario)
+
+
+# The import dialog (§6 *Import dialog*).
+
+
+def dialog_input(app, id):
+    return app.screen.query_one(f'#{id}', Input)
+
+
+def test_import_dialog_fields_keys_and_submission(tmp_path):
+    root = store(tmp_path, ('alpha', 'beta', 'gamma'))
+    app = make_app()
+    app.backend.script('cookies', Step(result=listing(root, 'alpha', 'beta')),
+                       Step(result=listing(root, 'alpha', 'beta', 'gamma')))
+    app.backend.script('import_cookies', Step(result=inspection(root, 'gamma')))
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('i')
+        dialog = app.screen
+        assert isinstance(dialog, ImportDialog)
+        assert dialog.query_one('#heading', Static).content.plain == 'Import a Netscape cookie file'
+        assert [label.content.plain for label in dialog.query(Static) if label.id is None] == [
+            'Name', 'File']
+        assert dialog.query_one(Checkbox).label.plain == 'Replace'
+        assert app.focused is dialog_input(app, 'name')
+        assert dialog.query_one(Checkbox).value is False
+        await pilot.press(*'gamma', 'enter')
+        assert app.screen is dialog
+        dialog_input(app, 'file').focus()
+        await pilot.press(*' ~/x.txt', 'enter')
+        await action_done(pilot, app, 'import_cookies')
+        assert app.backend.called('import_cookies')[0].args == ('gamma', ' ~/x.txt', False)
+        await until(pilot, lambda: len(app.backend.called('cookies')) == 2)
+        await settle(pilot, app, 'cookies', 'inspect')
+        assert view(app).cursor_name() == 'gamma'
+
+    drive(app, scenario)
+
+
+def test_import_dialog_ok_replace_and_escape():
+    app = make_app()
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        await pilot.press('i')
+        await pilot.press('escape')
+        await pilot.pause()
+        assert not isinstance(app.screen, ImportDialog)
+        await pilot.press('i')
+        dialog_input(app, 'name').value = 'work'
+        app.screen.query_one(Checkbox).value = True
+        await pilot.click('#ok')
+        await action_done(pilot, app, 'import_cookies')
+        assert app.backend.called('import_cookies')[0].args == ('work', '', True)
+
+    drive(app, scenario)
+
+
+def test_keys_do_nothing_while_a_dialog_is_open(tmp_path):
+    root = store(tmp_path, ('alpha',))
+    app = make_app()
+    app.backend.defaults['cookies'] = metadata(root)
+
+    async def scenario(pilot):
+        await show(pilot, app)
+        app.push_screen(ChoiceDialog('Still open?', ('one', 'two'), 'one'))
+        await pilot.pause()
+        await pilot.press('f', 'd', 'n', 'a', 'i')
+        await settle(pilot, app)
+        assert isinstance(app.screen, ChoiceDialog)
+        assert not {'refresh', 'set_default', 'browsers'} & set(app.backend.names())
+        await pilot.press('escape')
 
     drive(app, scenario)

@@ -332,13 +332,16 @@ class Read:
 @dataclass(eq=False)
 class Action:
     """One queued action (TUI §2 *Actions*). `report(result)` gives the
-    Activity text and the notification text for a success."""
+    Activity text and the notification text for a success; `started`, when
+    given, runs as the action reaches the head of the queue (§2 *View entry
+    points*)."""
 
     name: str
     method: str
     args: tuple
     report: Callable[[object], tuple[str, str]]
     rereads: tuple[str, ...]
+    started: Callable[[], None] | None = None
 
 
 class ReadItem(Message):
@@ -372,7 +375,8 @@ class DownloadinuxApp(App):
     entry points*): `read` for a read under a key, `drop` to drop the read
     in flight under a key when the pane it fills closes, `act` to queue an
     action, whose result function may raise `DownloadinuxError` to report
-    the action as an operation error, and `register` to supply the read
+    the action as an operation error and whose start function runs as it
+    starts, and `register` to supply the read
     behind a re-read kind (§2 *Actions*, §3 *Refresh*).
 
     `listing` is the latest job listing's `Outcome`, None before the
@@ -664,23 +668,28 @@ class DownloadinuxApp(App):
         if reread is not None:
             reread()
 
-    def act(self, method: str, *args, report: Callable[[object], tuple[str, str]]) -> None:
+    def act(self, method: str, *args, report: Callable[[object], tuple[str, str]],
+            started: Callable[[], None] | None = None) -> None:
         """Queue `backend.<method>(*args)` as an action, named and re-read
         by §2's table. `report(result)` gives a success's Activity text
         and notification text, or raises `DownloadinuxError` to report the
         action as that operation error (§2 *View entry points*); any other
-        exception it raises is an internal error. Once quitting has started,
-        nothing is queued."""
+        exception it raises is an internal error. `started()` runs on the
+        UI thread when the action reaches the head of the queue, just before
+        its backend call starts; an action dropped while quitting never
+        calls it. Once quitting has started, nothing is queued."""
         if self._quitting:
             return
         name, rereads = ACTIONS[method]
-        self._waiting.append(Action(name or args[0], method, args, report, rereads))
+        self._waiting.append(Action(name or args[0], method, args, report, rereads, started))
         self._next_action()
 
     def _next_action(self) -> None:
         # The queue waits while the quit question is open (DEC-63).
         if self._action is None and self._waiting and not self._asking:
             self._action = self._waiting.popleft()
+            if self._action.started is not None:
+                self._action.started()
             self.run_worker(partial(self._run_action, self._action), name=self._action.name,
                             group="action", thread=True, exit_on_error=False)
         self._show_queue()

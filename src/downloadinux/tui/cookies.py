@@ -1,5 +1,6 @@
 """The Cookies view (target design, *Python + Textual TUI* §6; DEC-60): the
-registered cookie sources and the cursor source's inspection.
+registered cookie sources, the cursor source's inspection, refresh, the
+default, and Netscape import.
 
 `CookiesView` fills the app's `cookies` pane. The app hands it each outcome
 of the cookie-list read it shares with Submit (`listed`, §5 *Cookie
@@ -14,9 +15,10 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import DataTable, Static, TabbedContent, TabPane
+from textual.widgets import Checkbox, DataTable, Input, Static, TabbedContent, TabPane
 
 from downloadinux import render
+from downloadinux.tui.dialogs import FormDialog
 from downloadinux.tui.widgets import TextPane, ViewTable, plain
 
 COLUMNS = ("NAME", "KIND", "ORIGIN", "REVISION", "REFRESHED", "DEFAULT")
@@ -26,6 +28,41 @@ EMPTY = "No cookie sources; add one with a (browser) or i (Netscape file)."  # �
 def inspection_lines(report: dict) -> list[str]:
     """`cookies inspect`'s text, each line escaped (§6 *Inspection*)."""
     return [render.escape(line) for line in render.render_cookie_inspection(report).split("\n")]
+
+
+def inspected(report: dict) -> tuple[str, str]:
+    """`cookies import`, `add-browser`, and `refresh`'s result: the CLI's
+    text, each line escaped, and `NAME: COUNTS` (§6 *Refresh and default*)."""
+    name = render.escape(report["source"]["name"])
+    return "\n".join(inspection_lines(report)), f"{name}: {render.render_cookie_counts(report)}"
+
+
+def defaulted(default: str | None) -> tuple[str, str]:
+    """`cookies default`'s result: the CLI's text and `Default: NAME`."""
+    name = "anonymous" if default is None else render.escape(default)
+    return name, f"Default: {name}"
+
+
+class ImportDialog(FormDialog):
+    """`i`'s dialog (§6 *Import dialog*): `Name`, `File`, and `Replace`,
+    submitted as `(NAME, FILE, REPLACE)` with the text as entered."""
+
+    def __init__(self):
+        super().__init__("Import a Netscape cookie file")
+
+    def fields(self) -> ComposeResult:
+        yield Static(Text("Name"))
+        yield Input(id="name")
+        yield Static(Text("File"))
+        yield Input(id="file")
+        yield Checkbox("Replace", id="replace")
+
+    def on_mount(self) -> None:
+        self.query_one("#name", Input).focus()
+
+    def value(self) -> tuple[str, str, bool]:
+        return (self.query_one("#name", Input).value, self.query_one("#file", Input).value,
+                self.query_one(Checkbox).value)
 
 
 class CookiesView(Vertical):
@@ -45,6 +82,10 @@ class CookiesView(Vertical):
     BINDINGS = [
         Binding("tab", "cycle(1)", show=False),
         Binding("shift+tab", "cycle(-1)", show=False),
+        Binding("i", "import", "Import"),
+        Binding("f", "refresh_source", "Refresh"),
+        Binding("d", "default", "Default"),
+        Binding("n", "anonymous", "Anonymous"),
     ]
 
     def __init__(self, **kwargs):
@@ -195,3 +236,31 @@ class CookiesView(Vertical):
             self.inspection.show([f"{render.escape(name)}: {outcome.shown}"])
         else:
             self.inspection.show(inspection_lines(outcome.result))
+
+    # Refresh, default, and import (§6 *Refresh and default*, *Import dialog*).
+
+    def action_refresh_source(self) -> None:
+        name = self.cursor_name()
+        if name is not None:
+            self.app.act("refresh", name, report=inspected)
+
+    def action_default(self) -> None:
+        name = self.cursor_name()
+        if name is not None:
+            self.app.act("set_default", name, report=defaulted)
+
+    def action_anonymous(self) -> None:
+        self.app.act("set_default", None, report=defaulted)
+
+    def action_import(self) -> None:
+        self.app.push_screen(ImportDialog(), self._import)
+
+    def _import(self, chosen: tuple[str, str, bool] | None) -> None:
+        if chosen is not None:  # None: the dialog was closed.
+            self.app.act("import_cookies", *chosen, report=self._registered)
+
+    def _registered(self, report: dict) -> tuple[str, str]:
+        """A registration's result; the cursor goes to the new source once
+        the cookie re-read lists it (§6 *Source list*)."""
+        self.place(report["source"]["name"])
+        return inspected(report)
