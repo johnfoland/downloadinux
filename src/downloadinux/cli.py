@@ -884,6 +884,10 @@ def _report_error(error: DownloadinuxError) -> int:
     return error.exit_status
 
 
+def _terminal(stream) -> bool:
+    return stream is not None and stream.isatty()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -893,12 +897,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         # the host's error form rather than argparse's (DEC-40).
         return _report_error(error)
     handler = getattr(args, "handler", None)
-    if handler is None:
-        # Bare invocation is reserved for the TUI; until Stage 4 it prints
-        # help (DEC-7).
+    if handler is None and not (_terminal(sys.stdin) and _terminal(sys.stdout)):
+        # Bare invocation opens the TUI only on a terminal, so a script or
+        # pipe never starts a screen (TUI §1 *Launch*; DEC-58, DEC-7).
         parser.print_help()
         return 0
     try:
+        if handler is None:
+            # Only this path imports Textual (TUI §1 *Launch*).
+            from downloadinux.tui import app as tui_app
+            options = _global_options(args)
+            return tui_app.run(options.config, options.overrides)
         return handler(args, _global_options(args))
     except DownloadinuxError as error:
         return _report_error(error)

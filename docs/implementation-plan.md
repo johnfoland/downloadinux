@@ -1,6 +1,6 @@
 # Implementation plan
 
-Status: Stages 1–3 are implemented; Stage 4 is settled, with its shared
+Status: Stages 1–4 are implemented. Stage 4's shared
 renderers and `config set`/`config unset` implemented (PR #103), and
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 implemented (PR #105), completing the shared host operations. The TUI's
@@ -9,7 +9,8 @@ Textual-free backend, process runners, and stream handle are implemented
 its complete Jobs view (PRs #118, #120), including the log pane and
 `tui.logtext`;
 the Submit view is implemented (PR #124), and so is the Cookies view
-(PR #128); the launch remains planned.
+(PR #128), and the launch on bare `dlx` with the gate's TUI smoke
+(PR #130).
 Stage 1 was delivered as project P0001: D1's package and configuration
 commands (P0001-C01); D2: the Compose layer, mount contract, lifecycle
 commands, and gate smoke test (P0001-C02), and the container commands
@@ -33,7 +34,7 @@ commands. Reusable host submission and queue-import operations are implemented
 reduction (DEC-57; PR #94). The coordinated download fronts and retirement
 are implemented (DEC-44/56/57); [PR #97](https://github.com/johnfoland/downloadinux/pull/97) adds D5's joined Stage 3
 completion evidence through the credential-free gate. Stage 3 is implemented.
-Stage 4 is settled ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
+Stage 4 is implemented ([issue #98](https://github.com/johnfoland/downloadinux/issues/98),
 DEC-58 to DEC-62); its shared renderers and `config set`/`config unset`
 are implemented (PR #103). `host_jobs.export_to`, `host_vpn`, and
 `operations.server_choices` are implemented (PR #105), completing the
@@ -42,7 +43,7 @@ stream handle are implemented (PR #110), as are the app frame (PR #112),
 the Status view (PR #115), and the complete Jobs view (PRs #118, #120),
 including the log pane and `tui.logtext`;
 the Submit view is implemented (PR #124), and so is the Cookies view
-(PR #128); the launch remains planned.
+(PR #128), and the launch with the gate's TUI smoke (PR #130).
 
 Read [current state](current-state.md) for the migration baseline and
 [target design](target-design.md) for decisions and proposed contracts.
@@ -207,7 +208,7 @@ backend, process runners, and stream handle (PR #110) and its app frame
 (PR #112), Status view (PR #115), and complete Jobs view (PRs #118, #120),
 including the log pane and `tui.logtext`.
 The Submit view is implemented (PR #124), and so is the Cookies view
-(PR #128); the launch remains planned.
+(PR #128), and the launch (PR #130): Stage 4 is implemented too.
 
 - Define a durable job store and the host/worker interface.
 - Implement submission, status, logs, cancellation, retry, and restart reconciliation.
@@ -251,9 +252,9 @@ process runners, and stream handle are implemented (PR #110), as are the
 app frame (PR #112), the Status view (PR #115), and the complete Jobs view
 (PRs #118, #120), including the log pane and `tui.logtext`.
 The Submit view is implemented (PR #124), and so is the Cookies view
-(PR #128); the launch remains planned. The app uses
-`downloadinux.tui` on `textual==8.2.8` and is
-to open on bare `dlx` on a terminal (help otherwise).
+(PR #128), and the launch (PR #130). The app uses
+`downloadinux.tui` on `textual==8.2.8` and opens on bare `dlx` on a
+terminal (help otherwise).
 It is a front over the CLI's host operations through one backend: no new
 worker client, store access, or host
 state (DEC-58). Every call runs in a thread worker; changes go through one
@@ -359,9 +360,9 @@ the worker is packaged into the image with its implemented job clients, and the 
 joined completion evidence (*Stage 3* above), so Stage 3 is implemented.
 Job history retention (#65) and cookie source lifecycle/pruning (#35) remain
 outside these stages; queued jobs retain their pinned immutable revisions.
-Stage 4's TUI is settled (DEC-58 to DEC-62): its package, dependency,
+Stage 4's TUI is implemented (DEC-58 to DEC-62): its package, dependency,
 launch, threading and process rules, views, keys, VPN controls, and the
-`config set` and `config unset` writes are pinned before implementation;
+`config set` and `config unset` writes were pinned before implementation;
 the writes and the shared renderers are implemented (PR #103), as are
 `host_jobs.export_to`, `host_vpn`, and `operations.server_choices`
 (PR #105), completing the shared host operations. The Textual-free backend,
@@ -369,4 +370,5 @@ process runners, and stream handle are implemented (PR #110), as are the
 app frame (PR #112), the Status view (PR #115), and the complete Jobs view
 (PRs #118, #120), including the log pane and `tui.logtext`.
 The Submit view is implemented (PR #124), and so is the Cookies view
-(PR #128); the launch remains planned.
+(PR #128), and the launch on bare `dlx`, with the gate's TUI smoke
+(PR #130).

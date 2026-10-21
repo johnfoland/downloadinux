@@ -73,6 +73,10 @@ useragent *args:
 # Daily use
 # ---------------------------------------------------------------------------
 
+# Open the terminal UI: just tui [--config PATH] [--set KEY=VALUE]…
+tui *args:
+    @uv run downloadinux "$@"
+
 # Drop into zsh inside the container
 shell:
     @uv run downloadinux shell

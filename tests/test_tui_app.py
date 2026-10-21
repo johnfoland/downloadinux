@@ -18,6 +18,7 @@ from downloadinux.host_vpn import VpnState
 from downloadinux.tui.app import (ActivityLog, Confirm, DownloadinuxApp, header_line,
                                   job_summary, vpn_text)
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.status import StatusView
 from tui_support import (METHODS, FakeBackend, FakeStream, Step, broken_pipe, drive,
                          os_error, record, until)
 
@@ -121,6 +122,22 @@ def test_run_builds_the_app_and_returns_its_return_code(tmp_path, monkeypatch):
     assert app.backend._record == app.record
 
 
+def test_build_app_loads_and_builds_without_running(tmp_path, monkeypatch):
+    # TUI §1 *Entry point*: the gate's smoke builds its sessions here.
+    path = tmp_path / "config.toml"
+    path.write_text("")
+    monkeypatch.setattr(DownloadinuxApp, "run", lambda self: pytest.fail("the app ran"))
+    app = tui_app.build_app(str(path), ("vpn.enabled=false",))
+    assert isinstance(app, DownloadinuxApp)
+    assert app.settings_path == settings.load(str(path), ["vpn.enabled=false"]).file
+    assert (app.backend._config, list(app.backend._overrides)) == (str(path), ["vpn.enabled=false"])
+    assert app.backend._record == app.record
+    bad = tmp_path / "bad.toml"
+    bad.write_text("paths = [\n")
+    with pytest.raises(ConfigError):
+        tui_app.build_app(str(bad), ())
+
+
 def test_run_raises_a_credentials_error(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text("")
@@ -153,6 +170,27 @@ def test_frame_tabs_keys_and_placeholder_header():
             assert tabs.active == view
         assert app.ENABLE_COMMAND_PALETTE is False
         assert str(app.running_line.render()) == ""
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("key, view", [("1", "jobs"), ("2", "submit"), ("3", "cookies")])
+def test_a_view_shown_after_status_scrolls_is_still_shown_and_focused(key, view):
+    # Scrolling Status leaves Textual's layout map stale; a switch must still
+    # deliver the new view's Show, which focuses it and starts its first reads.
+    app = make_app()
+
+    async def scenario(pilot):
+        await pilot.press("4")
+        status = app.query_one(StatusView)
+        await until(pilot, lambda: status.max_scroll_y >= 5)
+        status.scroll_to(y=5, animate=False, immediate=True)
+        await pilot.pause(0.1)
+        await pilot.press(key)
+        pane = app.query_one(f"#{view}")
+        await until(pilot, lambda: app.focused is not None and pane in app.focused.ancestors)
+        if view != "jobs":
+            assert getattr(app, f"{view}_view").started
 
     drive(app, scenario)
 

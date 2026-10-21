@@ -15,13 +15,11 @@ Jobs retain their state and attempt logs, with explicit cancel and retry.
 
 Settings live outside the checkout. Named cookie sources are pinned when
 submitted; each job attempt gets its own private copy at startup, or runs
-anonymously. `--user-agent` overrides the setting for a submission. Stages 1–3
-are implemented. [PR #97](https://github.com/johnfoland/downloadinux/pull/97)
-adds the joined Stage 3 completion evidence for detachment, cancellation,
-retry, and recovery.
-The [planning documents](docs/README.md) describe the implemented contracts
-and the settled, not yet implemented Python + Textual TUI (Stage 4). This
-README covers current behavior.
+anonymously. `--user-agent` overrides the setting for a submission. Bare
+`dlx` (or `just tui`) on a terminal opens a [terminal UI](#the-terminal-ui)
+over the same jobs, cookie sources, and settings. Stages 1–4 are
+implemented. The [planning documents](docs/README.md) describe the
+implemented contracts; this README covers current behavior.
 
 The download configs live in the `video` and `gallery` presets, run from
 the host with `just dl` and `just batch`.
@@ -521,6 +519,7 @@ just dl --cookie-source work video '<url>'       # a named cookie source
 just dl --anonymous video '<url>'                # no cookies at all
 just batch video                                 # import into the worker lane
 just watch video                                 # follow the lane; Ctrl-C detaches
+just tui                                         # the terminal UI
 
 just vpn on us8649                               # a specific server
 just vpn on New_York                             # ...or city / country / group
@@ -610,6 +609,89 @@ staying un-flagged than hopping exit IPs on the same Instagram session.
 
 Another country takes its Nord country id — `just servers Toronto 38`. Give a
 city that doesn't exist and it prints the valid ones.
+
+## The terminal UI
+
+`dlx` with no command, or `just tui`, opens a terminal UI over the same
+operations: it submits to the same worker, reads the same settings, and
+writes the same settings file and cookie store. It opens only when standard
+input and standard output are both terminals; in a script or a pipe, bare
+`dlx` prints help and exits 0, as before. `--config PATH` and `--set
+KEY=VALUE` work as on any command, and a `--set` keeps its precedence for
+the whole session. An invalid settings file stops it before the screen
+opens, with the usual `downloadinux: error: …` and exit 2.
+
+```sh
+just tui                                   # or: uv run dlx
+just tui --set vpn.enabled=false
+```
+
+It starts, stops, builds, and cleans nothing on launch: it never runs `up`.
+With the container stopped, Jobs shows that it is not running until you
+start it from Status (`U`).
+
+Five views, one per tab, with the header line above them showing the
+settings file, the job counts (`R running · Q queued · F failed or
+interrupted`), and the VPN's state (`VPN off`, `VPN: container not
+running`, `VPN: disconnected`, or `VPN: connected (COUNTRY, SERVER)`):
+
+- **Jobs**: the job listing (`a` switches between the default listing and
+  every job), the cursor job's `jobs show` details, and its log, following
+  the current attempt live. Cancel, retry, export, earlier attempts, and
+  following a whole lane are keys here.
+- **Submit**: URLs or a queue file, the preset, a cookie choice (the
+  default, anonymous, or a named source), and a user-agent. It submits as
+  `dl --detach` and `batch` do; the destination is always the preset's
+  folder under `paths.downloads`.
+- **Cookies**: the registered sources and the cursor source's `cookies
+  inspect` counts (never a cookie value); import a Netscape file, add a
+  browser source, refresh one, or change the default.
+- **Status**: `doctor`'s checks and `config show`'s settings. Edit or unset
+  a setting, store the NordVPN token, start, stop, or restart the container,
+  and connect, switch, or disconnect the VPN.
+- **Activity**: a timestamped record of the session's actions, errors, and
+  command output, newest last. It is not saved: the worker's job history and
+  logs are the durable record.
+
+| Where | Key | Action |
+| --- | --- | --- |
+| Everywhere | `1`–`5` | Show Jobs, Submit, Cookies, Status, Activity |
+| | `ctrl+r` | Refresh the shown view and the VPN state now |
+| | `q`, `ctrl+q` | Quit |
+| | `?` | Key help |
+| Jobs | `space` | Mark or unmark the cursor job |
+| | `a` | Toggle every job and the default listing |
+| | `c` | Cancel the marked jobs, else the cursor job |
+| | `r` | Retry them, each keeping its own cookie rule and user-agent |
+| | `R` | Retry them with a chosen cookie selection and user-agent |
+| | `[`, `]` | Show the previous or next attempt's log |
+| | `v`, `g` | Follow the video or gallery lane in the log pane |
+| | `escape` | Return the log pane to the cursor job |
+| | `e` | Export a preset's failed work to a queue file |
+| Submit | `ctrl+s` | Submit the form |
+| Cookies | `a` | Add a browser source |
+| | `i` | Import a Netscape file |
+| | `f` | Refresh the cursor source |
+| | `d` | Make the cursor source the default |
+| | `n` | Make anonymous the default |
+| Status | `enter` | Edit the cursor setting |
+| | `x` | Unset the cursor setting |
+| | `t` | Store the NordVPN token |
+| | `U`, `D`, `R` | Container up, down, restart |
+| | `o` | Connect the VPN, or switch servers |
+| | `O` | Disconnect the VPN |
+
+In a text field, `q`, `1`–`5`, and `?` type; `escape` leaves the field, and
+`ctrl+q` quits from anywhere. Stopping or restarting the container asks
+first, naming how many running jobs it would interrupt; cancelling a running
+job asks too. Switching VPN servers and disconnecting are refused while a job
+runs.
+
+Quitting closes the screen and nothing else: it never cancels a job, stops
+the worker, or touches the container, so downloads carry on and the next
+session shows the same jobs. It asks first only while an action (a submit,
+an import, a container command) is still running, and then quits when that
+action finishes.
 
 ## Batch queues
 
@@ -991,7 +1073,8 @@ dlx doctor [--json]          Structured settings, cookies, Docker, mount, tool, 
 
 `--config PATH` and `--set table.key=value` work on every command, before,
 between, or after nested subcommands ([The settings file](#the-settings-file)). `dlx` with no command
-prints help. `shell`, `vpn`, and `compose --` exit with the invoked program's
+opens the [terminal UI](#the-terminal-ui) when standard input and output are
+both terminals, and prints help otherwise. `shell`, `vpn`, and `compose --` exit with the invoked program's
 status; `dl` and `watch` use the job/follow rules above; otherwise the status is 0 on
 success, 1 when an operation fails, and 2 for a usage error or invalid
 settings, with errors on standard error as `downloadinux: error: …`.
@@ -1036,6 +1119,8 @@ just batch video [file]     Import a queue into the worker
 just batch gallery [file]   Same, for galleries (<paths.downloads>/dlgal_queue)
                               (dl's options too)
 just watch video|gallery    Follow a worker lane until idle
+just tui [--config PATH] [--set KEY=VALUE]…
+                            Open the terminal UI
 just jobs <subcommand> ...  The worker's jobs: list, show, logs, cancel,
                               retry, export (dlx jobs)
 just shell           zsh inside the container
@@ -1043,7 +1128,7 @@ just vpn <args>      on / off / status / ip, or any nordvpn subcommand
 just servers [city] [id]    Rank a city's NordVPN servers by load
 
 just build           Build the image
-just check           Static checks, Python tests, image build, VPN-off smoke (the CI gate)
+just check           Static checks, Python tests, image build, VPN-off and TUI smoke (the CI gate)
 just up / down       Start / stop (volumes survive)
 just restart
 just logs            Follow container logs
