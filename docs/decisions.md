@@ -1691,21 +1691,25 @@ terminal would show.
 *Where:* [target design](target-design.md), *Python + Textual TUI* §2
 (*Captured writes*) and §8 *Activity*. Added on 2026-10-18 for issue #113.
 
-## DEC-65: "No Textual in the image" means the TUI's, not `rich-cli`'s (2026-10)
+## DEC-65: Until `rich-cli` is retired, "no Textual in the image" is checked as no TUI in the image (2026-10)
 
 The image never installs the TUI: the system interpreter, which runs the
 worker and runner, cannot import Textual, and the venv holds no
 `downloadinux` distribution and no Textual requirer other than `rich-cli`.
-The gate's TUI smoke checks both inside the built image.
+The gate's TUI smoke checks both inside the built image. This is interim:
+[issue #131](https://github.com/johnfoland/downloadinux/issues/131) retires
+`exifmod`, `rich-cli`, and ExifTool, after which the venv holds no Textual,
+the check becomes the literal one, and this entry is superseded.
 
 *Python + Textual TUI* §1 said the image does not install Textual, but the
-venv's `rich-cli` (kept for `exifmod`, *Persistent worker and jobs* §7) has
-always required its own Textual (0.1.18 in the image built for #130), so a
-literal check failed on the first run. Dropping `rich-cli` was rejected:
-`exifmod` uses it, and the retirement list keeps it. What the rule protects
-is the worker and runner staying standard library (DEC-36, DEC-41) and the
-TUI's dependency staying on the host (DEC-58); `rich-cli`'s Textual touches
-neither.
+venv's `rich-cli`, which only `exifmod` uses, has always required its own
+Textual (0.1.18 in the image built for #130), so a literal check failed on
+the first run. The maintainer never wanted `exifmod` in the project; the
+earlier planning docs kept it without asking (DEC-44, DEC-58). Removing it
+inside #130 was rejected to keep that pull request to the Stage 4 launch;
+the retirement is its own chunk. Until then the narrowed check still holds
+what the rule protects: the worker and runner staying standard library
+(DEC-36, DEC-41) and the TUI's dependency staying on the host (DEC-58).
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §1
 *Dependency*. Added on 2026-10-21 in #130; clarifies DEC-58.

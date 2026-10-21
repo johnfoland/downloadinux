@@ -3407,9 +3407,10 @@ The Submit view is implemented (PR #124), and so is the Cookies view
 arrives with it; no other runtime dependency is added. The image does not
 install the TUI or its Textual: the worker and runner run on the system
 interpreter, which has no Textual, and stay standard library (DEC-36,
-DEC-41). The image's venv keeps `rich-cli` for `exifmod`, which brings its
-own, older Textual; nothing in `downloadinux` uses it, and the gate's TUI
-smoke checks both interpreters (DEC-65). Tests drive the app headlessly with Textual's `App.run_test()` and
+DEC-41). Until [issue #131](https://github.com/johnfoland/downloadinux/issues/131)
+retires `exifmod` and `rich-cli`, the venv still holds `rich-cli`'s own,
+older Textual, which nothing in `downloadinux` uses; the gate's TUI smoke
+checks both interpreters (DEC-65). Tests drive the app headlessly with Textual's `App.run_test()` and
 its pilot, inside `asyncio.run` in ordinary pytest functions; no pytest
 plugin is added.
 

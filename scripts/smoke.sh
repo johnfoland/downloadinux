@@ -727,7 +727,8 @@ synthetic_jar synthetic-tui >"$tui/origin.txt"
 uv run --locked python -I "$route_fixture/stage4.py" "$tui" "$route_agent"
 # TUI §1 *Dependency* (DEC-65): the image never installs the TUI. The
 # system interpreter, which runs the worker and runner, cannot import
-# Textual, and the venv holds no downloadinux and no Textual but rich-cli's.
+# Textual, and the venv holds no downloadinux and no Textual but rich-cli's
+# (until #131 retires rich-cli; then both imports must fail).
 if ! "${cli[@]}" compose -- exec -T downloadinux /usr/bin/python3 -I -c '
 try:
     import textual
