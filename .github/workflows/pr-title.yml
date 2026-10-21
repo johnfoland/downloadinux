@@ -1,0 +1,20 @@
+name: PR title
+
+# release-please reads the squash-merge commit, whose subject is the pull
+# request's title, so the title must be a Conventional Commit.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  title:
+    name: conventional commit title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
