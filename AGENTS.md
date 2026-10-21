@@ -6,10 +6,10 @@ through `CLAUDE.md`'s `@AGENTS.md` import.
 downloadinux is a headless Debian container that runs the `video` (yt-dlp) and
 `gallery` (gallery-dl) download presets behind NordVPN, writing to a host
 download folder, driven from the host by `just` recipes. It is a personal tool,
-being refactored into a portable application with a persistent worker and a
-Python + Textual TUI. README.md describes the current implementation and how to
-run it; `docs/` holds the planning documents for the refactor, and
-`docs/README.md` gives their reading order.
+refactored into a portable application with a persistent worker and a
+Python + Textual TUI (Stages 1–4, all implemented). README.md describes the
+current implementation and how to run it; `docs/` holds the planning
+documents for the refactor, and `docs/README.md` gives their reading order.
 
 ## Before you start
 
