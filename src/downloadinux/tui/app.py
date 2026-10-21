@@ -11,6 +11,7 @@ the global keys, Activity, the thread-worker reads, and the action queue.
 
 from collections import deque
 from collections.abc import Callable, Sequence
+import contextlib
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -24,6 +25,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.errors import NoWidget
 from textual.geometry import Size
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -749,6 +751,13 @@ class DownloadinuxApp(App):
             # Hiding the focused widget makes Textual focus a neighbour,
             # which can sit in the same pane and so show that pane again.
             self.set_focus(None)
+            # Textual 8.2.8 posts a pane's Show only when a layout first
+            # places it. Looking the pane up while it is still hidden makes
+            # any pending rebuild of the screen's layout map happen now, so
+            # showing the pane cannot rebuild the map with the pane already
+            # placed and lose its Show (TUI §3 *Frame*; PR #130).
+            with contextlib.suppress(NoWidget):
+                self.screen.find_widget(tabs.get_pane(view))
         tabs.active = view
 
     def action_toggle_help(self) -> None:

@@ -3405,8 +3405,11 @@ The Submit view is implemented (PR #124), and so is the Cookies view
 *Dependency.* `textual==8.2.8`, exactly pinned, is a runtime dependency in
 `pyproject.toml` (DEC-7: one thing to install), with `uv.lock` updated. Rich
 arrives with it; no other runtime dependency is added. The image does not
-install Textual: the worker and runner stay standard library (DEC-36,
-DEC-41). Tests drive the app headlessly with Textual's `App.run_test()` and
+install the TUI or its Textual: the worker and runner run on the system
+interpreter, which has no Textual, and stay standard library (DEC-36,
+DEC-41). The image's venv keeps `rich-cli` for `exifmod`, which brings its
+own, older Textual; nothing in `downloadinux` uses it, and the gate's TUI
+smoke checks both interpreters (DEC-65). Tests drive the app headlessly with Textual's `App.run_test()` and
 its pilot, inside `asyncio.run` in ordinary pytest functions; no pytest
 plugin is added.
 

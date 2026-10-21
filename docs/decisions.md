@@ -1690,3 +1690,22 @@ terminal would show.
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §2
 (*Captured writes*) and §8 *Activity*. Added on 2026-10-18 for issue #113.
+
+## DEC-65: "No Textual in the image" means the TUI's, not `rich-cli`'s (2026-10)
+
+The image never installs the TUI: the system interpreter, which runs the
+worker and runner, cannot import Textual, and the venv holds no
+`downloadinux` distribution and no Textual requirer other than `rich-cli`.
+The gate's TUI smoke checks both inside the built image.
+
+*Python + Textual TUI* §1 said the image does not install Textual, but the
+venv's `rich-cli` (kept for `exifmod`, *Persistent worker and jobs* §7) has
+always required its own Textual (0.1.18 in the image built for #130), so a
+literal check failed on the first run. Dropping `rich-cli` was rejected:
+`exifmod` uses it, and the retirement list keeps it. What the rule protects
+is the worker and runner staying standard library (DEC-36, DEC-41) and the
+TUI's dependency staying on the host (DEC-58); `rich-cli`'s Textual touches
+neither.
+
+*Where:* [target design](target-design.md), *Python + Textual TUI* §1
+*Dependency*. Added on 2026-10-21 in #130; clarifies DEC-58.

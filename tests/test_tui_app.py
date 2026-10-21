@@ -18,6 +18,7 @@ from downloadinux.host_vpn import VpnState
 from downloadinux.tui.app import (ActivityLog, Confirm, DownloadinuxApp, header_line,
                                   job_summary, vpn_text)
 from downloadinux.tui.backend import Backend
+from downloadinux.tui.status import StatusView
 from tui_support import (METHODS, FakeBackend, FakeStream, Step, broken_pipe, drive,
                          os_error, record, until)
 
@@ -169,6 +170,27 @@ def test_frame_tabs_keys_and_placeholder_header():
             assert tabs.active == view
         assert app.ENABLE_COMMAND_PALETTE is False
         assert str(app.running_line.render()) == ""
+
+    drive(app, scenario)
+
+
+@pytest.mark.parametrize("key, view", [("1", "jobs"), ("2", "submit"), ("3", "cookies")])
+def test_a_view_shown_after_status_scrolls_is_still_shown_and_focused(key, view):
+    # Scrolling Status leaves Textual's layout map stale; a switch must still
+    # deliver the new view's Show, which focuses it and starts its first reads.
+    app = make_app()
+
+    async def scenario(pilot):
+        await pilot.press("4")
+        status = app.query_one(StatusView)
+        await until(pilot, lambda: status.max_scroll_y >= 5)
+        status.scroll_to(y=5, animate=False, immediate=True)
+        await pilot.pause(0.1)
+        await pilot.press(key)
+        pane = app.query_one(f"#{view}")
+        await until(pilot, lambda: app.focused is not None and pane in app.focused.ancestors)
+        if view != "jobs":
+            assert getattr(app, f"{view}_view").started
 
     drive(app, scenario)
 

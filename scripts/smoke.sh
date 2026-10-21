@@ -716,6 +716,39 @@ if [[ $status -ne 1 || -s "$smoke_dir/cleanup.out" ]] || ! grep -Fqx \
 fi
 printf 'Cookie cleanup passed (removed 1, then 0, then refused when stopped).\n'
 
+# Python + Textual TUI §1 *Entry point*; implementation plan, *Stage 4*
+# acceptance: the real TUI, built as the launch builds it, drives the check
+# image headlessly in two sessions. It starts the container itself (the one
+# above is down) with its own settings file, state, cookies, and downloads;
+# the trap owns them, the container, the held job, and its release file.
+tui="$smoke_dir/tui"
+mkdir -p "$tui/downloads/route-smoke" "$tui/state" "$tui/cookies"
+synthetic_jar synthetic-tui >"$tui/origin.txt"
+uv run --locked python -I "$route_fixture/stage4.py" "$tui" "$route_agent"
+# TUI §1 *Dependency* (DEC-65): the image never installs the TUI. The
+# system interpreter, which runs the worker and runner, cannot import
+# Textual, and the venv holds no downloadinux and no Textual but rich-cli's.
+if ! "${cli[@]}" compose -- exec -T downloadinux /usr/bin/python3 -I -c '
+try:
+    import textual
+except ModuleNotFoundError:
+    pass
+else:
+    raise SystemExit("the system interpreter imports textual")
+' || ! "${cli[@]}" compose -- exec -T downloadinux /opt/venv/bin/python -I -c '
+import importlib.metadata as metadata, re
+def requires(dist):
+    return {re.split(r"[ ;\[<>=!~(]", line, maxsplit=1)[0].lower() for line in dist.requires or ()}
+names = {dist.metadata["Name"].lower() for dist in metadata.distributions()}
+users = sorted(dist.metadata["Name"].lower() for dist in metadata.distributions() if "textual" in requires(dist))
+if "downloadinux" in names or users not in ([], ["rich-cli"]):
+    raise SystemExit(f"the venv installs Textual for {users}")
+'; then
+  echo "TUI smoke: the image installs the TUI or its Textual" >&2
+  exit 1
+fi
+printf 'TUI smoke passed (configure, register, start, submit, log, retry, quit with a held job, reopen).\n'
+
 # Nothing else moved: migration, refresh, downloads and cleanup never wrote
 # the Stage 1 jar, the absent settings file, or a tracked file.
 cmp -s "$smoke_dir/cookies/cookies.txt" "$smoke_dir/stage1-jar.copy"
