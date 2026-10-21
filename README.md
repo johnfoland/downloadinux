@@ -1,4 +1,7 @@
-# downloadinux
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+  <img alt="downloadinux" src="docs/logo-light.svg" height="64">
+</picture>
 
 A headless Debian 13 "Trixie" container that runs the `video` (yt-dlp) and
 `gallery` (gallery-dl) download presets against a host download folder

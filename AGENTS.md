@@ -57,7 +57,9 @@ documents for the refactor, and `docs/README.md` gives their reading order.
 - Code changes arrive through relay chunks: one `chunk/<id>` branch and pull
   request per chunk, plus `plan/<slug>` branches for planning changes (see
   *Relay workflow*). Don't commit to `master` directly.
-- Short imperative commit subjects, a body that says why.
+- Pull request titles are Conventional Commits (see *Releases*). Commits
+  take short imperative subjects (a chunk's unit commits keep their relay
+  titles) and a body that says why.
 - CI must pass before a merge; don't bypass a failing required
   check (no `gh pr merge --admin`).
 - Keep README.md and the `just` recipe comments (they are the menu text) in
@@ -85,6 +87,27 @@ The roadmap is the issue list on `johnfoland/downloadinux`. Keep it current:
   issues from the pull request that resolves them (`Fixes #12` in its body).
 - Comment on an issue when you learn something that matters to whoever picks
   it up next.
+
+## Releases
+
+Releases are automated with release-please, from Conventional Commits.
+
+- **Conventional Commits** for pull request titles (CI checks them):
+  `feat:`, `fix:`, `perf:`, `docs:`, `refactor:`, `test:`, `ci:`, `build:`,
+  `chore:`, with a scope where useful (`fix(cli): …`). The
+  type decides the version bump and the changelog entry, so choose it for the
+  user-visible effect: `feat` → minor, `fix` and `perf` → patch, `feat!` or a
+  `BREAKING CHANGE:` footer → major (minor while below 1.0). The other types
+  release nothing on their own. Pull requests are squash-merged, so the title
+  is the commit release-please reads.
+- Don't edit versions or `CHANGELOG.md`; release-please owns them. It keeps a
+  release pull request open, and merging it tags `vX.Y.Z` and creates the
+  GitHub release. That merge is the maintainer's call.
+- To force a version, add a `Release-As: X.Y.Z` footer to a commit. To fix the
+  type or wording of an already-merged pull request, add a
+  `BEGIN_COMMIT_OVERRIDE` … `END_COMMIT_OVERRIDE` block with the corrected
+  message to its body before the release pull request merges.
+- Never move or delete a pushed release tag. A bad release is fixed forward.
 
 ## Rules
 
@@ -152,7 +175,11 @@ said it, and cite the entry at the code site.
   `master` through a squash-merged pull request that has already passed, so
   there is no second run on the push. The `check` status is required on
   `master`.
-- **Releases:** none.
+- **Releases:** release-please, as *Releases* describes: a chunk pull
+  request's title is a Conventional Commit for the chunk's user-visible
+  effect, and nobody edits the changelog by hand. Unit commits on a chunk
+  branch keep their relay titles; only the squash commit reaches `master`,
+  titled without the chunk ID.
 - **Issues:** GitHub Issues, as *Roadmap* describes: review follow-ups and
   ideas are filed as issues, a project or maintenance chunk may start from
   one, and the pull request that finishes it closes it.
