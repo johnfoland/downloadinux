@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 import sys
 import threading
-import time
 import traceback
 
 import pytest
@@ -959,7 +958,7 @@ def test_the_listing_waits_its_interval_from_the_previous_end():
     drive(app, scenario)
 
 
-def test_hiding_jobs_lengthens_the_interval_and_showing_it_reads_at_once():
+def test_hiding_jobs_lengthens_the_listing_interval():
     app = make_app(jobs_shown=0.05, jobs_hidden=0.4, vpn_every=30.0)
 
     async def scenario(pilot):
@@ -968,16 +967,26 @@ def test_hiding_jobs_lengthens_the_interval_and_showing_it_reads_at_once():
         await settle(pilot, app, "jobs")
         hidden_from = app.backend.called("jobs")[-1]
         count = len(app.backend.called("jobs"))
-        await until(pilot, lambda: len(app.backend.called("jobs")) > count, timeout=2)
+        await until(pilot, lambda: len(app.backend.called("jobs")) > count)
         later = app.backend.called("jobs")[count]
         assert later.start - hidden_from.end >= 0.4
+
+    drive(app, scenario)
+
+
+def test_showing_jobs_reads_at_once_when_the_shown_interval_has_passed():
+    app = make_app(jobs_shown=0.05, jobs_hidden=30.0, vpn_every=30.0)
+
+    async def scenario(pilot):
+        await until(pilot, lambda: len(app.backend.called("jobs")) >= 2)
+        await pilot.press("2")
         await settle(pilot, app, "jobs")
         count = len(app.backend.called("jobs"))
         await pilot.pause(0.06)  # Past the shown interval, well before the hidden one.
-        pressed = time.monotonic()
+        assert len(app.backend.called("jobs")) == count
         await pilot.press("1")
+        # With a 30 s hidden interval, only showing Jobs can start a read here.
         await until(pilot, lambda: len(app.backend.called("jobs")) > count)
-        assert app.backend.called("jobs")[count].start - pressed < 0.2
 
     drive(app, scenario)
 
