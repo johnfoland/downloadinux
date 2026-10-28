@@ -930,7 +930,11 @@ def test_switching_tabs_does_not_start_a_listing_while_one_is_in_flight():
             await pilot.press("1")
         assert len(app.backend.called("jobs")) == 2
         held.release()
-        await until(pilot, lambda: len(app.backend.called("jobs")) == 3)
+        # The listing keeps recurring after the release, so wait for at least
+        # a third read rather than exactly three.
+        await until(pilot, lambda: len(app.backend.called("jobs")) >= 3)
+        calls = app.backend.called("jobs")
+        assert calls[2].start >= calls[1].end
 
     drive(app, scenario)
 
