@@ -27,8 +27,9 @@ documents for the refactor, and `docs/README.md` gives their reading order.
   credentials; the VPN-off checks run in the gate's smoke test.
 - `just check`: the gate, seven steps. In order, stopping at the first
   failure: a Docker daemon check, then shellcheck over `scripts/*.sh`,
-  `zsh -n` over the zsh sources, the Python tests
-  (`uv run --locked pytest -q`), two quiet Compose validations through the
+  `zsh -n` over the zsh sources, the Python tests in parallel
+  (`uv run --locked pytest -q -n auto --dist worksteal`; an ad-hoc
+  `uv run --locked pytest` stays serial unless given `-n`), two quiet Compose validations through the
   CLI (VPN off and on, using an absent temporary settings file),
   `docker build --tag downloadinux:check .`, and a VPN-off container smoke
   test with temporary mounts under project `downloadinux-check` (cleaned up

@@ -142,9 +142,10 @@ check:
     for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
       zsh -n "$f"
     done
-    # --locked fails when uv.lock is stale rather than rewriting it.
-    step "4/7  pytest (uv run --locked)"
-    uv run --locked pytest -q
+    # --locked fails when uv.lock is stale rather than rewriting it. One
+    # worker per CPU; worksteal rebalances the long test files (#125).
+    step "4/7  pytest -n auto (uv run --locked)"
+    uv run --locked pytest -q -n auto --dist worksteal
     # -q is mandatory: without it compose prints the resolved file, which
     # includes the token when VPN is enabled. Use absent settings so the
     # gate never reads the host's settings or credentials.

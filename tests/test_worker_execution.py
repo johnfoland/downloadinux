@@ -195,6 +195,11 @@ def poll_until(executor, count, timeout=30):
     return ended
 
 
+def exited(pid):
+    """Whether child `pid` has exited, leaving it for the executor to reap."""
+    return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+
+
 def log_path(rig, job_id, attempt=1):
     return rig.state / 'jobs' / 'logs' / f'{job_id}-{attempt}.log'
 
@@ -261,7 +266,11 @@ def test_a_pass_launches_every_queue_head_with_its_private_log(rig):
         assert record['fds'] == []
         assert record['mark'] == 'inherited'  # the environment is inherited unchanged
     rig.release('a')
-    ended = poll_until(executor, 3)
+    # One poll after all three have exited, so it ends them together, in job
+    # ID order; successive polls would return them in exit order.
+    pids = [rig.record(job.url)['pid'] for job in (video[0], gallery[0], now[0])]
+    wait_for(lambda: all(exited(pid) for pid in pids))
+    ended = executor.poll()
     assert [r.id for r in ended] == sorted(started)
     assert all(r.state == 'succeeded' and r.exit_status == 0 for r in ended)
     assert log_path(rig, video[0].id).read_bytes() == b'out-1\nerr-1 \xff\xfe\nout-2 \x80err-2\n'

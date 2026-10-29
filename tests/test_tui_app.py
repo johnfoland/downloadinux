@@ -216,12 +216,14 @@ def test_header_renders_the_path_escaped_and_literal_at_every_size():
         assert line.spans == []
         assert len(line.plain) == 80 and line.plain.startswith("…")
         assert line.plain.endswith("/config.toml | jobs: reading… | VPN: reading…")
+        # The layout follows a resize after it returns; on a loaded runner
+        # the header can still have the previous width.
         for size in ((40, 10), (20, 5)):
             await pilot.resize_terminal(*size)
-            assert app.header.size.width == size[0]
+            await until(pilot, lambda width=size[0]: app.header.size.width == width)
             assert app.header.render().cell_len >= size[0]
         await pilot.resize_terminal(80, 24)
-        assert app.header.size.width == 80
+        await until(pilot, lambda: app.header.size.width == 80)
         assert app.header.text == line.plain
 
     drive(app, scenario)
@@ -769,7 +771,7 @@ def test_keys_and_redraws_continue_while_a_read_is_held():
         await pilot.press("1", "question_mark")
         assert tabs.active == "jobs" and app.screen.query(HelpPanel)
         await pilot.resize_terminal(60, 20)
-        assert app.size == (60, 20) and app.header.size.width < 60  # Beside the help.
+        await until(pilot, lambda: app.size == (60, 20) and app.header.size.width < 60)  # Beside the help.
         [call] = app.backend.called("jobs")
         assert call.thread is not threading.main_thread()
         assert "jobs: reading…" in app.header.text

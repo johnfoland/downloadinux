@@ -4,6 +4,7 @@ import ast
 import os
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -82,6 +83,21 @@ def test_gate_has_seven_steps_and_no_servers_script():
     assert daemon < tests
     assert "servers.py" not in body
     assert not (checkout.checkout_root() / "scripts" / "servers.py").exists()
+
+
+def test_gate_runs_pytest_in_parallel_and_ad_hoc_runs_stay_serial():
+    # The gate's step 4 spreads the suite over one worker per CPU (#125);
+    # -n stays out of addopts so a focused run is serial.
+    lines = [line.strip() for line in recipe("check")]
+    assert [line for line in lines if line.startswith("uv run --locked pytest")] == [
+        "uv run --locked pytest -q -n auto --dist worksteal",
+    ]
+    pyproject = tomllib.loads((checkout.checkout_root() / "pyproject.toml").read_text())
+    addopts = pyproject["tool"]["pytest"]["ini_options"].get("addopts", "")
+    if isinstance(addopts, list):
+        addopts = " ".join(addopts)
+    assert "--numprocesses" not in addopts
+    assert not any(arg.startswith("-n") for arg in addopts.split())
 
 
 def test_useragent_wraps_the_cli():

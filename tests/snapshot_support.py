@@ -150,8 +150,9 @@ class Faults:
 
 # Spawned process targets -------------------------------------------------------
 
-def hold_allocation(cookies, state, stage, reached, release, result):
-    """Allocate, pausing inside the allocation lock at ``stage``."""
+def hold_allocation(cookies, state, stage, reached, release, result, keep=None):
+    """Allocate, pausing inside the allocation lock at ``stage``, then hold
+    the lease until ``keep`` (``release`` when not given) is set."""
     real_open, real_rename = os.open, os.rename
 
     def pause():
@@ -171,7 +172,7 @@ def hold_allocation(cookies, state, stage, reached, release, result):
     invocation = cs.allocate(Path(cookies), Path(state), store.Pinned('alpha', '1' * 32), UA)
     os.open, os.rename = real_open, real_rename
     result.put(('held', invocation.invocation_id))
-    release.wait(60)
+    (keep or release).wait(60)
     invocation.close()
 
 
