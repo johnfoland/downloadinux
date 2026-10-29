@@ -13,6 +13,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The gate takes about 8 minutes; a hung test would otherwise hold the
+    # job for GitHub's 6-hour default (#143).
+    timeout-minutes: 25
     steps:
       # Depth 2: the pull request's merge commit and its first parent, the
       # base branch tip, so the next step can list what the pull request changes.
@@ -20,16 +23,17 @@ jobs:
         with:
           fetch-depth: 2
 
-      # A pull request that changes only the planning docs, README.md,
-      # AGENTS.md, CLAUDE.md, or LICENSE skips the gate, and `check` still succeeds,
-      # so the required status reports. Nothing in the gate reads them.
+      # A pull request that changes only Markdown files, anywhere, or LICENSE
+      # skips the gate, and `check` still succeeds, so the required status
+      # reports. Nothing in the gate reads them; a gate step that starts
+      # reading one must narrow this pattern.
       - name: Detect a docs-only change
         id: scope
         run: |
           changed=$(git diff --name-only HEAD^1 HEAD)
           printf 'Changed files:\n%s\n' "$changed"
           if [ -n "$changed" ] && ! printf '%s\n' "$changed" \
-              | grep -qvE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|LICENSE)$'; then
+              | grep -qvE '(\.md|^LICENSE)$'; then
             echo "Docs-only change: skipping the gate."
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
