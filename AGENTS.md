@@ -29,15 +29,15 @@ documents for the refactor, and `docs/README.md` gives their reading order.
   failure: a Docker daemon check, then shellcheck over `scripts/*.sh`,
   `zsh -n` over the zsh sources, the Python tests in parallel
   (`uv run --locked pytest -q -n auto --dist worksteal`; an ad-hoc
-  `uv run --locked pytest` stays serial unless given `-n`), two quiet Compose validations through the
-  CLI (VPN off and on, using an absent temporary settings file),
-  `docker build --tag downloadinux:check .`, and a VPN-off container smoke
-  test with temporary mounts under project `downloadinux-check` (cleaned up
-  on exit), ending with the TUI smoke: the real app, built by
-  `tui.app.build_app`, driven headlessly against the image through
-  configure, register, start, submit, log, retry, quit with a held job, and
-  reopen. It needs the Docker daemon
-  running. A `.env` or settings file in place does not affect it: it uses an
+  `uv run --locked pytest` stays serial unless given `-n`), two quiet
+  Compose validations through the CLI (VPN off and on, using an absent
+  temporary settings file), `docker build --tag downloadinux:check .`, and
+  a VPN-off container smoke test with temporary mounts under project
+  `downloadinux-check` (cleaned up on exit), ending with the TUI smoke: the
+  real app, built by `tui.app.build_app`, driven headlessly against the
+  image through configure, register, start, submit, log, retry, quit with
+  a held job, and reopen. It needs the Docker daemon running.
+  A `.env` or settings file in place does not affect it: it uses an
   absent temporary settings file, and the Compose files interpolate only
   `DOWNLOADINUX_*` names. Never run `docker compose config` without `-q`: it
   prints the resolved file, NordVPN token included.
