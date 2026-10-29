@@ -7,9 +7,10 @@ downloadinux is a headless Debian container that runs the `video` (yt-dlp) and
 `gallery` (gallery-dl) download presets behind NordVPN, writing to a host
 download folder, driven from the host by `just` recipes. It is a personal tool,
 refactored into a portable application with a persistent worker and a
-Python + Textual TUI (Stages 1–4, all implemented). README.md describes the
-current implementation and how to run it; `docs/` holds the planning
-documents for the refactor, and `docs/README.md` gives their reading order.
+Python + Textual TUI (Stages 1–4, all implemented). README.md is the short
+user guide (setup and the TUI) and `docs/reference.md` the full reference
+for current behavior (DEC-66); `docs/` also holds the planning documents for
+the refactor, and `docs/README.md` gives their reading order.
 
 ## Before you start
 
@@ -63,9 +64,11 @@ documents for the refactor, and `docs/README.md` gives their reading order.
   titles) and a body that says why.
 - CI must pass before a merge; don't bypass a failing required
   check (no `gh pr merge --admin`).
-- Keep README.md and the `just` recipe comments (they are the menu text) in
-  step with any behavior change, in the same pull request. As refactor stages
-  land, update README.md to describe the implemented behavior and mark the
+- Keep README.md, `docs/reference.md`, and the `just` recipe comments (they
+  are the menu text) in step with any behavior change, in the same pull
+  request. README.md stays short: setup, the TUI, and the few tasks the TUI
+  can't do; details go in the reference. As refactor stages
+  land, update both to describe the implemented behavior and mark the
   planning docs' proposals as done; keep proposals distinguishable from
   completed work.
 
@@ -185,7 +188,8 @@ said it, and cite the entry at the code site.
   ideas are filed as issues, a project or maintenance chunk may start from
   one, and the pull request that finishes it closes it.
 - **Authority:** `docs/target-design.md`, then `docs/implementation-plan.md`,
-  then `docs/current-state.md`, then `README.md` for current behavior;
+  then `docs/current-state.md`, then `README.md` and `docs/reference.md`
+  for current behavior;
   `docs/README.md` gives the reading order.
 - **Status:** `.relay/status.md` (local)
 - **Chunks:** `.relay/chunks/<ID>.md` (local)

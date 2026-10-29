@@ -1713,3 +1713,22 @@ what the rule protects: the worker and runner staying standard library
 
 *Where:* [target design](target-design.md), *Python + Textual TUI* §1
 *Dependency*. Added on 2026-10-21 in #130; clarifies DEC-58.
+
+## DEC-66: The README is a short TUI-first guide; the full reference is `docs/reference.md` (2026-10)
+
+README.md covers what someone needs to start and use downloadinux day to
+day: prerequisites, `just setup`, the terminal UI and its keys, where
+downloads land, turning the VPN on, the tasks the TUI can't do yet, and
+common problems. Everything else it used to hold (each setup step in
+detail, settings, cookie sources, the command line, batch queues, the
+container's internals, and the repository layout) moved unchanged to
+`docs/reference.md`. Both describe current behavior and rank together in
+the authority order, after `docs/current-state.md`.
+
+The single README had grown to about 1,200 lines and mixed a quick start
+with the CLI's full contract, which made it hard to find how to just use
+the tool. The maintainer's goal is to do everything from the TUI, so the
+README leads with it.
+
+*Where:* README.md, `docs/reference.md`, AGENTS.md (*Workflow*, *Settings*),
+[docs/README.md](README.md). Added on 2026-10-29.

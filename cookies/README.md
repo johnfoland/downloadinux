@@ -96,7 +96,7 @@ The browser adapter uses the locked yt-dlp 2026.08.19 directly, without a URL
 or probe. Firefox accepts containers (`none` = outside, omitted = all);
 Chrome/Chromium accept Linux keyrings only. Profile names stay names;
 path-like or `~` profiles and import paths become absolute without resolving
-symlinks. See [browser capabilities](../README.md#browser-capabilities) for
+symlinks. See [browser capabilities](../docs/reference.md#browser-capabilities) for
 the exact keyring set and Linux desktop dependencies.
 
 Duplicate domain/path/name keys fail before browser extraction can overwrite a

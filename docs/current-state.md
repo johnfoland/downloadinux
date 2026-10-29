@@ -217,7 +217,7 @@ Everything above is the dated baseline of 2026-09-27 and is left as written.
 Stage 1 (project P0001, chunks
 P0001-C01 to P0001-C06) has since been implemented; this table maps each
 portability constraint above, and the notes after it, to what Stage 1 did.
-[README.md](../README.md) describes the implemented behavior.
+[README.md](../README.md) and [the reference](reference.md) describe the implemented behavior.
 
 | Baseline observation | Stage 1 outcome | Where |
 | --- | --- | --- |
@@ -231,7 +231,7 @@ portability constraint above, and the notes after it, to what Stage 1 did.
 | Personal shell configuration participates in execution | Resolved for downloads: `dl` runs the preset's argument list through `exec`, and `batch` runs the loop under `zsh -f`, sourcing only `zsh/batch.zsh`; `just shell` stays an interactive convenience. Batches keep tmux until Stage 3 (DEC-4) | target design *Host application* ("Downloads"), *Presets*; P0001-C04 |
 | Linux ownership: output subdirectories created as root | Resolved: the entrypoint creates them as `dl` and never chowns a mount, warning instead when one is unwritable; the gate's smoke test checks the subdirectories and a write to each mount on CI's Linux runner | `scripts/entrypoint.sh`, `scripts/smoke.sh`; P0001-C02 |
 | The mount health check tests only that a directory exists | Resolved: `doctor` checks each mount with `mountpoint` and a create-and-remove probe as `dl`, skipping the probe when the path is not a mount (DEC-12, DEC-22) | target design *Health checks*; P0001-C05, P0001-C06 |
-| `doctor`'s "logged in" wording overstates a cookie check | Resolved: cookie checks report a session cookie as *present*, and neither README claims a login is valid; Stage 2's inspection adds expiry, still without claiming validity | target design *Health checks*; README.md *Step 3*; P0001-C05, P0001-C06 |
+| `doctor`'s "logged in" wording overstates a cookie check | Resolved: cookie checks report a session cookie as *present*, and neither README claims a login is valid; Stage 2's inspection adds expiry, still without claiming validity | target design *Health checks*; docs/reference.md *Step 3*; P0001-C05, P0001-C06 |
 | No tracked automated tests or CI | Resolved: a pytest suite and the `just check` gate (static checks, tests, image build, VPN-off smoke test), run by CI on every pull request into `master` (a docs-only one skips it), with `check` required | AGENTS.md *Commands*; `.github/workflows/ci.yml`; F20261005-01, P0001-C01 onward |
 
 
