@@ -66,8 +66,9 @@ implemented.
 - [Implementation plan](implementation-plan.md): stages, acceptance criteria,
   migration considerations, and decisions still to resolve.
 
-The existing [project README](../README.md) remains the guide to running the
-current implementation. Update these planning documents as decisions become
+The [project README](../README.md) is the short guide to setting up and
+using the current implementation, and the [reference](reference.md) covers
+its full behavior (DEC-66). Update these planning documents as decisions become
 implementation, keeping proposals distinguishable from completed work.
 
 ## Process files
