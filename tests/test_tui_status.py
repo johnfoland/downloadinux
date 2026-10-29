@@ -864,8 +864,11 @@ def choices(*hosts, cities=("Atlanta", "New_York")):
 
 async def open_connect(pilot, app):
     await pilot.press("o")
+    # The pushed dialog composes after the press returns; on a loaded runner
+    # its field is not there yet. Ready is when its mount focused the field.
+    await until(pilot, lambda: isinstance(app.screen, ConnectDialog)
+                and isinstance(app.focused, Input))
     dialog = app.screen
-    assert isinstance(dialog, ConnectDialog)
     return dialog, dialog.query_one(Input)
 
 

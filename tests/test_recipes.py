@@ -4,6 +4,7 @@ import ast
 import os
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -73,8 +74,30 @@ def test_gate_has_seven_steps_and_no_servers_script():
     steps = [line.split('"')[1].split()[0] for line in recipe("check") if line.strip().startswith('step "')]
     assert steps == [f"{n}/7" for n in range(1, 8)]
     assert "all 7 steps passed" in body
+    # The daemon check is step 1, ahead of the tests it would otherwise
+    # wait out (#125).
+    lines = [line.strip() for line in recipe("check")]
+    assert next(line for line in lines if line.startswith('step "1/7')) == 'step "1/7  Docker daemon reachable"'
+    daemon = lines.index("if ! docker info >/dev/null 2>&1; then")
+    tests = next(i for i, line in enumerate(lines) if line.startswith("uv run --locked pytest"))
+    assert daemon < tests
     assert "servers.py" not in body
     assert not (checkout.checkout_root() / "scripts" / "servers.py").exists()
+
+
+def test_gate_runs_pytest_in_parallel_and_ad_hoc_runs_stay_serial():
+    # The gate's step 4 spreads the suite over one worker per CPU (#125);
+    # -n stays out of addopts so a focused run is serial.
+    lines = [line.strip() for line in recipe("check")]
+    assert [line for line in lines if line.startswith("uv run --locked pytest")] == [
+        "uv run --locked pytest -q -n auto --dist worksteal",
+    ]
+    pyproject = tomllib.loads((checkout.checkout_root() / "pyproject.toml").read_text())
+    addopts = pyproject["tool"]["pytest"]["ini_options"].get("addopts", "")
+    if isinstance(addopts, list):
+        addopts = " ".join(addopts)
+    assert "--numprocesses" not in addopts
+    assert not any(arg.startswith("-n") for arg in addopts.split())
 
 
 def test_useragent_wraps_the_cli():

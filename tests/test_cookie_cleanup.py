@@ -430,9 +430,12 @@ def test_cleanup_waits_for_allocation_and_skips_its_lease(tmp_path, stage):
     cookies, state = roots(tmp_path)
     directory = state / cs.DIRECTORY
     ctx = mp.get_context('spawn')
-    reached, release, attempting, done = (ctx.Event() for _ in range(4))
+    # `keep` is its own event: released by `release` alone, the holder could
+    # close its lease before the blocked cleanup scans.
+    reached, release, keep, attempting, done = (ctx.Event() for _ in range(5))
     held, cleaned = ctx.Queue(), ctx.Queue()
-    holder = ctx.Process(target=hold_allocation, args=(str(cookies), str(state), stage, reached, release, held))
+    holder = ctx.Process(target=hold_allocation,
+                         args=(str(cookies), str(state), stage, reached, release, held, keep))
     holder.start()
     cleaner = None
     try:
@@ -449,6 +452,7 @@ def test_cleanup_waits_for_allocation_and_skips_its_lease(tmp_path, stage):
         _, invocation_id = held.get(timeout=60)
     finally:
         release.set()
+        keep.set()
         for process in (holder, cleaner):
             if process is not None:
                 process.join(60)

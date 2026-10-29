@@ -128,29 +128,32 @@ check:
     #!/usr/bin/env bash
     set -euo pipefail
     step(){ printf '\033[1;36m==> %s\033[0m\n' "$*"; }
-    step "1/7  shellcheck scripts/*.sh"
-    shellcheck scripts/*.sh
-    # shellcheck has no zsh support, so the zsh files get a syntax check only.
-    step "2/7  zsh -n on the zsh sources"
-    for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
-      zsh -n "$f"
-    done
-    # --locked fails when uv.lock is stale rather than rewriting it.
-    step "3/7  pytest (uv run --locked)"
-    uv run --locked pytest -q
-    # -q is mandatory: without it compose prints the resolved file, which
-    # includes the token when VPN is enabled. Use absent settings so the
-    # gate never reads the host's settings or credentials.
-    step "4/7  Compose config -q (VPN off and on)"
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    uv run --locked downloadinux --config "$tmp/absent.toml" compose -- config -q
-    uv run --locked downloadinux --config "$tmp/absent.toml" --set vpn.enabled=true compose -- config -q
-    step "5/7  Docker daemon reachable"
+    # The gate cannot pass without the daemon, so check it first rather than
+    # after the half hour of tests (#125).
+    step "1/7  Docker daemon reachable"
     if ! docker info >/dev/null 2>&1; then
       echo "Docker daemon not reachable — start Docker and re-run" >&2
       exit 1
     fi
+    step "2/7  shellcheck scripts/*.sh"
+    shellcheck scripts/*.sh
+    # shellcheck has no zsh support, so the zsh files get a syntax check only.
+    step "3/7  zsh -n on the zsh sources"
+    for f in zsh/zshrc zsh/aliases.zsh zsh/functions.zsh scripts/root.zshrc; do
+      zsh -n "$f"
+    done
+    # --locked fails when uv.lock is stale rather than rewriting it. One
+    # worker per CPU; worksteal rebalances the long test files (#125).
+    step "4/7  pytest -n auto (uv run --locked)"
+    uv run --locked pytest -q -n auto --dist worksteal
+    # -q is mandatory: without it compose prints the resolved file, which
+    # includes the token when VPN is enabled. Use absent settings so the
+    # gate never reads the host's settings or credentials.
+    step "5/7  Compose config -q (VPN off and on)"
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    uv run --locked downloadinux --config "$tmp/absent.toml" compose -- config -q
+    uv run --locked downloadinux --config "$tmp/absent.toml" --set vpn.enabled=true compose -- config -q
     # Its own tag, so the gate never replaces the image `just up` runs.
     step "6/7  docker build --tag downloadinux:check ."
     docker build --tag downloadinux:check .
