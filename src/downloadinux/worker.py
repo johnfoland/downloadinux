@@ -1049,6 +1049,9 @@ class _Service:
         does not exist reads as empty. Anything but a regular file, a
         symlink included (`O_NOFOLLOW`'s ELOOP), is `<log>: not a regular
         file`; any other OS error is `<log>: <OS reason>` (DEC-54).
+        After another failed leaf open, inspect the entry without following
+        symlinks to classify nonregular files that cannot be opened (such as
+        sockets). An inconclusive inspection keeps the original open error.
         """
         try:
             directory = os.open(self.store.logs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -1062,6 +1065,13 @@ class _Service:
             except OSError as error:
                 if error.errno == errno.ELOOP:
                     raise DownloadinuxError(f'{log}: not a regular file') from None
+                try:
+                    entry = os.stat(log.name, dir_fd=directory, follow_symlinks=False)
+                except OSError:
+                    pass  # Diagnostic only: retain the original open error.
+                else:
+                    if not stat.S_ISREG(entry.st_mode):
+                        raise DownloadinuxError(f'{log}: not a regular file') from None
                 raise DownloadinuxError(_os_reason(log, error)) from None
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):

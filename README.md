@@ -867,7 +867,9 @@ each attempt's log under `paths.state/jobs/logs/`. Control characters in
 URLs, user-agents, and other values print as `\xNN`, so a URL cannot drive
 the terminal; `--json`, `jobs logs`, and `jobs export` print values raw.
 
-`jobs logs` writes the log's bytes as they are. With `--follow`, Ctrl-C
+`jobs logs` writes the log's bytes as they are. A missing attempt log reads
+as empty; a nonregular entry, including a socket, is refused as
+`not a regular file`. With `--follow`, Ctrl-C
 (or `SIGHUP` or `SIGTERM`) detaches: the job carries on in the worker, the
 command says how to follow or cancel it, and exits with 128 plus the
 signal's number. `jobs cancel` ends a queued job at once and asks a running

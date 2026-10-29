@@ -2079,6 +2079,22 @@ def test_anything_but_a_regular_file_at_the_log_name_is_refused(rig, plant):
     assert serve.stop() == 0
 
 
+def test_a_socket_at_the_log_name_is_refused_and_the_worker_stays_responsive(rig):
+    rig.state = rig.short / 'state'
+    rig.state.mkdir()
+    prepare_attempts(rig, attempts=1)
+    log = log_file(rig, 1, 1)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as planted:
+        planted.bind(str(log))
+        serve = rig.start(env=rig.env(DL_VPN='on')).listening()
+        result = rig.client('logs', '1')
+        assert (result.returncode, result.stderr) == (1, b'')
+        assert result.stdout == worker.encode({'version': 1, 'error': f'{log}: not a regular file'})
+        status_result = rig.client('status')
+        assert (status_result.returncode, status_result.stdout, status_result.stderr) == (0, EMPTY_STATUS, b'')
+        assert serve.stop() == 0
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores file permissions')
 def test_an_unreadable_log_is_its_os_reason(rig):
     prepare_attempts(rig, attempts=1)
@@ -2088,6 +2104,58 @@ def test_an_unreadable_log_is_its_os_reason(rig):
     assert (result.returncode, result.stderr) == (1, b'')
     assert result.stdout == worker.encode({'version': 1, 'error': f'{log_file(rig, 1, 1)}: Permission denied'})
     assert serve.stop() == 0
+
+
+@pytest.mark.parametrize('inspection', ['regular', 'missing', 'error'])
+def test_failed_log_open_keeps_its_os_reason_when_inspection_cannot_classify(rig, inprocess, monkeypatch, inspection):
+    rig.state = rig.short / 'state'
+    rig.state.mkdir()
+    prepare_attempts(rig, attempts=1)
+    log = log_file(rig, 1, 1)
+    real_open, real_stat = os.open, os.stat
+    opens, errors, inspections = [], [], []
+
+    def open_leaf(path, flags, *args, **kwargs):
+        if path != log.name or 'dir_fd' not in kwargs:
+            return real_open(path, flags, *args, **kwargs)
+        opens.append(kwargs['dir_fd'])
+        try:
+            return real_open(path, flags, *args, **kwargs)
+        except OSError as error:
+            errors.append(error)  # The real socket's platform-specific open error.
+            if inspection in ('regular', 'missing'):
+                log.unlink()
+            if inspection == 'regular':
+                log.write_bytes(b'replacement must not be read')
+            raise
+
+    def inspect_leaf(path, *args, **kwargs):
+        if path != log.name:
+            return real_stat(path, *args, **kwargs)
+        inspections.append((kwargs.get('dir_fd'), kwargs.get('follow_symlinks')))
+        if inspection == 'error':
+            # Derive the diagnostic failure from an actual stat, not a made-up errno.
+            return real_stat(path, dir_fd=-1, follow_symlinks=False)
+        return real_stat(path, *args, **kwargs)
+
+    def drive():
+        inprocess.wait_line(LISTENING.format(rig.socket))
+        result = rig.client('logs', '1')
+        assert len(opens) == len(errors) == 1  # No retry of a failed read.
+        assert inspections == [(opens[0], False)]
+        with pytest.raises(OSError) as closed:
+            os.fstat(opens[0])
+        assert closed.value.errno == errno.EBADF
+        assert (result.returncode, result.stderr) == (1, b'')
+        assert result.stdout == worker.encode({'version': 1, 'error': f'{log}: {errors[0].strerror}'})
+        status_result = rig.client('status')
+        assert (status_result.returncode, status_result.stdout, status_result.stderr) == (0, EMPTY_STATUS, b'')
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as planted:
+        planted.bind(str(log))
+        monkeypatch.setattr(os, 'open', open_leaf)
+        monkeypatch.setattr(os, 'stat', inspect_leaf)
+        assert inprocess.run(drive, environ={'DL_VPN': 'on'}) == 0
 
 
 def test_the_logs_op_reads_from_the_offset_and_never_past_the_largest_id(rig):
