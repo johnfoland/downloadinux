@@ -170,10 +170,12 @@ said it, and cite the entry at the code site.
 - **Gate:** `just check` (steps under *Commands*). The gate matches CI: the
   workflow installs tools and runs `just check` and nothing else, so a new
   check goes into the recipe, never into the workflow alone. The one
-  exception: a pull request that changes only `docs/*.md`, README.md,
-  AGENTS.md, CLAUDE.md, or LICENSE skips the gate in CI, and `check` still passes.
-  Nothing in the gate reads those files. Planning pull requests are
-  usually docs-only, so they merge in about a minute.
+  exception: a pull request that changes only Markdown files (`*.md`,
+  anywhere) or LICENSE skips the gate in CI, and `check` still passes.
+  Nothing in the gate reads those files; a gate step that starts reading
+  one must narrow the workflow's pattern. Planning pull requests are
+  usually docs-only, so they merge in about a minute. The CI job stops
+  after 25 minutes (#143); the gate normally takes about 8.
 - **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, job
   `check`), on pull requests into `master` only. Every change reaches
   `master` through a squash-merged pull request that has already passed, so
