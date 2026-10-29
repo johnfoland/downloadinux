@@ -26,10 +26,10 @@ documents for the refactor, and `docs/README.md` gives their reading order.
   VPN health checks (`--json` is available). Only enabled-VPN checks need real
   credentials; the VPN-off checks run in the gate's smoke test.
 - `just check`: the gate, seven steps. In order, stopping at the first
-  failure: shellcheck over `scripts/*.sh`, `zsh -n` over the zsh sources,
-  the Python tests (`uv run --locked pytest -q`), two quiet Compose
-  validations through the CLI (VPN off and on, using an absent temporary
-  settings file), a Docker daemon check,
+  failure: a Docker daemon check, then shellcheck over `scripts/*.sh`,
+  `zsh -n` over the zsh sources, the Python tests
+  (`uv run --locked pytest -q`), two quiet Compose validations through the
+  CLI (VPN off and on, using an absent temporary settings file),
   `docker build --tag downloadinux:check .`, and a VPN-off container smoke
   test with temporary mounts under project `downloadinux-check` (cleaned up
   on exit), ending with the TUI smoke: the real app, built by

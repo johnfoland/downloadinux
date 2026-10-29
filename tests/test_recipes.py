@@ -73,6 +73,13 @@ def test_gate_has_seven_steps_and_no_servers_script():
     steps = [line.split('"')[1].split()[0] for line in recipe("check") if line.strip().startswith('step "')]
     assert steps == [f"{n}/7" for n in range(1, 8)]
     assert "all 7 steps passed" in body
+    # The daemon check is step 1, ahead of the tests it would otherwise
+    # wait out (#125).
+    lines = [line.strip() for line in recipe("check")]
+    assert next(line for line in lines if line.startswith('step "1/7')) == 'step "1/7  Docker daemon reachable"'
+    daemon = lines.index("if ! docker info >/dev/null 2>&1; then")
+    tests = next(i for i, line in enumerate(lines) if line.startswith("uv run --locked pytest"))
+    assert daemon < tests
     assert "servers.py" not in body
     assert not (checkout.checkout_root() / "scripts" / "servers.py").exists()
 
