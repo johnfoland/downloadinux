@@ -60,7 +60,7 @@ jobs:
 
       # uv provisions Python from .python-version for the pytest step.
       # setup-uv publishes no floating major tag, so pin the release.
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.2
         if: steps.scope.outputs.docs_only != 'true'
 
       # The gate itself: CI runs exactly what `just check` runs locally.
