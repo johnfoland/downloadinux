@@ -11,58 +11,74 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # Decides whether `check` runs. The path filter lives here, not in a
+    # workflow-level paths-ignore: a skipped workflow never reports `check`,
+    # so a pull request it skips would wait on the required check forever.
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          # Paths nothing in the gate reads, as an extended regex: Markdown
+          # files anywhere, LICENSE, the repokit stamp, the Dependabot config,
+          # and the logos. A pull request that touches only these skips
+          # `check`. A gate step that starts reading one must narrow this
+          # pattern. Never list this workflow; a change to it must run.
+          SKIP: '(\.md$|^LICENSE$|^\.agents/repokit\.toml$|^\.github/dependabot\.yml$|^docs/logo-(light|dark)\.svg$)'
+        run: |
+          # Both sides of a rename count, so moving code to a skipped path
+          # still runs the gate.
+          files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          printf 'Changed files:\n%s\n' "$files"
+          if grep -qvE "$SKIP" <<<"$files"; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing the gate reads changed: skipping it."
+            echo code=false >> "$GITHUB_OUTPUT"
+          fi
+
   check:
+    # The job name is the required status check on master, so rename it only
+    # together with the ruleset.
+    name: check
+    needs: changes
+    # A job skipped by its `if:` reports success, which lets a pull request
+    # the filter skips merge. Anything but an explicit `false` runs it, so a
+    # failed `changes` job still runs the gate instead of skipping it.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     # The gate takes about 8 minutes; a hung test would otherwise hold the
     # job for GitHub's 6-hour default (#143).
     timeout-minutes: 25
     steps:
-      # Depth 2: the pull request's merge commit and its first parent, the
-      # base branch tip, so the next step can list what the pull request changes.
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      # A pull request that changes only Markdown files, anywhere, or LICENSE
-      # skips the gate, and `check` still succeeds, so the required status
-      # reports. Nothing in the gate reads them; a gate step that starts
-      # reading one must narrow this pattern.
-      - name: Detect a docs-only change
-        id: scope
-        run: |
-          changed=$(git diff --name-only HEAD^1 HEAD)
-          printf 'Changed files:\n%s\n' "$changed"
-          if [ -n "$changed" ] && ! printf '%s\n' "$changed" \
-              | grep -qvE '(\.md|^LICENSE)$'; then
-            echo "Docs-only change: skipping the gate."
-            echo "docs_only=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - uses: extractions/setup-just@v4
-        if: steps.scope.outputs.docs_only != 'true'
         with:
           just-version: 1.40.0
 
       # The runner's preinstalled shellcheck is older and can disagree with
       # the local 0.11.0, so install the pinned release.
       - name: Install shellcheck 0.11.0
-        if: steps.scope.outputs.docs_only != 'true'
         run: |
           curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
             | tar -xJ -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/shellcheck-v0.11.0" >> "$GITHUB_PATH"
 
       - name: Install zsh
-        if: steps.scope.outputs.docs_only != 'true'
         run: sudo apt-get update && sudo apt-get install -y zsh
 
       # uv provisions Python from .python-version for the pytest step.
       # setup-uv publishes no floating major tag, so pin the release.
       - uses: astral-sh/setup-uv@v10.2.0
-        if: steps.scope.outputs.docs_only != 'true'
 
       # The gate itself: CI runs exactly what `just check` runs locally.
       - run: just check
-        if: steps.scope.outputs.docs_only != 'true'

@@ -171,16 +171,18 @@ said it, and cite the entry at the code site.
   workflow installs tools and runs `just check` and nothing else, so a new
   check goes into the recipe, never into the workflow alone. The one
   exception: a pull request that changes only Markdown files (`*.md`,
-  anywhere) or LICENSE skips the gate in CI, and `check` still passes.
-  Nothing in the gate reads those files; a gate step that starts reading
-  one must narrow the workflow's pattern. Planning pull requests are
-  usually docs-only, so they merge in about a minute. The CI job stops
-  after 25 minutes (#143); the gate normally takes about 8.
-- **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, job
-  `check`), on pull requests into `master` only. Every change reaches
-  `master` through a squash-merged pull request that has already passed, so
-  there is no second run on the push. The `check` status is required on
-  `master`.
+  anywhere), LICENSE, `.agents/repokit.toml`, `.github/dependabot.yml`, or
+  the `docs/logo-*.svg` files skips the gate in CI, and `check` still
+  passes. Nothing in the gate reads those files; a gate step that starts
+  reading one must narrow the `SKIP` pattern in the workflow's `changes`
+  job. Planning pull requests are usually docs-only, so they merge in about
+  a minute. The `check` job stops after 25 minutes (#143); the gate normally
+  takes about 8.
+- **CI:** GitHub Actions, `.github/workflows/ci.yml` (workflow `CI`, jobs
+  `changes` and `check`), on pull requests into `master` only. Every change
+  reaches `master` through a squash-merged pull request that has already
+  passed, so there is no second run on the push. The `check` status is
+  required on `master`.
 - **Releases:** release-please, as *Releases* describes: a chunk pull
   request's title is a Conventional Commit for the chunk's user-visible
   effect, and nobody edits the changelog by hand. Unit commits on a chunk
